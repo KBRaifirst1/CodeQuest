@@ -1595,6 +1595,7 @@ const CSS = `
   min-height:100vh; -webkit-font-smoothing:antialiased;
 }
 .cq-root *{box-sizing:border-box}
+.cq-root button{color:inherit}
 .cq-root ::selection{background:var(--teal-ghost)}
 
 /* ============ HEADER ============ */
@@ -1755,10 +1756,10 @@ const CSS = `
 
 /* ============ CHOICES ============ */
 .cq-choices{display:flex;flex-direction:column;gap:11px;margin-bottom:18px}
-.cq-choice{display:flex;align-items:center;justify-content:space-between;background:var(--bg-2);border:1.5px solid var(--line);border-radius:13px;padding:17px;cursor:pointer;transition:.16s}
+.cq-choice{display:flex;align-items:center;justify-content:space-between;background:var(--bg-2);border:1.5px solid var(--line);border-radius:13px;padding:17px;cursor:pointer;transition:.16s;color:var(--ink);font-family:inherit}
 .cq-choice:hover:not(:disabled){border-color:var(--teal);transform:translateY(-2px)}
 .cq-choice code{font-family:var(--mono);font-size:16px;color:var(--ink)}
-.cq-choice-plain{font-size:16px;font-weight:500}
+.cq-choice-plain{font-size:16px;font-weight:500;color:var(--ink)}
 .cq-choice.right{border-color:var(--teal);background:var(--teal-ghost)}
 .cq-choice.wrong{border-color:var(--rose);background:rgba(255,138,163,.1)}
 .cq-choice.dim{opacity:.4}
