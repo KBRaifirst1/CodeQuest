@@ -141,6 +141,11 @@ const GENERAL_STEPS = [
 
 // ---------- The JS beginner course (read-first, no typing early) ----------
 const JS_STEPS = [
+  { type: "visual", chapter: "5 · Draw with code", lang: "js", title: "Draw with JavaScript canvas",
+    teach: "JavaScript can draw right in the page using a canvas. You grab the canvas, get its “drawing tool” (context), pick a color, and draw a shape. Write it, then tap Run visually.",
+    example: "ctx.fillStyle = 'red';\nctx.fillRect(50, 50, 100, 100); // a red square",
+    starter: "const canvas = document.getElementById('c');\nconst ctx = canvas.getContext('2d');\n\n// draw a blue circle in the middle:\nctx.fillStyle = 'deepskyblue';\nctx.beginPath();\nctx.arc(200, 200, 60, 0, Math.PI * 2);\nctx.fill();\n",
+    why: "🎉 You drew with real JavaScript — that's exactly how web games and animations start!" },
   { type: "read", chapter: "1 · Just looking", title: "What a line of code looks like", concept: "a coding concept",
     intro: "Before writing anything, let's just LOOK. Tap each colored piece to see what it means in plain English.",
     line: [
@@ -237,6 +242,16 @@ const PY_STEPS = [
     preface: "def double(n):", lineBefore: "    return n *", blankChoices: ["1", "2", "n"], answer: "2", suffix: "",
     runnable: false /* Python isn't run here; structural check only in this prototype */,
     pyNote: true, why: "Right — `n * 2` doubles it, same as JavaScript. The shape carries over." },
+  { type: "visual", chapter: "4 · Make something move", lang: "py", title: "Draw a circle with Pygame",
+    teach: "Pygame is how Python draws graphics. You make a window, then draw shapes on it. Here you'll draw a red circle — write it, then tap Run visually and watch it appear.",
+    example: "pygame.draw.circle(screen, (255,0,0), (200,200), 40)\n# draws a red circle at the middle",
+    starter: "import pygame\npygame.init()\nscreen = pygame.display.set_mode((400, 400))\nscreen.fill((14, 19, 32))\n\n# draw a red circle in the middle:\npygame.draw.circle(screen, (255, 0, 0), (200, 200), 40)\n\npygame.display.flip()\n",
+    why: "🎉 You wrote Pygame and it drew your circle! That's real graphics code." },
+  { type: "visual", chapter: "4 · Make something move", lang: "py", title: "Draw a square with turtle",
+    teach: "Turtle is another Python way to draw — you steer a little 'turtle' that leaves a trail. Move forward, turn, repeat. It's a fun way to make shapes. Write it, then tap Run visually.",
+    example: "for i in range(4):\n    t.forward(100)\n    t.right(90)   # draws a square",
+    starter: "import turtle\nt = turtle.Turtle()\n\n# draw a square: go forward, turn right, 4 times\nfor i in range(4):\n    t.forward(120)\n    t.right(90)\n",
+    why: "🎉 Same language, a totally different way to draw — and it showed your square!" },
 ];
 
 // ---------- AI lesson generation (typing-style, validated) ----------
@@ -258,6 +273,151 @@ function extractJSON(raw) {
   if (a === -1 || b === -1) throw new Error("no JSON");
   return JSON.parse(s.slice(a, b + 1));
 }
+
+// ---------- Pre-check: validate the learner's Python BEFORE translating ----------
+// Catches real errors (syntax, undefined names, bad calls) by compiling and
+// running the code headless with a stubbed pygame — so we never send broken
+// code to the AI. A loop-guard caps iterations so a `while True` can't hang.
+async function precheckPython(code) {
+  let py;
+  try { py = await loadPyodide(); } catch (e) { return { ok: true, skipped: true }; } // if engine won't load, don't block
+  const harness = [
+    "import sys, types",
+    'pg = types.ModuleType("pygame")',
+    "class _S:",
+    "    def fill(self,*a,**k): pass",
+    "    def blit(self,*a,**k): pass",
+    "    def get_rect(self,*a,**k): return _R()",
+    "class _R:",
+    "    def __init__(self,*a,**k): self.x=self.y=self.width=self.height=0",
+    "    def colliderect(self,*a,**k): return False",
+    "pg.init=lambda *a,**k:(0,0)",
+    "pg.quit=lambda *a,**k:None",
+    "pg.display=types.SimpleNamespace(set_mode=lambda *a,**k:_S(),flip=lambda *a,**k:None,update=lambda *a,**k:None,set_caption=lambda *a,**k:None)",
+    "pg.draw=types.SimpleNamespace(circle=lambda *a,**k:None,rect=lambda *a,**k:None,line=lambda *a,**k:None,polygon=lambda *a,**k:None,ellipse=lambda *a,**k:None)",
+    "pg.Rect=_R",
+    "pg.Surface=_S",
+    "pg.time=types.SimpleNamespace(Clock=lambda *a,**k:types.SimpleNamespace(tick=lambda *a,**k:0))",
+    "pg.event=types.SimpleNamespace(get=lambda *a,**k:[])",
+    "pg.key=types.SimpleNamespace(get_pressed=lambda *a,**k:{})",
+    "pg.font=types.SimpleNamespace(SysFont=lambda *a,**k:types.SimpleNamespace(render=lambda *a,**k:_S()),Font=lambda *a,**k:types.SimpleNamespace(render=lambda *a,**k:_S()))",
+    "pg.QUIT=256",
+    'for _k in ["K_LEFT","K_RIGHT","K_UP","K_DOWN","K_SPACE"]: setattr(pg,_k,0)',
+    'sys.modules["pygame"]=pg',
+    "__src=" + JSON.stringify(code),
+    "try:",
+    '    compile(__src,"<your code>","exec")',
+    "except SyntaxError as e:",
+    '    print("PRECHECK_FAIL: Line "+str(e.lineno)+": "+str(e.msg)); raise SystemExit',
+    "__steps=[0]",
+    "def __trace(frame,event,arg):",
+    "    __steps[0]+=1",
+    '    if __steps[0]>200000: raise RuntimeError("loop-guard")',
+    "    return __trace",
+    "sys.settrace(__trace)",
+    "try:",
+    '    exec(__src,{"__name__":"__main__"})',
+    '    print("PRECHECK_OK")',
+    "except SystemExit:",
+    '    print("PRECHECK_OK")',
+    "except RuntimeError as e:",
+    '    print("PRECHECK_OK" if str(e)=="loop-guard" else "PRECHECK_FAIL: "+str(e))',
+    "except Exception as e:",
+    '    print("PRECHECK_FAIL: "+type(e).__name__+": "+str(e))',
+    "finally:",
+    "    sys.settrace(None)",
+  ].join("\n");
+  try {
+    const out = (await py.runPythonAsync(harness)) || "";
+    const line = out.split("\n").find((l) => l.startsWith("PRECHECK_")) || "PRECHECK_OK";
+    if (line.startsWith("PRECHECK_OK")) return { ok: true };
+    return { ok: false, why: line.replace("PRECHECK_FAIL: ", "") };
+  } catch (e) {
+    return { ok: true, skipped: true }; // engine hiccup shouldn't block the learner
+  }
+}
+
+// ---------- Visual run: translate ANY language's graphics code → JS canvas ----------
+// The learner writes real visual code in their language using whatever graphics
+// approach that language uses (Pygame/turtle/tkinter, Swing, SDL, canvas, LÖVE,
+// Processing, etc.). We ask the AI to RE-CREATE the same visual as JavaScript on
+// an HTML canvas — the one thing a browser can actually display — then run that
+// inside a sandboxed iframe. The AI doesn't run the original engine; it reproduces
+// what the code draws. So this works for every language, not just Pygame.
+const VISUAL_LANG = {
+  js: { label: "JavaScript", libs: "HTML5 canvas, p5.js, or DOM drawing" },
+  py: { label: "Python", libs: "Pygame, turtle, or tkinter Canvas" },
+  java: { label: "Java", libs: "Swing/AWT (Graphics2D, JPanel.paintComponent) or JavaFX" },
+  cpp: { label: "C++", libs: "SDL2, SFML, or OpenGL basics" },
+  c: { label: "C", libs: "SDL2 or raylib" },
+  csharp: { label: "C#", libs: "WinForms (System.Drawing) or MonoGame" },
+  go: { label: "Go", libs: "ebiten or the image package" },
+  rust: { label: "Rust", libs: "macroquad, ggez, or the image crate" },
+  ruby: { label: "Ruby", libs: "Gosu or Ruby2D" },
+  swift: { label: "Swift", libs: "SwiftUI Canvas, CoreGraphics, or SpriteKit" },
+  kotlin: { label: "Kotlin", libs: "Compose Canvas or java AWT/Swing" },
+  php: { label: "PHP", libs: "GD library (imagecreate, imagefilledellipse)" },
+  lua: { label: "Lua", libs: "LÖVE (love.graphics) or Corona" },
+  r: { label: "R", libs: "base plotting or ggplot2 shapes" },
+  dart: { label: "Dart", libs: "Flutter CustomPainter/Canvas" },
+  processing: { label: "Processing", libs: "Processing (size, ellipse, rect, draw())" },
+  p5: { label: "p5.js", libs: "p5.js (setup/draw, ellipse, rect)" },
+  scratch: { label: "Scratch-style", libs: "sprite move/turn/draw blocks" },
+  ts: { label: "TypeScript", libs: "HTML5 canvas" },
+};
+async function translateToCanvas(langId, code, signal) {
+  // JavaScript can draw on the canvas directly — no translation needed.
+  if (langId === "js" || langId === "ts") return code;
+  const info = VISUAL_LANG[langId] || { label: langId, libs: "its usual graphics library" };
+  const sys =
+    "You take a beginner's visual/graphics program written in any language and RE-CREATE the same visual as ONE self-contained JavaScript program drawing on an HTML canvas. " +
+    "The page already has <canvas id=\"c\" width=\"400\" height=\"400\"></canvas>; grab its 2D context yourself. " +
+    "Figure out what the program draws (shapes, colors, positions, text, sprites) and reproduce it faithfully on the canvas. " +
+    "Translate any animation/game loop to requestAnimationFrame, and any keyboard/mouse input to browser events (keydown, mousemove, etc.). " +
+    "If the program uses a coordinate system or window size, map it sensibly into 400x400. " +
+    "Output ONLY JavaScript code — no explanation, no comments needed, no markdown fences.";
+  const user =
+    `This is a ${info.label} program (likely using ${info.libs}). ` +
+    `Re-create what it draws as canvas JavaScript:\n\n${code}`;
+  const raw = await callClaude([{ role: "user", content: user }], { system: sys, maxTokens: 1800, signal });
+  return raw.replace(/```javascript/gi, "").replace(/```js/gi, "").replace(/```/g, "").trim();
+}
+function canvasSandboxHTML(jsCode) {
+  return `<!doctype html><html><head><style>html,body{margin:0;height:100%;background:#0e1320;display:flex;align-items:center;justify-content:center}canvas{background:#000;border-radius:8px;max-width:100%}</style></head>
+<body><canvas id="c" width="400" height="400"></canvas>
+<script>
+try {
+${jsCode}
+} catch (e) {
+  var ctx = document.getElementById('c').getContext('2d');
+  ctx.fillStyle = '#0e1320'; ctx.fillRect(0,0,400,400);
+  ctx.fillStyle = '#ff8aa3'; ctx.font = '13px monospace';
+  ctx.fillText('Could not run this visual:', 12, 28);
+  ctx.fillText(String(e.message).slice(0,44), 12, 50);
+}
+</` + `script></body></html>`;
+}
+
+// ---------- Real code execution for ALL languages via Piston (text output) ----------
+// Non-JS/Python languages don't run in the browser, so we send them to our
+// backend (/api/run), which runs them on a server through the public Piston API
+// and returns the real printed output. Check model: the program prints, and we
+// compare its output to the lesson's expectedOutput.
+async function runViaPiston(langId, code, stdin, signal) {
+  const res = await fetch("/api/run", {
+    method: "POST", headers: { "Content-Type": "application/json" }, signal,
+    body: JSON.stringify({ langId, code, stdin: stdin || "" }),
+  });
+  if (!res.ok) throw new Error(`Runner unavailable (${res.status})`);
+  return await res.json(); // { stdout, stderr, code, ok }
+}
+function normalizeOut(s) {
+  return String(s == null ? "" : s).replace(/\r\n/g, "\n").replace(/[ \t]+$/gm, "").trim();
+}
+function outputMatches(stdout, expected) {
+  return normalizeOut(stdout) === normalizeOut(expected);
+}
+
 function validateGenerated(L) {
   const p = [];
   if (!L || !L.fnName || !L.solution || !Array.isArray(L.tests)) return { ok: false, p: ["fields"] };
@@ -390,6 +550,31 @@ const langGenSystem = (cfg) =>
 // ---------- Full language catalog (everything Claude teaches well) ----------
 // Only languages in this list can be searched/picked — so nothing unsupported
 // or made-up appears. JS & Python run for real; the rest are AI-judged.
+// ---------- Hardware section (how computers & electronics work) ----------
+const HARDWARE_STEPS = [
+  { type: "puzzle", chapter: "1 · How computers think", title: "What is a CPU?", intro: "The CPU (Central Processing Unit) is the 'brain' of a computer. It follows instructions incredibly fast — billions per second — doing tiny steps like adding numbers and comparing values. Everything your computer does is the CPU following instructions one after another.", q: "What does the CPU do?", why: "Right — the CPU is the brain that runs instructions. Speed is why computers feel instant.", choices: ["Follows instructions very fast", "Stores your photos forever", "Connects to wifi"], correctIndex: 0 },
+  { type: "puzzle", chapter: "1 · How computers think", title: "Memory (RAM)", intro: "RAM (Random Access Memory) is the computer's short-term memory — a fast workspace where it keeps what it's using RIGHT NOW. It's fast but temporary: turn the computer off and RAM is wiped. That's different from storage (a hard drive), which keeps things permanently.", q: "What happens to RAM when you turn the computer off?", why: "Yes — RAM is temporary working memory. Permanent stuff lives on storage (drives).", choices: ["It's wiped (it's temporary)", "It saves forever", "It gets faster"], correctIndex: 0 },
+  { type: "puzzle", chapter: "1 · How computers think", title: "Bits and bytes", intro: "Computers only really understand two things: ON and OFF — written as 1 and 0. One of these is a 'bit'. Eight bits together make a 'byte'. With patterns of 1s and 0s, computers represent everything: numbers, letters, pictures, sound.", q: "What is the smallest piece of computer information?", why: "Exactly — a bit is a single 1 or 0. Everything is built from these.", choices: ["A bit (1 or 0)", "A photo", "A word"], correctIndex: 0 },
+  { type: "predict", chapter: "1 · How computers think", title: "Binary counting", intro: "In binary (1s and 0s), counting works like this: 1 is 'one', 10 is 'two', 11 is 'three', 100 is 'four'. Each spot is worth double the one to its right.", q: "What number is binary 101? (add the 'on' spots)", code: "binary: 1 0 1\nworth:  4 2 1", why: "Right! 101 = 4 + 1 = 5. Binary is just counting with only two digits.", choices: ["5", "3", "101"], correctIndex: 0 },
+  { type: "puzzle", chapter: "2 · Electricity basics", title: "What is a circuit?", intro: "A circuit is a loop that electricity flows around — from the battery's + side, through wires and parts, back to the - side. If the loop is broken (a gap), electricity can't flow and nothing works. A switch is just a controlled gap you can open and close.", q: "Why doesn't electricity flow if there's a gap in the circuit?", why: "Correct — electricity needs a complete loop. Break the loop, and the flow stops.", choices: ["The loop is broken", "Gaps speed it up", "Electricity likes gaps"], correctIndex: 0 },
+  { type: "puzzle", chapter: "2 · Electricity basics", title: "LEDs (lights!)", intro: "An LED (Light Emitting Diode) is a tiny light that glows when electricity flows through it the RIGHT way. LEDs only let electricity go one direction — the long leg is +, the short leg is -. Put it in backwards and it just won't light. They use very little power.", q: "What does an LED do?", why: "Yes — LEDs are little one-directional lights. Long leg to +, short leg to -.", choices: ["Glows when electricity flows the right way", "Stores electricity", "Makes sound"], correctIndex: 0 },
+  { type: "puzzle", chapter: "2 · Electricity basics", title: "Resistors", intro: "A resistor slows down electricity — it limits how much current flows. Why care? An LED hooked straight to a battery gets too much current and burns out. A resistor in the circuit protects it by holding the flow back to a safe amount. Think of it like a narrow pipe slowing water.", q: "Why put a resistor before an LED?", why: "Right — resistors limit current and protect parts like LEDs from too much flow.", choices: ["To limit current so the LED doesn't burn out", "To make it brighter", "To store power"], correctIndex: 0 },
+  { type: "puzzle", chapter: "2 · Electricity basics", title: "Transistors", intro: "A transistor is a tiny electronic SWITCH with no moving parts — a small electric signal can turn a bigger flow on or off. This is HUGE: it's the building block of all computer chips. A CPU has BILLIONS of transistors, each flipping on and off to do the 1s and 0s.", q: "Why are transistors so important?", why: "Exactly — transistors are switches, and billions of them make up every chip. They ARE how computers think.", choices: ["They're tiny switches that build computer chips", "They make light", "They store photos"], correctIndex: 0 },
+  { type: "puzzle", chapter: "3 · Build real things", title: "What is Arduino?", intro: "An Arduino is a small, cheap board you can program to control real-world electronics — make an LED blink, read a button, spin a motor, react to a sensor. You write simple code on your computer, send it to the board, and it runs on its own. It's how lots of people start building real gadgets.", q: "What's an Arduino for?", why: "Yes — Arduino lets your code control physical things. Blink an LED, read a sensor, build a robot.", choices: ["Programming real electronics (LEDs, motors, sensors)", "Browsing the web", "Storing files"], correctIndex: 0 },
+  { type: "puzzle", chapter: "3 · Build real things", title: "What is a Raspberry Pi?", intro: "A Raspberry Pi is a tiny but COMPLETE computer — about the size of a credit card — that costs very little. Unlike an Arduino (which just runs one program), a Pi runs a full operating system like a real computer: you can browse, code, and also control electronics. Great for bigger projects.", q: "How is a Raspberry Pi different from an Arduino?", why: "Right — a Pi is a whole tiny computer; an Arduino is a simpler board for running one program.", choices: ["It's a full computer with an operating system", "It can't be programmed", "It's much bigger"], correctIndex: 0 },
+  { type: "predict", chapter: "3 · Build real things", title: "Blink an LED (the 'hello world' of hardware)", intro: "The classic first hardware project: blink an LED on and off. The code turns a pin ON, waits, turns it OFF, waits, and repeats forever. Read this Arduino-style loop and predict what the LED does.", q: "What does the LED do?", code: "turn LED on\nwait 1 second\nturn LED off\nwait 1 second\n(repeat forever)", why: "Yes — on, wait, off, wait, repeat = a blinking light. That's the first thing most makers build!", choices: ["Blinks on and off forever", "Stays on", "Stays off"], correctIndex: 0 },
+];
+
+// ---------- AI section (how AI works + building with AI) ----------
+const AI_STEPS = [
+  { type: "puzzle", chapter: "1 · How AI works", title: "What is AI, really?", intro: "AI (Artificial Intelligence) is software that learns patterns from huge amounts of examples, instead of being told exact rules. Show it millions of cat photos and it learns what 'cat' looks like — nobody wrote 'a cat has pointy ears' as a rule; it figured out the pattern itself.", q: "How does AI mostly learn?", why: "Right — modern AI learns patterns from tons of examples, rather than following hand-written rules.", choices: ["By finding patterns in lots of examples", "By being given exact rules for everything", "By guessing randomly"], correctIndex: 0 },
+  { type: "puzzle", chapter: "1 · How AI works", title: "What is a model?", intro: "When people say an AI 'model', they mean the thing that came out of all that learning — a giant set of patterns the AI uses to make predictions. A language model (like the one powering this app's lessons) learned patterns of words, so it can predict what words come next and form helpful answers.", q: "What is an AI 'model'?", why: "Yes — a model is the bundle of learned patterns. A language model predicts words to form answers.", choices: ["The learned patterns the AI uses to make predictions", "A tiny robot", "A type of computer screen"], correctIndex: 0 },
+  { type: "puzzle", chapter: "1 · How AI works", title: "AI can be wrong", intro: "Because AI predicts based on patterns, it can sound confident but still be WRONG — it can 'make things up' (people call this hallucinating). That's why you should always double-check important AI answers. AI is a powerful helper, not a perfect oracle.", q: "Why should you double-check important AI answers?", why: "Exactly — AI predicts, so it can confidently make mistakes. Always verify what matters.", choices: ["AI can sound confident but still be wrong", "AI is never wrong", "AI refuses to answer"], correctIndex: 0 },
+  { type: "puzzle", chapter: "2 · Building with AI", title: "What is a prompt?", intro: "A prompt is just what you tell an AI — your instructions or question. The clearer and more specific your prompt, the better the answer. 'Write code' is vague; 'Write a Python function that adds two numbers and returns the result' gives the AI what it needs.", q: "What makes a better prompt?", why: "Right — specific, clear prompts get better results. Tell the AI exactly what you want.", choices: ["Being clear and specific", "Being as short as possible always", "Using big words"], correctIndex: 0 },
+  { type: "puzzle", chapter: "2 · Building with AI", title: "What is an API?", intro: "An API is how one program talks to another. When this app generates a lesson, your app sends a message to the AI's API and gets an answer back — like ordering at a counter: you make a request, you get a response. APIs are how you 'plug' AI into your own apps.", q: "What does an API let you do?", why: "Yes — an API is the messenger between programs. It's how your app uses AI behind the scenes.", choices: ["Let one program talk to another (like plugging AI into an app)", "Make websites colorful", "Speed up your wifi"], correctIndex: 0 },
+  { type: "predict", chapter: "2 · Building with AI", title: "How this app uses AI", intro: "Here's the real flow when you tap 'make a lesson set' in CodeQuest: your app sends a prompt to the AI through an API, the AI sends back lessons as data, and your app checks they actually work before showing them. Read the steps and pick what comes LAST.", q: "What's the last step?", code: "1. You tap a button\n2. App sends a prompt to the AI (API)\n3. AI sends back lessons\n4. ???", why: "Right — your app validates what the AI returns before trusting it. That's why bad lessons get filtered out!", choices: ["App checks the lessons work, then shows them", "The AI deletes your app", "Nothing happens"], correctIndex: 0 },
+];
+
 const LANGUAGE_CATALOG = [
   { id: "js", label: "JavaScript", emoji: "🟨", mode: "real", blurb: "The language of the web — runs in every browser." },
   { id: "py", label: "Python", emoji: "🐍", mode: "real", blurb: "Famous for being readable. Great first or second language." },
@@ -595,10 +780,47 @@ async function askTeacher({ project, stepIdx, code, question, signal }) {
   return await callClaude([{ role: "user", content: ctx }], { system: sys, maxTokens: 700, signal });
 }
 
+// A free-chat AI tutor — ask anything about coding, computers, or AI.
+async function askTutor(history, question, signal) {
+  const sys =
+    "You are a friendly tutor for an app that teaches kids and beginners about coding, computers, and AI. " +
+    "Answer questions clearly, simply, and encouragingly, in plain language a beginner understands. " +
+    "Keep answers fairly short. Use little examples or analogies when they help. Keep everything age-appropriate and positive.";
+  const msgs = [
+    ...history.map((m) => ({ role: m.role === "you" ? "user" : "assistant", content: m.text })),
+    { role: "user", content: question },
+  ];
+  return await callClaude(msgs, { system: sys, maxTokens: 700, signal });
+}
+
 // ---------- Class registry (General + every catalog language) ----------
-const HAND_BUILT = { general: GENERAL_STEPS, js: JS_STEPS, py: PY_STEPS };
+const JAVA_STEPS = [
+  { type: "run", lang: "java", langLabel: "Java", chapter: "1 · Real Java", title: "Print a greeting",
+    teach: "Java prints with System.out.println(...). The code goes inside main. Make it print exactly: Hello, CodeQuest!",
+    example: 'System.out.println("Hi"); // prints Hi',
+    starter: 'public class Main {\n  public static void main(String[] args) {\n    // print Hello, CodeQuest!\n    \n  }\n}',
+    expectedOutput: "Hello, CodeQuest!",
+    why: "🎉 That's real Java — compiled and run on a server, printing your exact line." },
+  { type: "run", lang: "java", langLabel: "Java", chapter: "1 · Real Java", title: "Add two numbers",
+    teach: "You can print the result of math. Print the sum of 7 and 5 (it should show 12).",
+    example: "System.out.println(2 + 3); // prints 5",
+    starter: 'public class Main {\n  public static void main(String[] args) {\n    // print 7 + 5\n    \n  }\n}',
+    expectedOutput: "12",
+    why: "🎉 Real Java math, really executed." },
+];
+const CPP_STEPS = [
+  { type: "run", lang: "cpp", langLabel: "C++", chapter: "1 · Real C++", title: "Print a greeting",
+    teach: "C++ prints with std::cout. Make it print exactly: Hello, CodeQuest!",
+    example: 'std::cout << "Hi" << std::endl;',
+    starter: '#include <iostream>\nint main() {\n  // print Hello, CodeQuest!\n  \n  return 0;\n}',
+    expectedOutput: "Hello, CodeQuest!",
+    why: "🎉 Real C++ — compiled and run for real." },
+];
+const HAND_BUILT = { general: GENERAL_STEPS, js: JS_STEPS, py: PY_STEPS, java: JAVA_STEPS, cpp: CPP_STEPS };
 const CLASSES = [
   { id: "general", label: "General Coding", emoji: "🧠", mode: "concept", blurb: "Start here. Learn to THINK like a coder — patterns, steps, and the universal building blocks (functions, return, loops…) that exist in every language.", steps: GENERAL_STEPS },
+  { id: "hardware", label: "How Computers Work", emoji: "🔌", mode: "concept", blurb: "Peek inside the machine — CPUs, memory, bits, and real electronics: circuits, LEDs, resistors, transistors, Arduino, and Raspberry Pi.", steps: HARDWARE_STEPS },
+  { id: "ai", label: "Understanding AI", emoji: "🤖", mode: "concept", blurb: "What AI really is, how it learns, why it's sometimes wrong, and how apps (like this one!) build with prompts and APIs. Includes a chat tutor.", steps: AI_STEPS },
   ...LANGUAGE_CATALOG.map((l) => ({ id: l.id, label: l.label, emoji: l.emoji, mode: l.mode, blurb: l.blurb, steps: HAND_BUILT[l.id] || [] })),
 ];
 
@@ -825,6 +1047,39 @@ function Home({ progress, aiLessons, savedProjects = [], onOpenClass, onOpenProj
 }
 
 // ---------- CLASS VIEW (chapters) ----------
+function TutorChat() {
+  const [chat, setChat] = useState([]);
+  const [q, setQ] = useState("");
+  const [busy, setBusy] = useState(false);
+  const ask = async () => {
+    const question = q.trim(); if (!question) return;
+    const history = chat;
+    setChat((c) => [...c, { role: "you", text: question }]); setQ(""); setBusy(true);
+    try {
+      const a = await askTutor(history, question);
+      setChat((c) => [...c, { role: "tutor", text: a }]);
+    } catch {
+      setChat((c) => [...c, { role: "tutor", text: "I couldn't answer just now — the tutor needs the live AI connection. Try again in a moment." }]);
+    } finally { setBusy(false); }
+  };
+  return (
+    <div className="cq-teacher" style={{ marginBottom: 22 }}>
+      <div className="cq-teacher-head">🤖 Ask the AI tutor anything</div>
+      {chat.length > 0 && (
+        <div className="cq-teacher-log">
+          {chat.map((m, i) => <div key={i} className={`cq-bubble ${m.role === "you" ? "you" : "teacher"}`}>{m.text}</div>)}
+          {busy && <div className="cq-bubble teacher">…</div>}
+        </div>
+      )}
+      <div className="cq-teacher-inputrow">
+        <input className="cq-search" placeholder="e.g. what is a variable? how does wifi work?" value={q}
+          onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") ask(); }} />
+        <button className="cq-run" onClick={ask} disabled={!q.trim() || busy}>{busy ? "…" : "Ask"}</button>
+      </div>
+    </div>
+  );
+}
+
 function ClassView({ cls, doneSet, progress, onBack, onOpenStep, onContinue, onAddAi, onAddCourse, onAddAndOpenSet, onStayOnClass }) {
   const chapters = chaptersOf(cls);
   const done = doneSet.size, total = cls.steps.length;
@@ -928,6 +1183,8 @@ function ClassView({ cls, doneSet, progress, onBack, onOpenStep, onContinue, onA
         </div>
       </section>
 
+      {cls.id === "ai" && <TutorChat />}
+
       <div className="cq-chapters">
         {chapters.map((ch) => {
           const chDone = ch.stepIdxs.filter((i) => doneSet.has(i)).length;
@@ -1021,6 +1278,8 @@ function LessonRunner({ cls, idx, doneSet, onDone, onUndone, onBack, goStep }) {
       {activeStep.type === "pick" && <PickStep key={stepKey} step={activeStep} onDone={complete} />}
       {activeStep.type === "build" && <BuildStep key={stepKey} step={activeStep} onDone={complete} />}
       {activeStep.type === "fill" && <FillStep key={stepKey} step={activeStep} onDone={complete} />}
+      {activeStep.type === "run" && <RunStep key={stepKey} step={activeStep} onDone={complete} />}
+      {activeStep.type === "visual" && <VisualStep key={stepKey} step={activeStep} onDone={complete} />}
       {activeStep.type === "type" && <TypeStep key={stepKey} step={activeStep} onDone={complete} />}
       {activeStep.type === "aitype" && <AITypeStep key={stepKey} step={activeStep} onDone={complete} />}
 
@@ -1304,6 +1563,122 @@ function FillStep({ step, onDone }) {
       </div>
       {choice && !correct && <div className="cq-nudge">Not quite — think about what doubles a number. Tap another.</div>}
       {correct && <div className="cq-takeaway">✅ {step.why}</div>}
+    </div>
+  );
+}
+
+function RunStep({ step, onDone }) {
+  // Real execution for compiled/other languages via Piston. The learner writes a
+  // program that PRINTS output; we run it for real and compare to expectedOutput.
+  const [code, setCode] = useState(step.starter || "");
+  const [out, setOut] = useState(null); // { stdout, stderr, ok, passed }
+  const [running, setRunning] = useState(false);
+  const [err, setErr] = useState("");
+
+  const run = async () => {
+    setRunning(true); setErr(""); setOut(null);
+    try {
+      const r = await runViaPiston(step.lang, code, step.stdin);
+      const passed = r.ok && (step.expectedOutput != null ? outputMatches(r.stdout, step.expectedOutput) : true);
+      setOut({ ...r, passed });
+      if (passed) onDone();
+    } catch {
+      setErr("Couldn't run your code just now — the code runner needs the live connection (it runs on the server). Try again in a moment.");
+    } finally { setRunning(false); }
+  };
+
+  const onKeyDown = (e) => { if (e.key === "Tab") { e.preventDefault(); const el = e.target, s = el.selectionStart; setCode(code.slice(0, s) + "  " + code.slice(el.selectionEnd)); requestAnimationFrame(() => { el.selectionStart = el.selectionEnd = s + 2; }); } };
+
+  return (
+    <div className="cq-card2">
+      <h1 className="cq-h1">{step.title} <span className="cq-universal">runs for real</span></h1>
+      {(step.teach || step.example) ? (
+        <div className="cq-teach">
+          {step.teach && <p className="cq-teach-text">{step.teach}</p>}
+          {step.example && <div className="cq-teach-example"><span className="cq-teach-label">Example</span><pre>{step.example}</pre></div>}
+          <p className="cq-teach-now">Now you try 👇</p>
+        </div>
+      ) : (step.intro && <p className="cq-intro">{step.intro}</p>)}
+      {step.expectedOutput != null && (
+        <div className="cq-expected"><span className="cq-expected-label">Make it print:</span><pre>{step.expectedOutput}</pre></div>
+      )}
+
+      <div className="cq-editor-bar"><span className="cq-dot" /><span className="cq-dot" /><span className="cq-dot" /><span className="cq-filename">{step.langLabel || step.lang}</span></div>
+      <textarea className="cq-editor" value={code} spellCheck={false} onChange={(e) => { setCode(e.target.value); setOut(null); }} onKeyDown={onKeyDown} style={{ minHeight: 180 }} />
+      <div className="cq-buildrow"><button className="cq-run" onClick={run} disabled={running || !code.trim()}>{running ? "Running…" : "▶ Run it"}</button></div>
+
+      {err && <div className="cq-nudge">{err}</div>}
+      {out && (
+        <div className="cq-runout">
+          <div className="cq-runout-label">Output</div>
+          <pre className="cq-console">{out.stdout || out.stderr || "(no output)"}</pre>
+          {out.stderr && !out.stdout && <div className="cq-runout-note">⚠ Your code had an error (see above).</div>}
+          {step.expectedOutput != null && !out.passed && out.ok && <div className="cq-nudge">Close — the output doesn't match what's expected yet. Compare carefully!</div>}
+        </div>
+      )}
+      {out?.passed && <div className="cq-takeaway big">{step.why || "🎉 It compiled, ran, and printed exactly the right thing — for real."}</div>}
+    </div>
+  );
+}
+
+function VisualStep({ step, onDone }) {
+  // Learner writes visual code in their language; we internally translate to
+  // canvas JS and show it running in a sandboxed iframe — like it really ran.
+  const [code, setCode] = useState(step.starter || "");
+  const [busy, setBusy] = useState(false);
+  const [srcDoc, setSrcDoc] = useState("");
+  const [err, setErr] = useState("");
+  const [hasRun, setHasRun] = useState(false);
+
+  const showIt = async () => {
+    setBusy(true); setErr("");
+    try {
+      // 1) Check the learner's code actually works BEFORE sending to the AI.
+      //    (Python lessons run a real headless check; other langs skip to translate.)
+      if ((step.lang || "py") === "py") {
+        const pre = await precheckPython(code);
+        if (!pre.ok) {
+          setErr("Your code has an error: " + pre.why + "  — fix it and try again.");
+          setBusy(false);
+          return;
+        }
+      }
+      // 2) Only valid code reaches the AI translator.
+      const js = await translateToCanvas(step.lang || "py", code);
+      if (!js) throw new Error("empty");
+      setSrcDoc(canvasSandboxHTML(js));
+      setHasRun(true);
+      onDone(); // visual lessons complete on a successful show
+    } catch {
+      setErr("Couldn't run that visual just now — it needs the live AI connection to translate. Try again in a moment.");
+    } finally { setBusy(false); }
+  };
+
+  const onKeyDown = (e) => { if (e.key === "Tab") { e.preventDefault(); const el = e.target, s = el.selectionStart; setCode(code.slice(0, s) + "  " + code.slice(el.selectionEnd)); requestAnimationFrame(() => { el.selectionStart = el.selectionEnd = s + 2; }); } };
+  const fileName = step.lang === "py" ? "game.py" : (step.lang || "code") + " file";
+
+  return (
+    <div className="cq-card2">
+      <h1 className="cq-h1">{step.title} <span className="cq-universal">visual</span></h1>
+      {(step.teach || step.example) ? (
+        <div className="cq-teach">
+          {step.teach && <p className="cq-teach-text">{step.teach}</p>}
+          {step.example && <div className="cq-teach-example"><span className="cq-teach-label">Example</span><pre>{step.example}</pre></div>}
+          <p className="cq-teach-now">Write it, then tap “Run visually” 👇</p>
+        </div>
+      ) : (step.intro && <p className="cq-intro">{step.intro}</p>)}
+
+      <div className="cq-editor-bar"><span className="cq-dot" /><span className="cq-dot" /><span className="cq-dot" /><span className="cq-filename">{fileName}</span></div>
+      <textarea className="cq-editor" value={code} spellCheck={false} onChange={(e) => setCode(e.target.value)} onKeyDown={onKeyDown} style={{ minHeight: 180 }} />
+      <div className="cq-buildrow"><button className="cq-run" onClick={showIt} disabled={busy || !code.trim()}>{busy ? "Showing…" : "▶ Run visually"}</button></div>
+
+      {err && <div className="cq-nudge">{err}</div>}
+      {srcDoc && (
+        <div className="cq-canvaswrap">
+          <iframe title="visual output" className="cq-canvas" sandbox="allow-scripts" srcDoc={srcDoc} />
+        </div>
+      )}
+      {hasRun && !err && <div className="cq-takeaway big">{step.why || "🎉 Your code drew that — nice!"}</div>}
     </div>
   );
 }
@@ -1733,6 +2108,15 @@ const CSS = `
 .cq-teach-label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:var(--teal);font-weight:700;margin-bottom:6px}
 .cq-teach-example pre{margin:0;font-family:var(--mono);font-size:13.5px;line-height:1.6;color:var(--ink);white-space:pre-wrap}
 .cq-teach-now{margin:0;font-size:13px;font-weight:700;color:var(--teal)}
+.cq-canvaswrap{margin-top:16px;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#000}
+.cq-canvas{width:100%;height:420px;border:none;display:block;background:#0e1320}
+.cq-expected{margin:14px 0;background:var(--bg-0);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.cq-expected-label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:var(--amber);font-weight:700;margin-bottom:6px}
+.cq-expected pre{margin:0;font-family:var(--mono);font-size:14px;color:var(--ink);white-space:pre-wrap}
+.cq-runout{margin-top:16px}
+.cq-runout-label{font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:var(--ink-faint);font-weight:700;margin-bottom:6px}
+.cq-console{background:#0a0e1a;border:1px solid var(--line);border-radius:10px;padding:14px;font-family:var(--mono);font-size:13.5px;color:#cfe9d8;white-space:pre-wrap;max-height:260px;overflow:auto;margin:0}
+.cq-runout-note{color:#ff8aa3;font-size:13px;margin-top:8px}
 
 /* ============ FEEDBACK ============ */
 .cq-takeaway{background:linear-gradient(100deg,var(--teal-ghost),var(--violet-ghost));border:1px solid rgba(94,224,192,.4);border-radius:12px;padding:16px;font-size:15px;line-height:1.6;font-weight:500;animation:cq-pop .35s cubic-bezier(.2,.8,.3,1.2)}
