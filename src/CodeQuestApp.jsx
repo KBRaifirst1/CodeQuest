@@ -449,6 +449,22 @@ const topicSystemFor = (langLabel, runnable) =>
   "\"tests\":array of >=2 {\"args\":array,\"expected\":any}} ] }. " +
   `Use real ${langLabel} syntax exactly. Keep it beginner-friendly. Every starter must NOT pass its tests; every solution MUST pass.`;
 
+// Retry a generate-and-validate operation a few times before giving up.
+// The free AI model occasionally returns something that fails validation; a
+// silent retry usually succeeds on the next attempt, so the learner rarely sees
+// an error. Only throws after all attempts fail.
+async function withRetry(fn, attempts = 3, delayMs = 400) {
+  let lastErr;
+  for (let i = 0; i < attempts; i++) {
+    try { return await fn(); }
+    catch (e) {
+      lastErr = e;
+      if (i < attempts - 1) await new Promise((r) => setTimeout(r, delayMs));
+    }
+  }
+  throw lastErr;
+}
+
 async function generateTopicUnit({ classId = "js", langLabel = "JavaScript", priorTopics, signal }) {
   const runnable = classId === "js" || classId === "py";
   const ask = `Make a fresh themed ${langLabel} set now. Avoid these topics already covered: ${(priorTopics || []).join(", ") || "none"}. Pick a NEW beginner topic and 3-5 lessons for it. Remember: each lesson explains the idea first, then a worked example, then the exercise.`;
@@ -1097,7 +1113,7 @@ function ClassView({ cls, doneSet, progress, onBack, onOpenStep, onContinue, onA
   const buildCourse = async () => {
     setCourseBusy(true); setCourseErr("");
     try {
-      const lessons = await generateCourse(cls.id, progress || {});
+      const lessons = await withRetry(() => generateCourse(cls.id, progress || {}));
       onAddCourse(lessons);
     } catch (e) {
       setCourseErr(`Couldn't build the ${cls.label} class right now — lesson generation needs the live AI connection (it runs inside the Claude.ai artifact). Please try again in a moment.`);
@@ -1115,19 +1131,19 @@ function ClassView({ cls, doneSet, progress, onBack, onOpenStep, onContinue, onA
     if (cls.id === "general") {
       // kid-proof brain-training — generate a SET of puzzles, grouped together
       let lessons = null;
-      try { lessons = await generateGeneralLessons(progress || {}); } catch { lessons = null; }
+      try { lessons = await withRetry(() => generateGeneralLessons(progress || {})); } catch { lessons = null; }
       if (lessons && lessons.length) onAddAndOpenSet(lessons);
       else setGenErr("Couldn't make new puzzles right now — generation needs the live AI connection. Please try again in a moment.");
     } else if (cls.mode === "real") {
       // themed topic set in THIS language (JS runs natively, Python via Pyodide)
       let unit = null;
-      try { unit = await generateTopicUnit({ classId: cls.id, langLabel: cls.label, priorTopics }); } catch { unit = null; }
+      try { unit = await withRetry(() => generateTopicUnit({ classId: cls.id, langLabel: cls.label, priorTopics })); } catch { unit = null; }
       if (unit && unit.lessons.length) { setLastTopic(unit.topic); onAddAndOpenSet(unit.lessons); }
       else setGenErr(`Couldn't make a new ${cls.label} set right now — generation needs the live AI connection. Please try again in a moment.`);
     } else {
       // AI-judged language
       let lessons = null;
-      try { lessons = await generateCourse(cls.id, progress || {}); } catch { lessons = null; }
+      try { lessons = await withRetry(() => generateCourse(cls.id, progress || {})); } catch { lessons = null; }
       if (lessons && lessons.length) onAddAndOpenSet(lessons);
       else setGenErr(`Couldn't make more ${cls.label} right now — generation needs the live AI connection. Please try again in a moment.`);
     }
@@ -1779,14 +1795,14 @@ function ProjectPicker({ onStart, onBack }) {
 
   const loadSuggestions = async () => {
     setLoadingSug(true); setSugErr("");
-    try { setSuggestions(await suggestProjects()); }
+    try { setSuggestions(await withRetry(() => suggestProjects())); }
     catch { setSugErr("Couldn't load ideas right now — generation needs the live AI connection. You can still type your own below."); }
     finally { setLoadingSug(false); }
   };
 
   const start = async (chosenIdea) => {
     setBuilding(true); setBuildErr("");
-    try { const plan = await planProject(chosenIdea); onStart(plan); }
+    try { const plan = await withRetry(() => planProject(chosenIdea)); onStart(plan); }
     catch { setBuildErr("Couldn't plan that project right now — it needs the live AI connection. Please try again in a moment."); }
     finally { setBuilding(false); }
   };
