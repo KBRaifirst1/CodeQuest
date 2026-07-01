@@ -408,8 +408,13 @@ async function runViaPiston(langId, code, stdin, signal) {
     method: "POST", headers: { "Content-Type": "application/json" }, signal,
     body: JSON.stringify({ langId, code, stdin: stdin || "" }),
   });
-  if (!res.ok) throw new Error(`Runner unavailable (${res.status})`);
-  return await res.json(); // { stdout, stderr, code, ok }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    // Surface the real reason (from run.js) instead of a generic message.
+    const detail = data.error || data.detail || `HTTP ${res.status}`;
+    throw new Error(detail);
+  }
+  return data; // { stdout, stderr, code, ok }
 }
 function normalizeOut(s) {
   return String(s == null ? "" : s).replace(/\r\n/g, "\n").replace(/[ \t]+$/gm, "").trim();
@@ -1072,7 +1077,7 @@ function TutorChat() {
     const history = chat;
     setChat((c) => [...c, { role: "you", text: question }]); setQ(""); setBusy(true);
     try {
-      const a = await askTutor(history, question);
+      const a = await withRetry(() => askTutor(history, question));
       setChat((c) => [...c, { role: "tutor", text: a }]);
     } catch {
       setChat((c) => [...c, { role: "tutor", text: "I couldn't answer just now — the tutor needs the live AI connection. Try again in a moment." }]);
@@ -1594,12 +1599,12 @@ function RunStep({ step, onDone }) {
   const run = async () => {
     setRunning(true); setErr(""); setOut(null);
     try {
-      const r = await runViaPiston(step.lang, code, step.stdin);
+      const r = await withRetry(() => runViaPiston(step.lang, code, step.stdin), 2, 600);
       const passed = r.ok && (step.expectedOutput != null ? outputMatches(r.stdout, step.expectedOutput) : true);
       setOut({ ...r, passed });
       if (passed) onDone();
-    } catch {
-      setErr("Couldn't run your code just now — the code runner needs the live connection (it runs on the server). Try again in a moment.");
+    } catch (e) {
+      setErr("Couldn't run your code: " + (e?.message || "unknown error") + ". (If this keeps happening, the public code runner may be busy — try again shortly.)");
     } finally { setRunning(false); }
   };
 
@@ -1659,9 +1664,13 @@ function VisualStep({ step, onDone }) {
           return;
         }
       }
-      // 2) Only valid code reaches the AI translator.
-      const js = await translateToCanvas(step.lang || "py", code);
-      if (!js) throw new Error("empty");
+      // 2) Only valid code reaches the AI translator. Retry a few times, since
+      //    the free model occasionally returns empty/garbage on the first try.
+      const js = await withRetry(async () => {
+        const out = await translateToCanvas(step.lang || "py", code);
+        if (!out || out.length < 10) throw new Error("empty");
+        return out;
+      });
       setSrcDoc(canvasSandboxHTML(js));
       setHasRun(true);
       onDone(); // visual lessons complete on a successful show
