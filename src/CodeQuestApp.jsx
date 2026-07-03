@@ -695,6 +695,7 @@ async function generateGeneralLessons(progressMap, signal) {
 
 async function generateCourse(classId, progressMap, signal) {
   const cfg = LANG_CFG[classId];
+  if (!cfg) throw new Error("This class doesn't support AI-generated lessons.");
   const learned = conceptsLearnedElsewhere(progressMap, classId);
   const prior = priorKnowledgeClause(learned, cfg.label);
   const ask = `Generate the course now. ${prior}`;
@@ -1132,7 +1133,9 @@ function ClassView({ cls, doneSet, progress, onBack, onOpenStep, onContinue, onA
 
   // "Make more" generates fresh lessons via AI. No fake fallbacks — if the AI
   // isn't available, we say so honestly rather than show borrowed/wrong lessons.
-  const canGenerate = done >= 1; // available once they've done at least one lesson
+  // Hardware & AI are fixed concept curricula — no AI generation for them.
+  const FIXED_CLASSES = ["hardware", "ai"];
+  const canGenerate = done >= 1 && !FIXED_CLASSES.includes(cls.id);
   const [lastTopic, setLastTopic] = useState("");
   const priorTopics = [...new Set([...cls.steps.map((s) => s.topic).filter(Boolean), lastTopic].filter(Boolean))];
   const makeAnother = async () => {
