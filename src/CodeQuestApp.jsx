@@ -263,8 +263,13 @@ async function callClaude(messages, { system, maxTokens = 900, signal } = {}) {
     method: "POST", headers: { "Content-Type": "application/json" }, signal,
     body: JSON.stringify({ messages, system, maxTokens }),
   });
-  if (!res.ok) throw new Error(`AI unavailable (${res.status})`);
-  const data = await res.json();
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    // Surface the real reason (from api/ai.js) so failures are diagnosable.
+    const reason = data.error || `HTTP ${res.status}`;
+    const extra = data.detail ? ` — ${String(data.detail).slice(0, 160)}` : "";
+    throw new Error(reason + extra);
+  }
   return (data.text || "").trim();
 }
 function extractJSON(raw) {
@@ -1132,25 +1137,26 @@ function ClassView({ cls, doneSet, progress, onBack, onOpenStep, onContinue, onA
   const priorTopics = [...new Set([...cls.steps.map((s) => s.topic).filter(Boolean), lastTopic].filter(Boolean))];
   const makeAnother = async () => {
     setGenBusy(true); setGenErr("");
+    let lastError = "";
 
     if (cls.id === "general") {
       // kid-proof brain-training — generate a SET of puzzles, grouped together
       let lessons = null;
-      try { lessons = await withRetry(() => generateGeneralLessons(progress || {})); } catch { lessons = null; }
+      try { lessons = await withRetry(() => generateGeneralLessons(progress || {})); } catch (e) { lessons = null; lastError = e?.message || ""; }
       if (lessons && lessons.length) onAddAndOpenSet(lessons);
-      else setGenErr("Couldn't make new puzzles right now — generation needs the live AI connection. Please try again in a moment.");
+      else setGenErr("Couldn't make new puzzles right now. " + (lastError ? "(" + lastError + ")" : "Please try again in a moment."));
     } else if (cls.mode === "real") {
       // themed topic set in THIS language (JS runs natively, Python via Pyodide)
       let unit = null;
-      try { unit = await withRetry(() => generateTopicUnit({ classId: cls.id, langLabel: cls.label, priorTopics })); } catch { unit = null; }
+      try { unit = await withRetry(() => generateTopicUnit({ classId: cls.id, langLabel: cls.label, priorTopics })); } catch (e) { unit = null; lastError = e?.message || ""; }
       if (unit && unit.lessons.length) { setLastTopic(unit.topic); onAddAndOpenSet(unit.lessons); }
-      else setGenErr(`Couldn't make a new ${cls.label} set right now — generation needs the live AI connection. Please try again in a moment.`);
+      else setGenErr(`Couldn't make a new ${cls.label} set right now. ` + (lastError ? "(" + lastError + ")" : "Please try again in a moment."));
     } else {
       // AI-judged language
       let lessons = null;
-      try { lessons = await withRetry(() => generateCourse(cls.id, progress || {})); } catch { lessons = null; }
+      try { lessons = await withRetry(() => generateCourse(cls.id, progress || {})); } catch (e) { lessons = null; lastError = e?.message || ""; }
       if (lessons && lessons.length) onAddAndOpenSet(lessons);
-      else setGenErr(`Couldn't make more ${cls.label} right now — generation needs the live AI connection. Please try again in a moment.`);
+      else setGenErr(`Couldn't make more ${cls.label} right now. ` + (lastError ? "(" + lastError + ")" : "Please try again in a moment."));
     }
     setGenBusy(false);
   };
