@@ -294,14 +294,40 @@ function extractJSON(raw) {
     if (c === "{") depth++;
     else if (c === "}") { depth--; if (depth === 0) { end = i; break; } }
   }
-  if (end === -1) throw new Error("unbalanced JSON");
-  const chunk = s.slice(first, end + 1);
-  try { return JSON.parse(chunk); }
-  catch {
-    // Common Gemini quirk: trailing commas before ] or }. Strip and retry.
-    const repaired = chunk.replace(/,(\s*[}\]])/g, "$1");
-    return JSON.parse(repaired);
+  if (end !== -1) {
+    const chunk = s.slice(first, end + 1);
+    try { return JSON.parse(chunk); }
+    catch {
+      // Common Gemini quirk: trailing commas before ] or }. Strip and retry.
+      return JSON.parse(chunk.replace(/,(\s*[}\]])/g, "$1"));
+    }
   }
+
+  // TRUNCATED response (Gemini hit maxTokens mid-JSON). Salvage: extract all
+  // complete objects from the "lessons" array so the learner still gets useful
+  // content instead of a hard error.
+  const arrStart = s.indexOf("[", first);
+  if (arrStart === -1) throw new Error("unbalanced JSON (no array to salvage)");
+  let arrDepth = 0, objDepth = 0, inS = false, e2 = false;
+  let lastCompleteObjectEnd = -1;
+  for (let i = arrStart; i < s.length; i++) {
+    const c = s[i];
+    if (e2) { e2 = false; continue; }
+    if (c === "\\") { e2 = true; continue; }
+    if (c === '"') { inS = !inS; continue; }
+    if (inS) continue;
+    if (c === "[") arrDepth++;
+    else if (c === "]") arrDepth--;
+    else if (c === "{") objDepth++;
+    else if (c === "}") {
+      objDepth--;
+      if (objDepth === 0 && arrDepth === 1) lastCompleteObjectEnd = i;
+    }
+  }
+  if (lastCompleteObjectEnd === -1) throw new Error("unbalanced JSON (no complete objects)");
+  const salvaged = s.slice(first, lastCompleteObjectEnd + 1) + "]}";
+  try { return JSON.parse(salvaged); }
+  catch { return JSON.parse(salvaged.replace(/,(\s*[}\]])/g, "$1")); }
 }
 
 // ---------- Pre-check: validate the learner's Python BEFORE translating ----------
@@ -662,7 +688,7 @@ async function generateTopicUnit({ classId = "js", langLabel = "JavaScript", pri
     ? `Make a themed ${langLabel} set about "${customTopic}" now. Create ${howMany} lessons that teach this specific topic, easy to harder. ${diff} Each lesson explains the idea first, then a worked example, then the exercise.`
     : `Make a fresh themed ${langLabel} set now. Avoid these topics already covered: ${(priorTopics || []).join(", ") || "none"}. Pick a NEW beginner topic and ${howMany} lessons for it. ${diff} Remember: each lesson explains the idea first, then a worked example, then the exercise.`;
   let raw;
-  try { raw = await callClaude([{ role: "user", content: ask }], { system: topicSystemFor(langLabel, runnable), maxTokens: 2600, signal }); }
+  try { raw = await callClaude([{ role: "user", content: ask }], { system: topicSystemFor(langLabel, runnable), maxTokens: 3500, signal }); }
   catch { throw new Error("ai-failed"); }
   let parsed; try { parsed = extractJSON(raw); } catch (e) { throw new Error("bad-json: " + (e?.message || "parse failed")); }
   const topic = (parsed.topic || "More practice").toString().slice(0, 40);
@@ -830,7 +856,7 @@ async function generateGeneralLessons(progressMap, signal, { customTopic = null,
     diff + " " +
     `Keep numbers small. Make ${howMany} lessons, clearly ramping from easy to challenging.${topicClause}`;
   let raw;
-  try { raw = await callClaude([{ role: "user", content: `Generate ${howMany} kid-safe general-coding lessons now.${topicClause}` }], { system: sys, maxTokens: 1800, signal }); }
+  try { raw = await callClaude([{ role: "user", content: `Generate ${howMany} kid-safe general-coding lessons now.${topicClause}` }], { system: sys, maxTokens: 3500, signal }); }
   catch { throw new Error("ai-failed"); }
   let parsed; try { parsed = extractJSON(raw); } catch (e) { throw new Error("bad-json: " + (e?.message || "parse failed")); }
   const lessons = Array.isArray(parsed.lessons) ? parsed.lessons : [];
@@ -890,7 +916,7 @@ async function generateConceptLessons(section, { customTopic = null, count = nul
     "Example of a valid response: {\"lessons\":[{\"type\":\"puzzle\",\"title\":\"What is X?\",\"intro\":\"X is a thing that does Y. It works by...\",\"q\":\"What does X do?\",\"choices\":[\"does Y\",\"does Z\",\"nothing\"],\"correctIndex\":0,\"why\":\"X's purpose is to do Y.\"}]}. " +
     `Make ${howMany} lessons, ramping from easier to harder. ${diff} Keep it accurate and beginner-friendly. ${focus}`;
   let raw;
-  try { raw = await callClaude([{ role: "user", content: `Generate ${howMany} lessons about ${cfg.label} now. ${focus}` }], { system: sys, maxTokens: 2000, signal }); }
+  try { raw = await callClaude([{ role: "user", content: `Generate ${howMany} lessons about ${cfg.label} now. ${focus}` }], { system: sys, maxTokens: 4000, signal }); }
   catch { throw new Error("ai-failed"); }
   let parsed; try { parsed = extractJSON(raw); } catch (e) { throw new Error("bad-json: " + (e?.message || "parse failed")); }
   const lessons = Array.isArray(parsed.lessons) ? parsed.lessons : [];
@@ -917,7 +943,7 @@ async function generateCourse(classId, progressMap, signal) {
   const prior = priorKnowledgeClause(learned, cfg.label);
   const ask = `Generate the course now. ${prior}`;
   let raw;
-  try { raw = await callClaude([{ role: "user", content: ask }], { system: langGenSystem(cfg), maxTokens: 2500, signal }); }
+  try { raw = await callClaude([{ role: "user", content: ask }], { system: langGenSystem(cfg), maxTokens: 3500, signal }); }
   catch (e) { throw new Error("ai-failed"); }
   let parsed;
   try { parsed = extractJSON(raw); } catch (e) { throw new Error("bad-json: " + (e?.message || "parse failed")); }
