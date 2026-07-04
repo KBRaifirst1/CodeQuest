@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useRef } from "react";
 
+// CODEQUEST_VERSION_MARKER: TABS_AND_HERO_V1
+// (search this string to confirm you have the latest file)
+
 // ============================================================
 // CodeQuest — Course hub.
 //   • Main screen: pick a language CLASS (course-style, chapters shown)
@@ -273,10 +276,32 @@ async function callClaude(messages, { system, maxTokens = 900, signal } = {}) {
   return (data.text || "").trim();
 }
 function extractJSON(raw) {
-  let s = raw.replace(/```json/gi, "").replace(/```/g, "").trim();
-  const a = s.indexOf("{"), b = s.lastIndexOf("}");
-  if (a === -1 || b === -1) throw new Error("no JSON");
-  return JSON.parse(s.slice(a, b + 1));
+  if (!raw || typeof raw !== "string") throw new Error("empty response");
+  // Strip markdown code fences (any language tag)
+  let s = raw.replace(/```(?:json|javascript|js)?\s*/gi, "").replace(/```/g, "").trim();
+  // Trim off any prose before the first { and after the last }
+  s = s.replace(/^[^{[]*/, "").replace(/[^}\]]*$/, "");
+  const first = s.indexOf("{");
+  if (first === -1) throw new Error("no JSON found in response");
+  // Walk to find the matching outer } (respect strings so braces inside text don't confuse us)
+  let depth = 0, inStr = false, esc = false, end = -1;
+  for (let i = first; i < s.length; i++) {
+    const c = s[i];
+    if (esc) { esc = false; continue; }
+    if (c === "\\") { esc = true; continue; }
+    if (c === '"') { inStr = !inStr; continue; }
+    if (inStr) continue;
+    if (c === "{") depth++;
+    else if (c === "}") { depth--; if (depth === 0) { end = i; break; } }
+  }
+  if (end === -1) throw new Error("unbalanced JSON");
+  const chunk = s.slice(first, end + 1);
+  try { return JSON.parse(chunk); }
+  catch {
+    // Common Gemini quirk: trailing commas before ] or }. Strip and retry.
+    const repaired = chunk.replace(/,(\s*[}\]])/g, "$1");
+    return JSON.parse(repaired);
+  }
 }
 
 // ---------- Pre-check: validate the learner's Python BEFORE translating ----------
@@ -475,16 +500,171 @@ async function withRetry(fn, attempts = 3, delayMs = 400) {
   throw lastErr;
 }
 
-async function generateTopicUnit({ classId = "js", langLabel = "JavaScript", priorTopics, customTopic = null, count = null, signal }) {
+// Difficulty guidance injected into generation prompts.
+// Three fixed levels, plus "auto" which computes a fine-grained skill score
+// from what the learner has actually done and picks a precise band.
+const DIFFICULTY = {
+  easy: "Keep every lesson EASY and gentle — simple ideas, short examples, one concept at a time, good for a total beginner just starting out.",
+  medium: "Use a MEDIUM difficulty — mix straightforward and slightly challenging lessons, ramping gently from easier to harder within the set.",
+  hard: "Make the lessons HARD and stretching — multi-step reasoning, trickier examples, and less hand-holding. Assume the learner already knows the basics.",
+};
+
+// ---------- AUTO DIFFICULTY: 7-measurement skill scoring ----------
+// Uses only data the app already tracks: which lessons are done in each class.
+// Weighted per the design spec: mainly the topic, mainly the class, some of
+// everything else (breadth, recency, cross-language transfer, global, challenge).
+function _scoreTopicFamiliarity(cls, doneSet, allClasses, progressMap, customTopic) {
+  if (!customTopic) return null;
+  const words = customTopic.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
+  if (words.length === 0) return null;
+  let relevant = 0, done = 0, crossBonus = 0;
+  cls.steps.forEach((s, i) => {
+    const hay = ((s.title || "") + " " + (s.chapter || "") + " " + (s.intro || "")).toLowerCase();
+    if (words.some((w) => hay.includes(w))) { relevant++; if (doneSet.has(i)) done++; }
+  });
+  for (const other of allClasses) {
+    if (other.id === cls.id) continue;
+    const od = progressMap[other.id] || new Set();
+    other.steps.forEach((s, i) => {
+      const hay = ((s.title || "") + " " + (s.chapter || "") + " " + (s.intro || "")).toLowerCase();
+      if (words.some((w) => hay.includes(w)) && od.has(i)) crossBonus++;
+    });
+  }
+  const base = relevant > 0 ? done / relevant : 0;
+  return Math.min(1, base + Math.min(0.3, crossBonus * 0.05));
+}
+function _scoreClassDepth(cls, doneSet) { return cls.steps.length === 0 ? 0 : Math.min(1, doneSet.size / cls.steps.length); }
+function _scoreClassBreadth(cls, doneSet) {
+  const touched = new Set(), all = new Set();
+  cls.steps.forEach((s, i) => { if (s.chapter) all.add(s.chapter); if (doneSet.has(i) && s.chapter) touched.add(s.chapter); });
+  return all.size === 0 ? 0 : touched.size / all.size;
+}
+function _scoreRecency(cls, doneSet) {
+  if (doneSet.size === 0) return 0;
+  const total = cls.steps.length; let sum = 0;
+  doneSet.forEach((i) => { sum += (i + 1) / total; });
+  return sum / doneSet.size;
+}
+function _scoreGlobal(progressMap) {
+  const total = Object.values(progressMap || {}).reduce((n, s) => n + (s?.size || 0), 0);
+  return Math.min(1, Math.log10(1 + total) / Math.log10(101));
+}
+function _scoreRelated(cls, allClasses, progressMap) {
+  if (cls.tab === "ai" || cls.tab === "hardware") return 0;
+  let points = 0, possible = 0;
+  for (const other of allClasses) {
+    if (other.id === cls.id) continue;
+    let w = 0;
+    if (other.id === "general") w = 0.5;
+    else if (other.tab === "coding" && cls.tab === "coding") w = 0.3;
+    if (w === 0) continue;
+    const doneOther = (progressMap[other.id] || new Set()).size;
+    if (other.steps.length > 0) { points += w * (doneOther / other.steps.length); possible += w; }
+  }
+  return possible > 0 ? points / possible : 0;
+}
+function _scoreChallenge(cls, aiLessonCount) {
+  const total = cls.steps.length + aiLessonCount;
+  const ratio = total > 0 ? aiLessonCount / total : 0;
+  return Math.min(1, ratio * 2);
+}
+
+// ---- Signal-based measurements (from lessonStats: time, first-try, retries) ----
+// Each returns 0..1, or null if there's no data (so it can be safely skipped).
+// Higher = more skilled.
+function _scoreTimeSignal(classStats, cls) {
+  const entries = Object.values(classStats || {}).filter((e) => e && typeof e.time === "number");
+  if (entries.length === 0) return null;
+  // For each lesson, higher time = struggled more. Map into a "handled it quickly" score.
+  // Clamp 8..300s: fast (<=15) = 1.0, slow (>=120) = 0.15, linear between.
+  const per = entries.map((e) => {
+    const t = Math.max(8, Math.min(300, e.time));
+    if (t <= 15) return 1.0;
+    if (t >= 120) return 0.15;
+    return 1.0 - ((t - 15) / 105) * 0.85;
+  });
+  return per.reduce((n, v) => n + v, 0) / per.length;
+}
+function _scoreFirstTry(classStats) {
+  const applicable = Object.values(classStats || {}).filter((e) => e && e.firstTry !== null && e.firstTry !== undefined);
+  if (applicable.length === 0) return null;
+  return applicable.filter((e) => e.firstTry === true).length / applicable.length;
+}
+function _scoreRetries(classStats) {
+  const applicable = Object.values(classStats || {}).filter((e) => e && e.firstTry !== null && e.firstTry !== undefined);
+  if (applicable.length === 0) return null;
+  // Cap each lesson's retries at 5 so one frustrated moment doesn't tank the score.
+  const avgRetries = applicable.reduce((n, e) => n + Math.min(5, e.retries || 0), 0) / applicable.length;
+  return 1 - avgRetries / 5;
+}
+
+function computeSkillScore({ cls, doneSet, progressMap, allClasses, customTopic, aiLessonCount = 0, lessonStats = {} }) {
+  // === Existing 7 measurements (progress-based) ===
+  const t = _scoreTopicFamiliarity(cls, doneSet, allClasses, progressMap, customTopic);
+  const d = _scoreClassDepth(cls, doneSet);
+  const b = _scoreClassBreadth(cls, doneSet);
+  const r = _scoreRecency(cls, doneSet);
+  const rel = _scoreRelated(cls, allClasses, progressMap);
+  const g = _scoreGlobal(progressMap);
+  const ch = _scoreChallenge(cls, aiLessonCount);
+  // === New 3 measurements (in-lesson behavior) ===
+  const classStats = lessonStats[cls.id] || {};
+  const ts = _scoreTimeSignal(classStats, cls);
+  const ft = _scoreFirstTry(classStats);
+  const rt = _scoreRetries(classStats);
+  // === Weighted composite ===
+  // Progress signals stay dominant (they show what you've studied).
+  // Behavior signals (time/first-try/retries) are added on top when available,
+  // so they refine but don't overwhelm — a learner who's done a lot but is fast
+  // and accurate goes higher than one who's done the same and struggled.
+  //
+  // Baseline weights when NO stats yet (old users): sum to 1.0 as before.
+  // When stats present: their weight comes out of the composite, keeping totals = 1.
+  const w = t !== null
+    ? { t: 0.30, d: 0.20, b: 0.08, r: 0.08, rel: 0.08, g: 0.04, ch: 0.04, ts: 0.08, ft: 0.06, rt: 0.04 }
+    : { t: 0,    d: 0.32, b: 0.16, r: 0.08, rel: 0.16, g: 0.04, ch: 0.04, ts: 0.10, ft: 0.06, rt: 0.04 };
+  // Skip missing signals and renormalize so weights of PRESENT signals still sum to 1.
+  const parts = [
+    { v: t,  w: w.t },  { v: d,   w: w.d },  { v: b,  w: w.b }, { v: r, w: w.r },
+    { v: rel, w: w.rel }, { v: g, w: w.g },  { v: ch, w: w.ch },
+    { v: ts, w: w.ts }, { v: ft, w: w.ft }, { v: rt, w: w.rt },
+  ].filter((p) => p.v !== null && p.v !== undefined && p.w > 0);
+  const totalW = parts.reduce((n, p) => n + p.w, 0);
+  const composite = totalW > 0 ? parts.reduce((n, p) => n + (p.w / totalW) * p.v, 0) : 0;
+  return Math.round((1 + composite * 9) * 10) / 10; // 1.0 - 10.0
+}
+function autoDifficultyClause(score) {
+  let band, guidance;
+  if (score < 1.5)      { band = "absolute-beginner"; guidance = "This learner is brand new. Use the gentlest possible pacing — one small idea per lesson, plainest words, tiny examples, absolutely no jargon."; }
+  else if (score < 2.5) { band = "very easy"; guidance = "Very gentle level. Simple ideas, short examples, no assumed knowledge, extra encouragement in the wording."; }
+  else if (score < 3.5) { band = "easy"; guidance = "Easy — simple ideas, short examples, one concept at a time, gentle for a beginner."; }
+  else if (score < 4.5) { band = "easy-medium"; guidance = "Slightly above easy — start simple but include one or two lessons that stretch a little."; }
+  else if (score < 5.5) { band = "medium"; guidance = "Medium difficulty — mix straightforward and moderately challenging lessons, ramping across the set."; }
+  else if (score < 6.5) { band = "medium-hard"; guidance = "A bit above medium — moderate challenge throughout, with some tricky moments. Less hand-holding."; }
+  else if (score < 7.5) { band = "hard"; guidance = "Hard and stretching — multi-step reasoning, trickier examples, less hand-holding. Assume the basics are known."; }
+  else if (score < 8.5) { band = "very hard"; guidance = "Very challenging — non-obvious problems, layered reasoning, subtle traps. Assume intermediate knowledge."; }
+  else if (score < 9.5) { band = "expert"; guidance = "Expert level — dense, precise, edge-cases and subtle distinctions. Assume solid intermediate-to-advanced knowledge."; }
+  else                  { band = "master"; guidance = "Master level — the hardest style you can produce: intricate, nuanced, unforgiving. Only for very experienced learners."; }
+  return `AUTO-CALIBRATED DIFFICULTY: the learner's measured skill for this is about ${score}/10 (${band}). ${guidance}`;
+}
+// If passed a preset key, use its guidance; if passed a long string (e.g. from
+// the auto-difficulty scorer), use it directly; if missing, default to medium.
+const difficultyClause = (level) => {
+  if (typeof level === "string" && level.length > 60) return level; // raw guidance
+  return DIFFICULTY[level] || DIFFICULTY.medium;
+};
+
+async function generateTopicUnit({ classId = "js", langLabel = "JavaScript", priorTopics, customTopic = null, count = null, difficulty = null, signal }) {
   const runnable = classId === "js" || classId === "py";
   const howMany = count && count >= 1 && count <= 10 ? count : "3-5";
+  const diff = difficultyClause(difficulty);
   const ask = customTopic
-    ? `Make a themed ${langLabel} set about "${customTopic}" now. Create ${howMany} lessons that teach this specific topic, easy to harder. Each lesson explains the idea first, then a worked example, then the exercise.`
-    : `Make a fresh themed ${langLabel} set now. Avoid these topics already covered: ${(priorTopics || []).join(", ") || "none"}. Pick a NEW beginner topic and ${howMany} lessons for it. Remember: each lesson explains the idea first, then a worked example, then the exercise.`;
+    ? `Make a themed ${langLabel} set about "${customTopic}" now. Create ${howMany} lessons that teach this specific topic, easy to harder. ${diff} Each lesson explains the idea first, then a worked example, then the exercise.`
+    : `Make a fresh themed ${langLabel} set now. Avoid these topics already covered: ${(priorTopics || []).join(", ") || "none"}. Pick a NEW beginner topic and ${howMany} lessons for it. ${diff} Remember: each lesson explains the idea first, then a worked example, then the exercise.`;
   let raw;
   try { raw = await callClaude([{ role: "user", content: ask }], { system: topicSystemFor(langLabel, runnable), maxTokens: 2600, signal }); }
   catch { throw new Error("ai-failed"); }
-  let parsed; try { parsed = extractJSON(raw); } catch { throw new Error("bad-json"); }
+  let parsed; try { parsed = extractJSON(raw); } catch (e) { throw new Error("bad-json: " + (e?.message || "parse failed")); }
   const topic = (parsed.topic || "More practice").toString().slice(0, 40);
   const chapter = `✨ ${topic}`;
   const rawLessons = Array.isArray(parsed.lessons) ? parsed.lessons.slice(0, 6) : [];
@@ -634,9 +814,10 @@ const LANG_CFG = Object.fromEntries(LANGUAGE_CATALOG.map((l) => [l.id, { label: 
 // ---------- Kid-proofing filter for General Coding generation ----------
 const HIDDEN_KNOWLEDGE = /\b(tea|coffee|boil|recipe|adult|minor|tax|mortgage|alcohol|drive|licen[cs]e|wine|beer|18\+|salary|invoice|stocks?)\b/i;
 
-async function generateGeneralLessons(progressMap, signal, { customTopic = null, count = null } = {}) {
+async function generateGeneralLessons(progressMap, signal, { customTopic = null, count = null, difficulty = null } = {}) {
   const howMany = count && count >= 1 && count <= 10 ? count : 5;
   const topicClause = customTopic ? ` Focus all lessons on this idea: "${customTopic}".` : "";
+  const diff = difficultyClause(difficulty);
   const sys =
     "You generate beginner 'how to think like a coder' exercises that are LANGUAGE-NEUTRAL and safe for young children (age 7+). " +
     "Respond with ONLY JSON: {\"lessons\":[ ... ]}, no prose, no fences. Each lesson is one of three types:\n" +
@@ -646,11 +827,12 @@ async function generateGeneralLessons(progressMap, signal, { customTopic = null,
     "CRITICAL KID-PROOF RULE: only use things a 7-year-old already knows from everyday life (getting dressed, opening doors, counting, colors, shapes, toys). " +
     "NEVER require outside knowledge like making tea/coffee, cooking, ages meaning adult, money, or anything a child wouldn't know. " +
     "DIFFICULTY: make the set progressively HARDER — start simple, but later lessons should stretch the learner with multi-step reasoning, longer patterns, nested steps, or trickier predictions (still kid-safe). Don't keep them all trivially easy. " +
+    diff + " " +
     `Keep numbers small. Make ${howMany} lessons, clearly ramping from easy to challenging.${topicClause}`;
   let raw;
   try { raw = await callClaude([{ role: "user", content: `Generate ${howMany} kid-safe general-coding lessons now.${topicClause}` }], { system: sys, maxTokens: 1800, signal }); }
   catch { throw new Error("ai-failed"); }
-  let parsed; try { parsed = extractJSON(raw); } catch { throw new Error("bad-json"); }
+  let parsed; try { parsed = extractJSON(raw); } catch (e) { throw new Error("bad-json: " + (e?.message || "parse failed")); }
   const lessons = Array.isArray(parsed.lessons) ? parsed.lessons : [];
   const out = [];
   for (const L of lessons) {
@@ -685,16 +867,18 @@ const CONCEPT_SECTIONS = {
     scope: "what AI is, how models learn from data, why AI can be wrong, prompts, APIs, tokens, training, and how apps use AI",
   },
 };
-async function generateConceptLessons(section, { customTopic = null, count = null, priorTitles = [], signal } = {}) {
+async function generateConceptLessons(section, { customTopic = null, count = null, priorTitles = [], difficulty = null, signal } = {}) {
   const cfg = CONCEPT_SECTIONS[section];
   if (!cfg) throw new Error("unknown-section");
   const howMany = count && count >= 1 && count <= 10 ? count : 4;
+  const diff = difficultyClause(difficulty);
   const focus = customTopic
     ? `Focus every lesson specifically on: "${customTopic}" (within ${cfg.label}).`
     : `Cover fresh sub-topics about ${cfg.scope}. Avoid repeating these already-covered titles: ${(priorTitles || []).join(", ") || "none"}.`;
   const sys =
     `You generate beginner lessons about ${cfg.label}. Each lesson TEACHES with a clear plain-language explanation, then asks ONE multiple-choice question to check understanding. ` +
-    "Respond with ONLY JSON: {\"lessons\":[ {" +
+    "CRITICAL: Respond with ONLY valid JSON. No prose before or after. No markdown fences. Start with { and end with }. " +
+    "Schema: {\"lessons\":[ {" +
     "\"type\":\"puzzle\", " +
     "\"title\":string (short), " +
     "\"intro\":string (2-4 plain sentences that TEACH the idea to a total beginner, no jargon without explaining it), " +
@@ -702,12 +886,13 @@ async function generateConceptLessons(section, { customTopic = null, count = nul
     "\"choices\":[string, string, string] (2-4 options), " +
     "\"correctIndex\":number (0-based index of the correct choice), " +
     "\"why\":string (1-2 sentences explaining why that answer is right) " +
-    "} ] }. No prose, no fences. " +
-    `Make ${howMany} lessons, ramping from easier to harder. Keep it accurate and beginner-friendly. ${focus}`;
+    "} ] }. " +
+    "Example of a valid response: {\"lessons\":[{\"type\":\"puzzle\",\"title\":\"What is X?\",\"intro\":\"X is a thing that does Y. It works by...\",\"q\":\"What does X do?\",\"choices\":[\"does Y\",\"does Z\",\"nothing\"],\"correctIndex\":0,\"why\":\"X's purpose is to do Y.\"}]}. " +
+    `Make ${howMany} lessons, ramping from easier to harder. ${diff} Keep it accurate and beginner-friendly. ${focus}`;
   let raw;
   try { raw = await callClaude([{ role: "user", content: `Generate ${howMany} lessons about ${cfg.label} now. ${focus}` }], { system: sys, maxTokens: 2000, signal }); }
   catch { throw new Error("ai-failed"); }
-  let parsed; try { parsed = extractJSON(raw); } catch { throw new Error("bad-json"); }
+  let parsed; try { parsed = extractJSON(raw); } catch (e) { throw new Error("bad-json: " + (e?.message || "parse failed")); }
   const lessons = Array.isArray(parsed.lessons) ? parsed.lessons : [];
   const out = [];
   const chapter = customTopic ? `✨ ${customTopic}` : "✨ More to explore";
@@ -735,7 +920,7 @@ async function generateCourse(classId, progressMap, signal) {
   try { raw = await callClaude([{ role: "user", content: ask }], { system: langGenSystem(cfg), maxTokens: 2500, signal }); }
   catch (e) { throw new Error("ai-failed"); }
   let parsed;
-  try { parsed = extractJSON(raw); } catch { throw new Error("bad-json"); }
+  try { parsed = extractJSON(raw); } catch (e) { throw new Error("bad-json: " + (e?.message || "parse failed")); }
   const lessons = Array.isArray(parsed.lessons) ? parsed.lessons : [];
   const out = [];
   for (const L of lessons) {
@@ -840,11 +1025,20 @@ async function askTeacher({ project, stepIdx, code, question, signal }) {
 }
 
 // A free-chat AI tutor — ask anything about coding, computers, or AI.
-async function askTutor(history, question, signal) {
-  const sys =
+async function askTutor(history, question, signal, context = null) {
+  // context = { classLabel, classKind } — makes the tutor knowledgeable about
+  // the specific class the learner is in. Falls back to general beginner tutor.
+  let sys =
     "You are a friendly tutor for an app that teaches kids and beginners about coding, computers, and AI. " +
     "Answer questions clearly, simply, and encouragingly, in plain language a beginner understands. " +
     "Keep answers fairly short. Use little examples or analogies when they help. Keep everything age-appropriate and positive.";
+  if (context?.classLabel) {
+    sys += ` The learner is currently in the "${context.classLabel}" class`;
+    if (context.classKind === "coding") sys += ` (a coding language)`;
+    else if (context.classKind === "ai") sys += ` (learning about AI)`;
+    else if (context.classKind === "hardware") sys += ` (learning about hardware and electronics)`;
+    sys += `. If their question is about that topic, tailor your answer to it. If it's about something else, still answer helpfully.`;
+  }
   const msgs = [
     ...history.map((m) => ({ role: m.role === "you" ? "user" : "assistant", content: m.text })),
     { role: "user", content: question },
@@ -949,16 +1143,30 @@ export default function App({ initialState, onPersist, onSignOut } = {}) {
   const [progress, setProgress] = useState(() => initialState?.progress || {}); // { classId: Set(doneStepIdx) }
   const [aiLessons, setAiLessons] = useState(() => initialState?.aiLessons || {}); // { classId: [generatedStep, ...] }
   const [savedProjects, setSavedProjects] = useState(() => initialState?.savedProjects || []); // finished projects
+  // Per-lesson stats for auto-difficulty: { classId: { stepIdx: { time, firstTry, retries } } }
+  // Old users with no lessonStats seed with an empty object — safe default, nothing crashes.
+  const [lessonStats, setLessonStats] = useState(() => initialState?.lessonStats || {});
 
   // Autosave to the cloud whenever saved state changes
   useEffect(() => {
-    if (onPersist) onPersist({ progress, aiLessons, savedProjects });
-  }, [progress, aiLessons, savedProjects, onPersist]);
+    if (onPersist) onPersist({ progress, aiLessons, savedProjects, lessonStats });
+  }, [progress, aiLessons, savedProjects, lessonStats, onPersist]);
 
   const classWithAI = (cls) => (aiLessons[cls.id]?.length ? { ...cls, steps: [...cls.steps, ...aiLessons[cls.id]] } : cls);
 
   const doneSetFor = (id) => progress[id] || new Set();
-  const markDone = (classId, idx) => setProgress((p) => { const s = new Set(p[classId] || new Set()); s.add(idx); return { ...p, [classId]: s }; });
+  const markDone = (classId, idx, stats) => {
+    setProgress((p) => { const s = new Set(p[classId] || new Set()); s.add(idx); return { ...p, [classId]: s }; });
+    // Only record stats if provided (backward-compat: older step components may not pass them).
+    // Only record on FIRST completion; if they redo a lesson we keep the first attempt.
+    if (stats && typeof stats === "object") {
+      setLessonStats((ls) => {
+        const existing = ls[classId]?.[idx];
+        if (existing) return ls; // preserve first-attempt stats
+        return { ...ls, [classId]: { ...(ls[classId] || {}), [idx]: stats } };
+      });
+    }
+  };
   const clearDone = (classId, idx) => setProgress((p) => { const s = new Set(p[classId] || new Set()); s.delete(idx); return { ...p, [classId]: s }; });
   const addAiLesson = (classId, lesson) => setAiLessons((a) => ({ ...a, [classId]: [...(a[classId] || []), lesson] }));
 
@@ -1014,7 +1222,7 @@ export default function App({ initialState, onPersist, onSignOut } = {}) {
           setScreen({ name: "lesson", id: baseCls.id, idx: openIdx });
         };
         const addAndOpenOne = (lesson) => addAndOpenSet([lesson]);
-        return <ClassView cls={cls} doneSet={doneSetFor(cls.id)} progress={progress}
+        return <ClassView cls={cls} doneSet={doneSetFor(cls.id)} progress={progress} lessonStats={lessonStats}
           onBack={() => setScreen({ name: "home" })}
           onOpenStep={(idx) => setScreen({ name: "lesson", id: cls.id, idx })}
           onContinue={() => setScreen({ name: "lesson", id: cls.id, idx: resumeIdx(cls, doneSetFor(cls.id)) })}
@@ -1027,7 +1235,7 @@ export default function App({ initialState, onPersist, onSignOut } = {}) {
       {screen.name === "lesson" && (() => {
         const cls = classWithAI(CLASSES.find((c) => c.id === screen.id));
         return <LessonRunner cls={cls} idx={screen.idx} doneSet={doneSetFor(cls.id)}
-          onDone={(i) => markDone(cls.id, i)} onUndone={(i) => clearDone(cls.id, i)}
+          onDone={(i, stats) => markDone(cls.id, i, stats)} onUndone={(i) => clearDone(cls.id, i)}
           onBack={() => setScreen({ name: "class", id: cls.id })}
           goStep={(i) => setScreen({ name: "lesson", id: cls.id, idx: i })} />;
       })()}
@@ -1042,6 +1250,8 @@ function Home({ progress, aiLessons, savedProjects = [], onOpenClass, onOpenProj
   const [query, setQuery] = useState("");
   const [tab, setTab] = useState("coding"); // coding | ai | hardware
   const totalLessonsDone = Object.values(progress).reduce((n, s) => n + s.size, 0);
+  // Per-tab lesson count — "new to AI" makes sense even if you've done 20 coding lessons.
+  const tabDone = CLASSES.filter((c) => c.tab === tab).reduce((n, c) => n + ((progress[c.id]?.size) || 0), 0);
   // find the class most recently in progress (highest done count, not 100%)
   const inProgress = CLASSES
     .map((cls) => {
@@ -1052,12 +1262,36 @@ function Home({ progress, aiLessons, savedProjects = [], onOpenClass, onOpenProj
     .filter((x) => x.done > 0 && x.pct < 100)
     .sort((a, b) => b.done - a.done)[0];
 
+  // Per-tab hero content — each tab feels distinctive, adapts to new vs returning.
+  const HERO_CONTENT = {
+    coding: {
+      newEyebrow: "Welcome", returningEyebrow: `${tabDone} coding ${tabDone === 1 ? "lesson" : "lessons"} in`,
+      newTitle: "Learn to code, from zero.", returningTitle: "Keep coding.",
+      newSub: <>Brand new? Start with <b>General Coding</b> — it teaches you to <b>think</b> like a coder using puzzles and plain examples, before any specific language.</>,
+      returningSub: <>Pick up where you left off, or explore a new language — <b>44</b> to choose from.</>,
+    },
+    ai: {
+      newEyebrow: "Understand AI", returningEyebrow: `${tabDone} AI ${tabDone === 1 ? "lesson" : "lessons"} in`,
+      newTitle: "How does AI actually work?", returningTitle: "Keep learning AI.",
+      newSub: <>New to this? Start with <b>AI Basics</b> — plain-language explanations of what AI really is, how it learns, and why it&apos;s sometimes wrong. There&apos;s an AI tutor chat waiting inside every class.</>,
+      returningSub: <>Jump back into a topic, or explore something new — from neural networks to building with AI in your own projects.</>,
+    },
+    hardware: {
+      newEyebrow: "See inside the machine", returningEyebrow: `${tabDone} hardware ${tabDone === 1 ? "lesson" : "lessons"} in`,
+      newTitle: "How does a computer really work?", returningTitle: "Keep building.",
+      newSub: <>Start with <b>Hardware Basics</b> — you&apos;ll go from &ldquo;a computer is just controlled electricity&rdquo; all the way to circuits, transistors, and the parts inside every device.</>,
+      returningSub: <>Pick up where you left off, or dig into another piece of the machine — CPU, circuits, or components.</>,
+    },
+  };
+  const hero = HERO_CONTENT[tab];
+  const isReturning = tabDone > 0;
+
   return (
     <main className="cq-main">
-      <section className="cq-welcome-banner">
-        <p className="cq-eyebrow">{totalLessonsDone > 0 ? `${totalLessonsDone} lessons in` : "Welcome"}</p>
-        <h1 className="cq-home-title">{totalLessonsDone > 0 ? "Keep going." : "Learn to code, from zero."}</h1>
-        <p className="cq-home-sub">Brand new to all of this? Start with <b>General Coding</b> — it teaches you to think like a coder using puzzles and plain examples, before any specific language. Then pick a language to learn its syntax.</p>
+      <section className={`cq-welcome-banner cq-hero-${tab}`}>
+        <p className="cq-eyebrow">{isReturning ? hero.returningEyebrow : hero.newEyebrow}</p>
+        <h1 className="cq-home-title">{isReturning ? hero.returningTitle : hero.newTitle}</h1>
+        <p className="cq-home-sub">{isReturning ? hero.returningSub : hero.newSub}</p>
       </section>
 
       {inProgress && (
@@ -1187,7 +1421,7 @@ function Home({ progress, aiLessons, savedProjects = [], onOpenClass, onOpenProj
 }
 
 // ---------- CLASS VIEW (chapters) ----------
-function TutorChat() {
+function TutorChat({ classLabel = null, classKind = null }) {
   const [chat, setChat] = useState([]);
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
@@ -1196,15 +1430,19 @@ function TutorChat() {
     const history = chat;
     setChat((c) => [...c, { role: "you", text: question }]); setQ(""); setBusy(true);
     try {
-      const a = await withRetry(() => askTutor(history, question));
+      const a = await withRetry(() => askTutor(history, question, undefined, { classLabel, classKind }));
       setChat((c) => [...c, { role: "tutor", text: a }]);
     } catch {
       setChat((c) => [...c, { role: "tutor", text: "I couldn't answer just now — the tutor needs the live AI connection. Try again in a moment." }]);
     } finally { setBusy(false); }
   };
+  const heading = classLabel ? `🤖 Ask about ${classLabel}, or anything else` : "🤖 Ask the AI tutor anything";
+  const placeholder = classLabel
+    ? `e.g. help with ${classLabel}, or ask anything`
+    : "e.g. what is a variable? how does wifi work?";
   return (
     <div className="cq-teacher" style={{ marginBottom: 22 }}>
-      <div className="cq-teacher-head">🤖 Ask the AI tutor anything</div>
+      <div className="cq-teacher-head">{heading}</div>
       {chat.length > 0 && (
         <div className="cq-teacher-log">
           {chat.map((m, i) => <div key={i} className={`cq-bubble ${m.role === "you" ? "you" : "teacher"}`}>{m.text}</div>)}
@@ -1212,7 +1450,7 @@ function TutorChat() {
         </div>
       )}
       <div className="cq-teacher-inputrow">
-        <input className="cq-search" placeholder="e.g. what is a variable? how does wifi work?" value={q}
+        <input className="cq-search" placeholder={placeholder} value={q}
           onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") ask(); }} />
         <button className="cq-run" onClick={ask} disabled={!q.trim() || busy}>{busy ? "…" : "Ask"}</button>
       </div>
@@ -1220,7 +1458,7 @@ function TutorChat() {
   );
 }
 
-function ClassView({ cls, doneSet, progress, onBack, onOpenStep, onContinue, onAddAi, onAddCourse, onAddAndOpenSet, onStayOnClass }) {
+function ClassView({ cls, doneSet, progress, lessonStats, onBack, onOpenStep, onContinue, onAddAi, onAddCourse, onAddAndOpenSet, onStayOnClass }) {
   const chapters = chaptersOf(cls);
   const done = doneSet.size, total = cls.steps.length;
   const pct = total ? Math.round((100 * done) / total) : 0;
@@ -1253,24 +1491,36 @@ function ClassView({ cls, doneSet, progress, onBack, onOpenStep, onContinue, onA
 
   // The topic-set builder: a queue of { mode:"ai"|"custom", topic, count }.
   const [showBuilder, setShowBuilder] = useState(false);
-  const [sets, setSets] = useState([{ mode: "ai", topic: "", count: 4 }]);
+  const [sets, setSets] = useState([{ mode: "ai", topic: "", count: 4, difficulty: "medium" }]);
   const updateSet = (i, patch) => setSets((prev) => prev.map((s, j) => (j === i ? { ...s, ...patch } : s)));
-  const addSet = () => setSets((prev) => [...prev, { mode: "ai", topic: "", count: 4 }]);
+  const addSet = () => setSets((prev) => [...prev, { mode: "ai", topic: "", count: 4, difficulty: "medium" }]);
   const removeSet = (i) => setSets((prev) => (prev.length > 1 ? prev.filter((_, j) => j !== i) : prev));
 
   // Generate ONE set based on its config, routing to the right generator.
   const generateOneSet = async (set) => {
     const customTopic = set.mode === "custom" ? set.topic.trim() : null;
     const count = set.count;
+    let difficulty = set.difficulty || "medium";
+
+    // "auto" → compute a fine-grained skill score from what they've actually done
+    // and hand the AI a precise guidance string instead of a preset level.
+    if (difficulty === "auto") {
+      const aiLessonCount = cls.steps.filter((s) => s.generated).length;
+      const score = computeSkillScore({
+        cls, doneSet, progressMap: progress || {},
+        allClasses: CLASSES, customTopic, aiLessonCount, lessonStats: lessonStats || {},
+      });
+      difficulty = autoDifficultyClause(score);
+    }
+
     if (cls.id === "general") {
-      return await withRetry(() => generateGeneralLessons(progress || {}, undefined, { customTopic, count }));
+      return await withRetry(() => generateGeneralLessons(progress || {}, undefined, { customTopic, count, difficulty }));
     }
     if (cls.tab === "hardware" || cls.tab === "ai") {
-      // Hardware & AI sub-classes generate concept lessons for their section.
-      return await withRetry(() => generateConceptLessons(cls.tab, { customTopic, count, priorTitles }));
+      return await withRetry(() => generateConceptLessons(cls.tab, { customTopic, count, priorTitles, difficulty }));
     }
     if (cls.mode === "real") {
-      const unit = await withRetry(() => generateTopicUnit({ classId: cls.id, langLabel: cls.label, priorTopics, customTopic, count }));
+      const unit = await withRetry(() => generateTopicUnit({ classId: cls.id, langLabel: cls.label, priorTopics, customTopic, count, difficulty }));
       if (unit && unit.lessons) { setLastTopic(unit.topic); return unit.lessons; }
       return null;
     }
@@ -1293,7 +1543,7 @@ function ClassView({ cls, doneSet, progress, onBack, onOpenStep, onContinue, onA
       catch (e) { if (!firstErr) firstErr = e?.message || "generation failed"; }
     }
     setGenBusy(false);
-    if (all.length) { setShowBuilder(false); setSets([{ mode: "ai", topic: "", count: 4 }]); onAddAndOpenSet(all); }
+    if (all.length) { setShowBuilder(false); setSets([{ mode: "ai", topic: "", count: 4, difficulty: "medium" }]); onAddAndOpenSet(all); }
     else setBuildErr("Couldn't generate those sets right now. " + (firstErr ? "(" + firstErr + ")" : "Please try again."));
   };
   // Empty class → show the build-course screen
@@ -1345,7 +1595,7 @@ function ClassView({ cls, doneSet, progress, onBack, onOpenStep, onContinue, onA
         </div>
       </section>
 
-      {cls.tab === "ai" && <TutorChat />}
+      <TutorChat classLabel={cls.label} classKind={cls.tab} />
 
       <div className="cq-chapters">
         {chapters.map((ch) => {
@@ -1409,6 +1659,16 @@ function ClassView({ cls, doneSet, progress, onBack, onOpenStep, onContinue, onA
                       {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => <option key={n} value={n}>{n}</option>)}
                     </select>
                   </div>
+                  <div className="cq-set-diff">
+                    <label>Difficulty</label>
+                    <div className="cq-diff-btns">
+                      {[["auto", "🎯 Auto"], ["easy", "😌 Easy"], ["medium", "⚖️ Medium"], ["hard", "🔥 Hard"]].map(([val, lbl]) => (
+                        <button key={val} className={`cq-diff-btn ${(s.difficulty || "medium") === val ? "on" : ""}`}
+                          onClick={() => updateSet(i, { difficulty: val })}>{lbl}</button>
+                      ))}
+                    </div>
+                    {(s.difficulty || "medium") === "auto" && <p className="cq-diff-hint">Uses what you've learned to pick the precise level.</p>}
+                  </div>
                 </div>
               ))}
               <button className="cq-addset" onClick={addSet}>+ Add another topic set</button>
@@ -1438,7 +1698,7 @@ function LessonRunner({ cls, idx, doneSet, onDone, onUndone, onBack, goStep }) {
   const hasHarder = !!activeStep.harder;
 
   const stepKey = `${cls.id}-${idx}-${depth}`;
-  const complete = () => onDone(idx);
+  const complete = (stats) => onDone(idx, stats);
 
   const goHarder = () => { setHarderLevel((h) => ({ ...h, [idx]: (h[idx] || 0) + 1 })); onUndone(idx); };
   const goEasier = () => { setHarderLevel((h) => ({ ...h, [idx]: Math.max(0, (h[idx] || 0) - 1) })); onUndone(idx); };
@@ -1487,9 +1747,31 @@ function LessonRunner({ cls, idx, doneSet, onDone, onUndone, onBack, goStep }) {
 }
 
 // ---------- Step components ----------
+// Shared hook for lesson-level stats tracking (used by every step component).
+// Starts a timer on mount, tracks wrong-answer count, produces a { time, firstTry, retries }
+// stats object at completion. Backward-compatible: components that don't record
+// answer attempts (read/concept/visual) just pass `null` for firstTry.
+function useLessonStats() {
+  const startRef = useRef(Date.now());
+  const wrongRef = useRef(0);
+  const recordWrong = () => { wrongRef.current += 1; };
+  const buildStats = (opts = {}) => {
+    // opts.applicable=false for pure-read steps (no correctness signal)
+    const time = Math.max(0, Math.round((Date.now() - startRef.current) / 1000));
+    const applicable = opts.applicable !== false;
+    return {
+      time,
+      firstTry: applicable ? wrongRef.current === 0 : null,
+      retries: wrongRef.current,
+    };
+  };
+  return { recordWrong, buildStats };
+}
+
 function ConceptStep({ step, onDone }) {
   const [tab, setTab] = useState(0); // which language tab
   const [picked, setPicked] = useState(null);
+  const stats = useLessonStats();
   const correct = picked === step.answer;
   return (
     <div className="cq-card2">
@@ -1519,7 +1801,11 @@ function ConceptStep({ step, onDone }) {
             const state = picked === null ? "" : i === step.answer ? "right" : i === picked ? "wrong" : "dim";
             return (
               <button key={i} className={`cq-choice ${state}`} disabled={correct}
-                onClick={() => { setPicked(i); if (i === step.answer) onDone(); }}>
+                onClick={() => {
+                  setPicked(i);
+                  if (i === step.answer) onDone(stats.buildStats());
+                  else stats.recordWrong();
+                }}>
                 <span className="cq-choice-plain">{c}</span>
                 {picked !== null && i === step.answer && <span className="cq-choice-mark">✓</span>}
                 {picked === i && i !== step.answer && <span className="cq-choice-mark">try again</span>}
@@ -1537,6 +1823,7 @@ function ConceptStep({ step, onDone }) {
 
 function PuzzleStep({ step, onDone }) {
   const [picked, setPicked] = useState(null);
+  const stats = useLessonStats();
   const correct = picked === step.correctIndex;
   return (
     <div className="cq-card2">
@@ -1548,7 +1835,11 @@ function PuzzleStep({ step, onDone }) {
           const state = picked === null ? "" : i === step.correctIndex ? "right" : i === picked ? "wrong" : "dim";
           return (
             <button key={i} className={`cq-choice ${state}`} disabled={correct}
-              onClick={() => { setPicked(i); if (i === step.correctIndex) onDone(); }}>
+              onClick={() => {
+                setPicked(i);
+                if (i === step.correctIndex) onDone(stats.buildStats());
+                else stats.recordWrong();
+              }}>
               <span className="cq-choice-plain">{c}</span>
               {picked !== null && i === step.correctIndex && <span className="cq-choice-mark">✓</span>}
               {picked === i && i !== step.correctIndex && <span className="cq-choice-mark">try again</span>}
@@ -1564,6 +1855,7 @@ function PuzzleStep({ step, onDone }) {
 
 function PredictStep({ step, onDone }) {
   const [picked, setPicked] = useState(null);
+  const stats = useLessonStats();
   const correct = picked === step.correctIndex;
   return (
     <div className="cq-card2">
@@ -1576,7 +1868,11 @@ function PredictStep({ step, onDone }) {
           const state = picked === null ? "" : i === step.correctIndex ? "right" : i === picked ? "wrong" : "dim";
           return (
             <button key={i} className={`cq-choice ${state}`} disabled={correct}
-              onClick={() => { setPicked(i); if (i === step.correctIndex) onDone(); }}>
+              onClick={() => {
+                setPicked(i);
+                if (i === step.correctIndex) onDone(stats.buildStats());
+                else stats.recordWrong();
+              }}>
               <code>{c}</code>
               {picked !== null && i === step.correctIndex && <span className="cq-choice-mark">✓</span>}
               {picked === i && i !== step.correctIndex && <span className="cq-choice-mark">try again</span>}
@@ -1594,6 +1890,7 @@ function OrderStep({ step, onDone }) {
   // arranged holds item indices in the user's chosen order; remaining are unused
   const [arranged, setArranged] = useState([]);
   const [result, setResult] = useState(null);
+  const stats = useLessonStats();
   const remaining = step.items.map((_, i) => i).filter((i) => !arranged.includes(i));
 
   const place = (i) => { if (result?.ok) return; setArranged((a) => [...a, i]); setResult(null); };
@@ -1603,8 +1900,8 @@ function OrderStep({ step, onDone }) {
     let firstWrong = -1;
     if (arranged.length !== step.correct.length) firstWrong = Math.min(arranged.length, step.correct.length);
     else for (let i = 0; i < step.correct.length; i++) if (arranged[i] !== step.correct[i]) { firstWrong = i; break; }
-    if (firstWrong === -1) { setResult({ ok: true }); onDone(); }
-    else setResult({ ok: false, firstWrong });
+    if (firstWrong === -1) { setResult({ ok: true }); onDone(stats.buildStats()); }
+    else { stats.recordWrong(); setResult({ ok: false, firstWrong }); }
   };
 
   return (
@@ -1647,7 +1944,8 @@ function OrderStep({ step, onDone }) {
 function ReadStep({ step, onDone }) {
   const [open, setOpen] = useState(null);
   const [seen, setSeen] = useState(new Set());
-  useEffect(() => { if (seen.size >= step.line.length) onDone(); }, [seen]);
+  const stats = useLessonStats();
+  useEffect(() => { if (seen.size >= step.line.length) onDone(stats.buildStats({ applicable: false })); }, [seen]);
   return (
     <div className="cq-card2">
       <h1 className="cq-h1">{step.title}</h1>
@@ -1667,6 +1965,7 @@ function ReadStep({ step, onDone }) {
 
 function PickStep({ step, onDone }) {
   const [picked, setPicked] = useState(null);
+  const stats = useLessonStats();
   const correct = picked === step.correctIndex;
   return (
     <div className="cq-card2">
@@ -1678,7 +1977,11 @@ function PickStep({ step, onDone }) {
           const state = picked === null ? "" : i === step.correctIndex ? "right" : i === picked ? "wrong" : "dim";
           return (
             <button key={i} className={`cq-choice ${state}`} disabled={correct}
-              onClick={() => { setPicked(i); if (i === step.correctIndex) onDone(); }}>
+              onClick={() => {
+                setPicked(i);
+                if (i === step.correctIndex) onDone(stats.buildStats());
+                else stats.recordWrong();
+              }}>
               <code>{c}</code>
               {picked !== null && i === step.correctIndex && <span className="cq-choice-mark">✓</span>}
               {picked === i && i !== step.correctIndex && <span className="cq-choice-mark">try again</span>}
@@ -1695,6 +1998,7 @@ function PickStep({ step, onDone }) {
 function BuildStep({ step, onDone }) {
   const [placed, setPlaced] = useState([]);
   const [result, setResult] = useState(null);
+  const stats = useLessonStats();
   const remaining = step.bank.map((tok, i) => ({ tok, i })).filter(({ i }) => !placed.some((p) => p.bankIdx === i));
   const tapBank = (tok, bankIdx) => { if (result?.ok) return; setPlaced((p) => [...p, { tok, bankIdx }]); setResult(null); };
   const tapPlaced = (slotIdx) => { if (result?.ok) return; setPlaced((p) => p.filter((_, i) => i !== slotIdx)); setResult(null); };
@@ -1704,9 +2008,9 @@ function BuildStep({ step, onDone }) {
     if (tapped.length !== step.target.length) firstWrong = Math.min(tapped.length, step.target.length);
     else for (let i = 0; i < step.target.length; i++) if (tapped[i] !== step.target[i]) { firstWrong = i; break; }
     if (firstWrong === -1) {
-      if (step.runnable) { const v = verifyRuns(step.buildFull(tapped), step.fnName, step.tests); if (!v.ok) { setResult({ ok: false, msg: `Pieces are in order, but ${v.why}` }); return; } }
-      setResult({ ok: true }); onDone();
-    } else setResult({ ok: false, firstWrong });
+      if (step.runnable) { const v = verifyRuns(step.buildFull(tapped), step.fnName, step.tests); if (!v.ok) { stats.recordWrong(); setResult({ ok: false, msg: `Pieces are in order, but ${v.why}` }); return; } }
+      setResult({ ok: true }); onDone(stats.buildStats());
+    } else { stats.recordWrong(); setResult({ ok: false, firstWrong }); }
   };
   return (
     <div className="cq-card2">
@@ -1740,8 +2044,17 @@ function BuildStep({ step, onDone }) {
 
 function FillStep({ step, onDone }) {
   const [choice, setChoice] = useState(null);
+  const stats = useLessonStats();
   const correct = choice === step.answer;
-  const pick = (c) => { setChoice(c); if (c === step.answer) { if (step.runnable) { const v = verifyRuns(step.buildFull(c), step.fnName, step.tests); if (!v.ok) return; } onDone(); } };
+  const pick = (c) => {
+    setChoice(c);
+    if (c === step.answer) {
+      if (step.runnable) { const v = verifyRuns(step.buildFull(c), step.fnName, step.tests); if (!v.ok) { stats.recordWrong(); return; } }
+      onDone(stats.buildStats());
+    } else {
+      stats.recordWrong();
+    }
+  };
   return (
     <div className="cq-card2">
       <h1 className="cq-h1">{step.title}</h1>
@@ -1766,6 +2079,7 @@ function RunStep({ step, onDone }) {
   const [out, setOut] = useState(null); // { stdout, stderr, ok, passed }
   const [running, setRunning] = useState(false);
   const [err, setErr] = useState("");
+  const stats = useLessonStats();
 
   const run = async () => {
     setRunning(true); setErr(""); setOut(null);
@@ -1773,8 +2087,10 @@ function RunStep({ step, onDone }) {
       const r = await withRetry(() => runViaPiston(step.lang, code, step.stdin), 2, 600);
       const passed = r.ok && (step.expectedOutput != null ? outputMatches(r.stdout, step.expectedOutput) : true);
       setOut({ ...r, passed });
-      if (passed) onDone();
+      if (passed) onDone(stats.buildStats());
+      else stats.recordWrong();
     } catch (e) {
+      stats.recordWrong();
       setErr("Couldn't run your code: " + (e?.message || "unknown error") + ". (If this keeps happening, the public code runner may be busy — try again shortly.)");
     } finally { setRunning(false); }
   };
@@ -1821,6 +2137,7 @@ function VisualStep({ step, onDone }) {
   const [srcDoc, setSrcDoc] = useState("");
   const [err, setErr] = useState("");
   const [hasRun, setHasRun] = useState(false);
+  const stats = useLessonStats();
 
   const showIt = async () => {
     setBusy(true); setErr("");
@@ -1830,6 +2147,7 @@ function VisualStep({ step, onDone }) {
       if ((step.lang || "py") === "py") {
         const pre = await precheckPython(code);
         if (!pre.ok) {
+          stats.recordWrong();
           setErr("Your code has an error: " + pre.why + "  — fix it and try again.");
           setBusy(false);
           return;
@@ -1844,8 +2162,9 @@ function VisualStep({ step, onDone }) {
       });
       setSrcDoc(canvasSandboxHTML(js));
       setHasRun(true);
-      onDone(); // visual lessons complete on a successful show
+      onDone(stats.buildStats({ applicable: false })); // visual lessons complete on a successful show
     } catch {
+      stats.recordWrong();
       setErr("Couldn't run that visual just now — it needs the live AI connection to translate. Try again in a moment.");
     } finally { setBusy(false); }
   };
@@ -1883,6 +2202,7 @@ function TypeStep({ step, onDone }) {
   const [code, setCode] = useState(step.starter);
   const [result, setResult] = useState(null);
   const [running, setRunning] = useState(false);
+  const stats = useLessonStats();
   const run = async () => {
     setRunning(true);
     // Python lessons verify via Pyodide; JS via native runner
@@ -1890,7 +2210,8 @@ function TypeStep({ step, onDone }) {
     if (step.lang === "py") v = await verifyPython(code, step.fnName, step.tests);
     else v = verifyRuns(code, step.fnName, step.tests);
     setResult(v); setRunning(false);
-    if (v.ok) onDone();
+    if (v.ok) onDone(stats.buildStats());
+    else stats.recordWrong();
   };
   const onKeyDown = (e) => { if (e.key === "Tab") { e.preventDefault(); const el = e.target, s = el.selectionStart; setCode(code.slice(0, s) + "  " + code.slice(el.selectionEnd)); requestAnimationFrame(() => { el.selectionStart = el.selectionEnd = s + 2; }); } };
   const fileName = step.lang === "py" ? "solution.py" : "your-code.js";
@@ -1926,10 +2247,16 @@ function AITypeStep({ step, onDone }) {
   const [code, setCode] = useState(step.starter || "");
   const [result, setResult] = useState(null);
   const [running, setRunning] = useState(false);
+  const stats = useLessonStats();
   const submit = async () => {
     setRunning(true);
-    try { const r = await gradeAICode(step, code); setResult(r); if (r.verdict === "pass") onDone(); }
-    catch { setResult({ verdict: "fail", feedback: "Couldn't reach the reviewer — try again.", checks: [] }); }
+    try {
+      const r = await gradeAICode(step, code);
+      setResult(r);
+      if (r.verdict === "pass") onDone(stats.buildStats());
+      else stats.recordWrong();
+    }
+    catch { stats.recordWrong(); setResult({ verdict: "fail", feedback: "Couldn't reach the reviewer — try again.", checks: [] }); }
     finally { setRunning(false); }
   };
   const onKeyDown = (e) => { if (e.key === "Tab") { e.preventDefault(); const el = e.target, s = el.selectionStart; setCode(code.slice(0, s) + "  " + code.slice(el.selectionEnd)); requestAnimationFrame(() => { el.selectionStart = el.selectionEnd = s + 2; }); } };
@@ -2188,6 +2515,8 @@ const CSS = `
 
 /* ============ HOME / DASHBOARD ============ */
 .cq-welcome-banner{margin-bottom:30px}
+.cq-hero-ai .cq-eyebrow{color:var(--violet)}
+.cq-hero-hardware .cq-eyebrow{color:var(--amber)}
 .cq-home-title{font-family:var(--display);font-size:38px;font-weight:600;letter-spacing:-1.2px;margin:0 0 14px;line-height:1.04}
 .cq-home-sub{color:var(--ink-soft);font-size:15.5px;line-height:1.6;margin:0;max-width:600px}
 .cq-home-sub b{color:var(--ink);font-weight:600}
@@ -2282,6 +2611,12 @@ const CSS = `
 .cq-set-mode.on{border-color:var(--violet);color:var(--ink);background:var(--violet-ghost)}
 .cq-set-topic{width:100%;box-sizing:border-box;padding:11px 13px;border-radius:10px;background:var(--bg-2);border:1px solid var(--line);color:var(--ink);font-family:inherit;font-size:14px;margin-bottom:12px;outline:none}
 .cq-set-count{display:flex;align-items:center;gap:10px}
+.cq-set-diff{margin-top:12px}
+.cq-set-diff label{display:block;font-size:13px;color:var(--ink-soft);margin-bottom:7px}
+.cq-diff-btns{display:flex;gap:8px}
+.cq-diff-btn{flex:1;background:var(--bg-2);border:1.5px solid var(--line);color:var(--ink-soft);border-radius:9px;padding:9px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:.15s}
+.cq-diff-btn.on{border-color:var(--violet);color:var(--ink);background:var(--violet-ghost)}
+.cq-diff-hint{font-size:12px;color:var(--ink-faint);margin:8px 0 0;font-style:italic}
 .cq-set-count label{font-size:13px;color:var(--ink-soft)}
 .cq-set-count select{background:var(--bg-2);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:7px 10px;font-family:inherit;font-size:14px;cursor:pointer}
 .cq-addset{background:none;border:1.5px dashed var(--line);color:var(--ink-soft);border-radius:10px;padding:11px;width:100%;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;margin-bottom:16px;transition:.15s}
