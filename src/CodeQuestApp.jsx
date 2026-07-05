@@ -296,6 +296,7 @@ function extractJSON(raw) {
   s = s.replace(/^[^{[]*/, "").replace(/[^}\]]*$/, "");
   const first = s.indexOf("{");
   if (first === -1) throw new Error("no JSON found in response");
+
   // Walk to find the matching outer } (respect strings so braces inside text don't confuse us)
   let depth = 0, inStr = false, esc = false, end = -1;
   for (let i = first; i < s.length; i++) {
@@ -307,22 +308,25 @@ function extractJSON(raw) {
     if (c === "{") depth++;
     else if (c === "}") { depth--; if (depth === 0) { end = i; break; } }
   }
+
+  // Path A: balanced outer JSON — try clean parse, then trailing-comma repair.
+  // If both fail, fall through to per-object salvage so one broken lesson
+  // doesn't ruin the whole set.
   if (end !== -1) {
     const chunk = s.slice(first, end + 1);
-    try { return JSON.parse(chunk); }
-    catch {
-      // Common Gemini quirk: trailing commas before ] or }. Strip and retry.
-      return JSON.parse(chunk.replace(/,(\s*[}\]])/g, "$1"));
-    }
+    try { return JSON.parse(chunk); } catch {}
+    try { return JSON.parse(chunk.replace(/,(\s*[}\]])/g, "$1")); } catch {}
+    // fall through
   }
 
-  // TRUNCATED response (Gemini hit maxTokens mid-JSON). Salvage: extract all
-  // complete objects from the "lessons" array so the learner still gets useful
-  // content instead of a hard error.
+  // Path B: either truncated OR balanced-but-broken. Extract every complete
+  // object at array-depth 1 individually. Good ones parse, bad ones skip.
+  // This handles both truncation (Gemini ran out of tokens) and mid-array
+  // syntax errors (Gemini wrote something like `"correctIndex": 0 (first)`).
   const arrStart = s.indexOf("[", first);
-  if (arrStart === -1) throw new Error("unbalanced JSON (no array to salvage)");
-  let arrDepth = 0, objDepth = 0, inS = false, e2 = false;
-  let lastCompleteObjectEnd = -1;
+  if (arrStart === -1) throw new Error("no salvageable array");
+  const objects = [];
+  let arrDepth = 0, objDepth = 0, inS = false, e2 = false, objStart = -1;
   for (let i = arrStart; i < s.length; i++) {
     const c = s[i];
     if (e2) { e2 = false; continue; }
@@ -331,16 +335,21 @@ function extractJSON(raw) {
     if (inS) continue;
     if (c === "[") arrDepth++;
     else if (c === "]") arrDepth--;
-    else if (c === "{") objDepth++;
+    else if (c === "{") { if (objDepth === 0 && arrDepth === 1) objStart = i; objDepth++; }
     else if (c === "}") {
       objDepth--;
-      if (objDepth === 0 && arrDepth === 1) lastCompleteObjectEnd = i;
+      if (objDepth === 0 && arrDepth === 1 && objStart !== -1) {
+        const objSrc = s.slice(objStart, i + 1);
+        let parsed = null;
+        try { parsed = JSON.parse(objSrc); }
+        catch { try { parsed = JSON.parse(objSrc.replace(/,(\s*[}\]])/g, "$1")); } catch {} }
+        if (parsed) objects.push(parsed);
+        objStart = -1;
+      }
     }
   }
-  if (lastCompleteObjectEnd === -1) throw new Error("unbalanced JSON (no complete objects)");
-  const salvaged = s.slice(first, lastCompleteObjectEnd + 1) + "]}";
-  try { return JSON.parse(salvaged); }
-  catch { return JSON.parse(salvaged.replace(/,(\s*[}\]])/g, "$1")); }
+  if (objects.length === 0) throw new Error("no valid objects to salvage");
+  return { lessons: objects };
 }
 
 // ---------- Pre-check: validate the learner's Python BEFORE translating ----------
