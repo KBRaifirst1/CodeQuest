@@ -295,7 +295,13 @@ function extractJSON(raw) {
   // Trim off any prose before the first { and after the last }
   s = s.replace(/^[^{[]*/, "").replace(/[^}\]]*$/, "");
   const first = s.indexOf("{");
-  if (first === -1) throw new Error("no JSON found in response");
+  if (first === -1) {
+    // Show what the AI actually said so we can diagnose refusals vs stalls vs prose.
+    const snippet = raw.trim().slice(0, 120).replace(/\s+/g, " ");
+    const looksRefusal = /\b(sorry|apologize|cannot|can't|unable|refuse)\b/i.test(raw.slice(0, 200));
+    const prefix = looksRefusal ? "AI refused" : "no JSON in response";
+    throw new Error(`${prefix} — Gemini said: "${snippet}${raw.length > 120 ? "…" : ""}"`);
+  }
 
   // Walk to find the matching outer } (respect strings so braces inside text don't confuse us)
   let depth = 0, inStr = false, esc = false, end = -1;
@@ -1209,7 +1215,28 @@ const resumeIdx = (cls, doneSet) => { for (let i = 0; i < cls.steps.length; i++)
 const modeLabel = (mode) => mode === "real" ? "real test grading" : mode === "concept" ? "think like a coder" : "AI-guided";
 
 export default function App({ initialState, onPersist, onSignOut } = {}) {
-  const [screen, setScreen] = useState({ name: "home" }); // home | class | lesson | projectPick | project
+  // Screen state is remembered in sessionStorage so a tab-away → tab-back
+  // doesn't bounce you out of the lesson/class you were in. sessionStorage
+  // survives navigation and remounts within the tab but clears when the tab closes.
+  const SCREEN_KEY = "cq_screen_v1";
+  const loadScreen = () => {
+    try {
+      const raw = typeof sessionStorage !== "undefined" ? sessionStorage.getItem(SCREEN_KEY) : null;
+      if (!raw) return { name: "home" };
+      const p = JSON.parse(raw);
+      if (!p || typeof p !== "object" || typeof p.name !== "string") return { name: "home" };
+      return p;
+    } catch { return { name: "home" }; }
+  };
+  const [screen, setScreenRaw] = useState(loadScreen);
+  const setScreen = (s) => {
+    setScreenRaw(s);
+    try {
+      if (typeof sessionStorage === "undefined") return;
+      if (!s || s.name === "home") sessionStorage.removeItem(SCREEN_KEY);
+      else sessionStorage.setItem(SCREEN_KEY, JSON.stringify(s));
+    } catch {}
+  };
   // Seed from cloud-loaded state when present (falls back to empty for standalone use)
   const [progress, setProgress] = useState(() => initialState?.progress || {}); // { classId: Set(doneStepIdx) }
   const [aiLessons, setAiLessons] = useState(() => initialState?.aiLessons || {}); // { classId: [generatedStep, ...] }
@@ -1282,6 +1309,7 @@ export default function App({ initialState, onPersist, onSignOut } = {}) {
 
       {screen.name === "class" && (() => {
         const baseCls = CLASSES.find((c) => c.id === screen.id);
+        if (!baseCls) { setTimeout(() => setScreen({ name: "home" }), 0); return null; }
         const cls = classWithAI(baseCls);
         // Add a set of lessons and open the FIRST of the new set — race-free.
         // We compute the open index from the authoritative state inside the
@@ -1309,7 +1337,15 @@ export default function App({ initialState, onPersist, onSignOut } = {}) {
       })()}
 
       {screen.name === "lesson" && (() => {
-        const cls = classWithAI(CLASSES.find((c) => c.id === screen.id));
+        const baseCls = CLASSES.find((c) => c.id === screen.id);
+        if (!baseCls) { setTimeout(() => setScreen({ name: "home" }), 0); return null; }
+        const cls = classWithAI(baseCls);
+        // Also guard against a persisted lesson index that's now out of range
+        const totalSteps = cls.steps.length;
+        if (typeof screen.idx !== "number" || screen.idx < 0 || screen.idx >= totalSteps) {
+          setTimeout(() => setScreen({ name: "class", id: cls.id }), 0);
+          return null;
+        }
         return <LessonRunner cls={cls} idx={screen.idx} doneSet={doneSetFor(cls.id)}
           onDone={(i, stats) => markDone(cls.id, i, stats)} onUndone={(i) => clearDone(cls.id, i)}
           onBack={() => setScreen({ name: "class", id: cls.id })}
@@ -1367,12 +1403,16 @@ function Home({ progress, aiLessons, savedProjects = [], profileDescription = ""
   return (
     <main className="cq-main">
       <section className={`cq-welcome-banner cq-hero-${tab}`}>
-        <button className="cq-profilebtn" onClick={() => { setDraftDesc(profileDescription || ""); setProfileOpen(true); }}>
-          🎯 <span className="cq-profilebtn-lbl">{profileDescription ? "Edit your Auto profile" : "Tell Auto about you"}</span>
-        </button>
         <p className="cq-eyebrow">{isReturning ? hero.returningEyebrow : hero.newEyebrow}</p>
         <h1 className="cq-home-title">{isReturning ? hero.returningTitle : hero.newTitle}</h1>
         <p className="cq-home-sub">{isReturning ? hero.returningSub : hero.newSub}</p>
+        <div className="cq-profilerow">
+          <button className={`cq-profilechip ${profileDescription ? "set" : ""}`}
+            onClick={() => { setDraftDesc(profileDescription || ""); setProfileOpen(true); }}>
+            <span className="cq-profilechip-icon">🎯</span>
+            <span className="cq-profilechip-lbl">{profileDescription ? "Edit your profile" : "Personalize Auto difficulty"}</span>
+          </button>
+        </div>
       </section>
 
       {profileOpen && (
@@ -2625,10 +2665,13 @@ const CSS = `
 .cq-back:hover{color:var(--ink)}
 
 /* ============ HOME / DASHBOARD ============ */
-.cq-welcome-banner{margin-bottom:30px;position:relative}
-.cq-profilebtn{position:absolute;top:0;right:0;background:var(--bg-2);border:1px solid var(--line);color:var(--ink-soft);padding:8px 13px;border-radius:99px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;transition:.15s;display:inline-flex;align-items:center;gap:6px}
-.cq-profilebtn:hover{border-color:var(--violet);color:var(--ink);background:var(--violet-ghost)}
-@media (max-width: 640px){ .cq-profilebtn-lbl{display:none} .cq-profilebtn{padding:8px 11px} }
+.cq-welcome-banner{margin-bottom:30px}
+.cq-profilerow{display:flex;justify-content:flex-end;margin-top:16px}
+.cq-profilechip{display:inline-flex;align-items:center;gap:7px;background:var(--bg-2);border:1px solid var(--line);color:var(--ink-soft);padding:8px 14px;border-radius:99px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:.15s}
+.cq-profilechip:hover{border-color:var(--violet);color:var(--ink);background:var(--violet-ghost);transform:translateY(-1px)}
+.cq-profilechip.set{border-color:var(--violet-ghost);color:var(--violet)}
+.cq-profilechip-icon{font-size:14px;line-height:1}
+@media (max-width: 400px){ .cq-profilerow{justify-content:stretch} .cq-profilechip{flex:1;justify-content:center} }
 .cq-modal-backdrop{position:fixed;inset:0;background:rgba(6,10,20,.72);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;padding:22px;z-index:100;animation:cqFadeIn .18s ease-out}
 .cq-modal{background:linear-gradient(180deg,var(--bg-1),var(--bg-2));border:1px solid var(--line);border-radius:18px;padding:26px;max-width:520px;width:100%;box-shadow:0 30px 80px -20px rgba(0,0,0,.6);animation:cqPopIn .22s cubic-bezier(.2,.9,.3,1.15)}
 @keyframes cqFadeIn { from { opacity: 0 } to { opacity: 1 } }
