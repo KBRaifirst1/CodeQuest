@@ -725,7 +725,7 @@ async function generateTopicUnit({ classId = "js", langLabel = "JavaScript", pri
     : `Make a fresh themed ${langLabel} set now. Avoid these topics already covered: ${(priorTopics || []).join(", ") || "none"}. Pick a NEW beginner topic and ${howMany} lessons for it. ${diff} Remember: each lesson explains the idea first, then a worked example, then the exercise.`;
   let raw;
   try { raw = await callClaude([{ role: "user", content: ask }], { system: topicSystemFor(langLabel, runnable), maxTokens: 3500, signal }); }
-  catch { throw new Error("ai-failed"); }
+  catch (e) { throw new Error("ai-failed: " + (e?.message || "unknown")); }
   let parsed; try { parsed = extractJSON(raw); } catch (e) { throw new Error("bad-json: " + (e?.message || "parse failed")); }
   const topic = (parsed.topic || "More practice").toString().slice(0, 40);
   const chapter = `✨ ${topic}`;
@@ -893,7 +893,7 @@ async function generateGeneralLessons(progressMap, signal, { customTopic = null,
     `Keep numbers small. Make ${howMany} lessons, clearly ramping from easy to challenging.${topicClause}`;
   let raw;
   try { raw = await callClaude([{ role: "user", content: `Generate ${howMany} kid-safe general-coding lessons now.${topicClause}` }], { system: sys, maxTokens: 3500, signal }); }
-  catch { throw new Error("ai-failed"); }
+  catch (e) { throw new Error("ai-failed: " + (e?.message || "unknown")); }
   let parsed; try { parsed = extractJSON(raw); } catch (e) { throw new Error("bad-json: " + (e?.message || "parse failed")); }
   const lessons = Array.isArray(parsed.lessons) ? parsed.lessons : [];
   const out = [];
@@ -953,7 +953,7 @@ async function generateConceptLessons(section, { customTopic = null, count = nul
     `Make ${howMany} lessons, ramping from easier to harder. ${diff} Keep it accurate and beginner-friendly. ${focus}`;
   let raw;
   try { raw = await callClaude([{ role: "user", content: `Generate ${howMany} lessons about ${cfg.label} now. ${focus}` }], { system: sys, maxTokens: 4000, signal }); }
-  catch { throw new Error("ai-failed"); }
+  catch (e) { throw new Error("ai-failed: " + (e?.message || "unknown")); }
   let parsed; try { parsed = extractJSON(raw); } catch (e) { throw new Error("bad-json: " + (e?.message || "parse failed")); }
   const lessons = Array.isArray(parsed.lessons) ? parsed.lessons : [];
   const out = [];
@@ -980,7 +980,7 @@ async function generateCourse(classId, progressMap, signal) {
   const ask = `Generate the course now. ${prior}`;
   let raw;
   try { raw = await callClaude([{ role: "user", content: ask }], { system: langGenSystem(cfg), maxTokens: 3500, signal }); }
-  catch (e) { throw new Error("ai-failed"); }
+  catch (e) { throw new Error("ai-failed: " + (e?.message || "unknown")); }
   let parsed;
   try { parsed = extractJSON(raw); } catch (e) { throw new Error("bad-json: " + (e?.message || "parse failed")); }
   const lessons = Array.isArray(parsed.lessons) ? parsed.lessons : [];
