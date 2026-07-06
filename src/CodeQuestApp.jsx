@@ -17,8 +17,14 @@ import React, { useState, useEffect, useRef } from "react";
 
 // ---------- Honest run-verification ----------
 function verifyRuns(code, fnName, tests) {
+  // Guard against infinite loops from AI-generated code. Injects a step counter
+  // into every while/for/do loop body — throws after 100K iterations. Enough for
+  // any beginner exercise, catches accidental infinite loops from Gemini.
+  const gvar = "__cq_i__";
+  const preamble = `let ${gvar}=0; const ${gvar}_g=()=>{if(++${gvar}>100000)throw new Error("Loop ran too long — likely an infinite loop");};`;
+  const guarded = preamble + code.replace(/(\b(?:while|for)\s*\([^{}]*\)\s*\{|\bdo\s*\{)/g, `$1${gvar}_g();`);
   let fn;
-  try { fn = new Function(`${code}; return typeof ${fnName}==='function'?${fnName}:undefined;`)(); }
+  try { fn = new Function(`${guarded}; return typeof ${fnName}==='function'?${fnName}:undefined;`)(); }
   catch (e) { return { ok: false, why: "it couldn't run: " + e.message }; }
   if (!fn) return { ok: false, why: `no function called ${fnName} yet` };
   for (const t of tests) {
@@ -290,10 +296,21 @@ async function callClaude(messages, { system, maxTokens = 900, signal, timeoutMs
 }
 function extractJSON(raw) {
   if (!raw || typeof raw !== "string") throw new Error("empty response");
-  // Strip markdown code fences (any language tag)
-  let s = raw.replace(/```(?:json|javascript|js)?\s*/gi, "").replace(/```/g, "").trim();
+  // Strip UTF-8 BOM, markdown code fences (any language tag)
+  let s = raw.replace(/^\uFEFF/, "").replace(/```(?:json|javascript|js)?\s*/gi, "").replace(/```/g, "").trim();
   // Trim off any prose before the first { and after the last }
   s = s.replace(/^[^{[]*/, "").replace(/[^}\]]*$/, "");
+
+  // Root-array handling: Gemini occasionally forgets the outer {lessons: ...}
+  // wrapper. If the response is `[ {...}, {...} ]` at root, treat as lessons.
+  if (s[0] === "[") {
+    try { return { lessons: JSON.parse(s) }; }
+    catch {
+      try { return { lessons: JSON.parse(s.replace(/,(\s*[}\]])/g, "$1")) }; }
+      catch { /* fall through */ }
+    }
+  }
+
   const first = s.indexOf("{");
   if (first === -1) {
     // Show what the AI actually said so we can diagnose refusals vs stalls vs prose.
@@ -315,20 +332,39 @@ function extractJSON(raw) {
     else if (c === "}") { depth--; if (depth === 0) { end = i; break; } }
   }
 
-  // Path A: balanced outer JSON — try clean parse, then trailing-comma repair.
-  // If both fail, fall through to per-object salvage so one broken lesson
-  // doesn't ruin the whole set.
+  // Repair helper: escape literal newlines/CRs/tabs inside JSON strings. Very
+  // common Gemini quirk when generating multi-line intros/explanations.
+  const escapeStringNewlines = (str) => {
+    let out = "", ins = false, e = false;
+    for (let i = 0; i < str.length; i++) {
+      const c = str[i];
+      if (e) { out += c; e = false; continue; }
+      if (c === "\\") { out += c; e = true; continue; }
+      if (c === '"') { ins = !ins; out += c; continue; }
+      if (ins) {
+        if (c === "\n") { out += "\\n"; continue; }
+        if (c === "\r") { out += "\\r"; continue; }
+        if (c === "\t") { out += "\\t"; continue; }
+      }
+      out += c;
+    }
+    return out;
+  };
+
+  // Path A: balanced outer JSON — try clean parse, then trailing-comma repair,
+  // then string-newline repair, then both combined.
   if (end !== -1) {
     const chunk = s.slice(first, end + 1);
     try { return JSON.parse(chunk); } catch {}
     try { return JSON.parse(chunk.replace(/,(\s*[}\]])/g, "$1")); } catch {}
-    // fall through
+    try { return JSON.parse(escapeStringNewlines(chunk)); } catch {}
+    try { return JSON.parse(escapeStringNewlines(chunk).replace(/,(\s*[}\]])/g, "$1")); } catch {}
+    // fall through to per-object salvage
   }
 
   // Path B: either truncated OR balanced-but-broken. Extract every complete
-  // object at array-depth 1 individually. Good ones parse, bad ones skip.
-  // This handles both truncation (Gemini ran out of tokens) and mid-array
-  // syntax errors (Gemini wrote something like `"correctIndex": 0 (first)`).
+  // object at array-depth 1 individually. Good ones parse (with the full repair
+  // cascade); bad ones skip. Handles both truncation and mid-array syntax errors.
   const arrStart = s.indexOf("[", first);
   if (arrStart === -1) throw new Error("no salvageable array");
   const objects = [];
@@ -347,8 +383,10 @@ function extractJSON(raw) {
       if (objDepth === 0 && arrDepth === 1 && objStart !== -1) {
         const objSrc = s.slice(objStart, i + 1);
         let parsed = null;
-        try { parsed = JSON.parse(objSrc); }
-        catch { try { parsed = JSON.parse(objSrc.replace(/,(\s*[}\]])/g, "$1")); } catch {} }
+        try { parsed = JSON.parse(objSrc); } catch {}
+        if (!parsed) { try { parsed = JSON.parse(objSrc.replace(/,(\s*[}\]])/g, "$1")); } catch {} }
+        if (!parsed) { try { parsed = JSON.parse(escapeStringNewlines(objSrc)); } catch {} }
+        if (!parsed) { try { parsed = JSON.parse(escapeStringNewlines(objSrc).replace(/,(\s*[}\]])/g, "$1")); } catch {} }
         if (parsed) objects.push(parsed);
         objStart = -1;
       }
@@ -663,16 +701,22 @@ function _scoreRetries(classStats) {
 }
 
 function computeSkillScore({ cls, doneSet, progressMap, allClasses, customTopic, aiLessonCount = 0, lessonStats = {} }) {
+  // Defensive null guards — callers should pass valid values but this is
+  // user-critical code and a single null slip shouldn't crash generation.
+  const progMap = progressMap || {};
+  const stats = lessonStats || {};
+  const all = Array.isArray(allClasses) ? allClasses : [];
+  const done = doneSet instanceof Set ? doneSet : new Set();
   // === Existing 7 measurements (progress-based) ===
-  const t = _scoreTopicFamiliarity(cls, doneSet, allClasses, progressMap, customTopic);
-  const d = _scoreClassDepth(cls, doneSet);
-  const b = _scoreClassBreadth(cls, doneSet);
-  const r = _scoreRecency(cls, doneSet);
-  const rel = _scoreRelated(cls, allClasses, progressMap);
-  const g = _scoreGlobal(progressMap);
+  const t = _scoreTopicFamiliarity(cls, done, all, progMap, customTopic);
+  const d = _scoreClassDepth(cls, done);
+  const b = _scoreClassBreadth(cls, done);
+  const r = _scoreRecency(cls, done);
+  const rel = _scoreRelated(cls, all, progMap);
+  const g = _scoreGlobal(progMap);
   const ch = _scoreChallenge(cls, aiLessonCount);
   // === New 3 measurements (in-lesson behavior) ===
-  const classStats = lessonStats[cls.id] || {};
+  const classStats = stats[cls.id] || {};
   const ts = _scoreTimeSignal(classStats, cls);
   const ft = _scoreFirstTry(classStats);
   const rt = _scoreRetries(classStats);
@@ -917,7 +961,7 @@ async function generateGeneralLessons(progressMap, signal, { customTopic = null,
     if (HIDDEN_KNOWLEDGE.test(JSON.stringify(L).toLowerCase())) continue; // kid-proof gate
     if (L.type === "puzzle" || L.type === "predict") {
       if (!Array.isArray(L.choices) || L.choices.length < 2) continue;
-      if (typeof L.correctIndex !== "number" || L.correctIndex < 0 || L.correctIndex >= L.choices.length) continue;
+      if (!Number.isFinite(L.correctIndex) || L.correctIndex < 0 || L.correctIndex >= L.choices.length || Math.floor(L.correctIndex) !== L.correctIndex) continue;
       if (!L.q) continue;
       if (L.type === "predict" && !L.code) continue;
     }
@@ -976,7 +1020,7 @@ async function generateConceptLessons(section, { customTopic = null, count = nul
   for (const L of lessons) {
     if (!L || !L.title || !L.intro || !L.q || !L.why) continue;
     if (!Array.isArray(L.choices) || L.choices.length < 2) continue;
-    if (typeof L.correctIndex !== "number" || L.correctIndex < 0 || L.correctIndex >= L.choices.length) continue;
+    if (!Number.isFinite(L.correctIndex) || L.correctIndex < 0 || L.correctIndex >= L.choices.length || Math.floor(L.correctIndex) !== L.correctIndex) continue;
     out.push({
       type: "puzzle", title: L.title, intro: L.intro, q: L.q, choices: L.choices,
       correctIndex: L.correctIndex, why: L.why,
@@ -1208,7 +1252,13 @@ const CLASSES = [
 // ---------- Progress helpers ----------
 const chaptersOf = (cls) => {
   const order = []; const map = {};
-  cls.steps.forEach((s, i) => { if (!map[s.chapter]) { map[s.chapter] = []; order.push(s.chapter); } map[s.chapter].push(i); });
+  cls.steps.forEach((s, i) => {
+    // Fall back to a friendly label instead of literal "undefined" if the step
+    // has no chapter (e.g. AI-generated content that skipped the field).
+    const ch = s.chapter || "More lessons";
+    if (!map[ch]) { map[ch] = []; order.push(ch); }
+    map[ch].push(i);
+  });
   return order.map((name) => ({ name, stepIdxs: map[name] }));
 };
 const resumeIdx = (cls, doneSet) => { for (let i = 0; i < cls.steps.length; i++) if (!doneSet.has(i)) return i; return Math.max(0, cls.steps.length - 1); };
@@ -1225,6 +1275,8 @@ export default function App({ initialState, onPersist, onSignOut } = {}) {
       if (!raw) return { name: "home" };
       const p = JSON.parse(raw);
       if (!p || typeof p !== "object" || typeof p.name !== "string") return { name: "home" };
+      const VALID_SCREENS = ["home", "class", "lesson", "projectPick", "project"];
+      if (!VALID_SCREENS.includes(p.name)) return { name: "home" };
       return p;
     } catch { return { name: "home" }; }
   };
@@ -1237,8 +1289,48 @@ export default function App({ initialState, onPersist, onSignOut } = {}) {
       else sessionStorage.setItem(SCREEN_KEY, JSON.stringify(s));
     } catch {}
   };
+  // Recovery: if the auth wrapper (or anything else) clobbers React state and
+  // dumps us on home while sessionStorage says we should be somewhere else,
+  // restore automatically when the tab becomes visible again. This handles the
+  // real-world case where parents re-check auth on focus and remount App into a
+  // fresh instance whose useState initializer ran BEFORE sessionStorage held a
+  // value (rare) or whose parent later reset state.
+  useEffect(() => {
+    const tryRestore = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      const persisted = loadScreen();
+      // Only restore if we appear reset TO home while storage says elsewhere.
+      // Legit "user went home" still wins because we clear storage in setScreen.
+      if (screen.name === "home" && persisted.name !== "home") {
+        setScreenRaw(persisted);
+      }
+    };
+    if (typeof document !== "undefined") document.addEventListener("visibilitychange", tryRestore);
+    if (typeof window !== "undefined") window.addEventListener("pageshow", tryRestore);
+    // Also try once immediately after mount — catches the case where the initial
+    // useState ran with a stale/missing sessionStorage value that arrived later.
+    tryRestore();
+    return () => {
+      if (typeof document !== "undefined") document.removeEventListener("visibilitychange", tryRestore);
+      if (typeof window !== "undefined") window.removeEventListener("pageshow", tryRestore);
+    };
+  }, [screen.name]);
   // Seed from cloud-loaded state when present (falls back to empty for standalone use)
-  const [progress, setProgress] = useState(() => initialState?.progress || {}); // { classId: Set(doneStepIdx) }
+  // Hydrate progress: cloud state serializes Sets as arrays, so convert back.
+  // Also handles legit Sets (pass-through) and garbage values (empty Set).
+  // Without this, `totalDone` and .size accesses show NaN / undefined until
+  // the first user action rewrites the value to a Set.
+  const hydrateProgress = (p) => {
+    if (!p || typeof p !== "object") return {};
+    const out = {};
+    for (const [k, v] of Object.entries(p)) {
+      if (v instanceof Set) out[k] = v;
+      else if (Array.isArray(v)) out[k] = new Set(v);
+      else out[k] = new Set();
+    }
+    return out;
+  };
+  const [progress, setProgress] = useState(() => hydrateProgress(initialState?.progress)); // { classId: Set(doneStepIdx) }
   const [aiLessons, setAiLessons] = useState(() => initialState?.aiLessons || {}); // { classId: [generatedStep, ...] }
   const [savedProjects, setSavedProjects] = useState(() => initialState?.savedProjects || []); // finished projects
   // Per-lesson stats for auto-difficulty: { classId: { stepIdx: { time, firstTry, retries } } }
@@ -1251,10 +1343,22 @@ export default function App({ initialState, onPersist, onSignOut } = {}) {
 
   // Autosave to the cloud whenever saved state changes
   useEffect(() => {
-    if (onPersist) onPersist({ progress, aiLessons, savedProjects, lessonStats, profileDescription });
+    // Convert Sets to arrays before persisting so the parent gets JSON-safe data.
+    // Hydration reverses this on load, so the round-trip is transparent.
+    if (onPersist) {
+      const progressAsArrays = {};
+      for (const [k, v] of Object.entries(progress)) {
+        progressAsArrays[k] = v instanceof Set ? [...v] : Array.isArray(v) ? v : [];
+      }
+      onPersist({ progress: progressAsArrays, aiLessons, savedProjects, lessonStats, profileDescription });
+    }
   }, [progress, aiLessons, savedProjects, lessonStats, profileDescription, onPersist]);
 
-  const classWithAI = (cls) => (aiLessons[cls.id]?.length ? { ...cls, steps: [...cls.steps, ...aiLessons[cls.id]] } : cls);
+  const classWithAI = (cls) => {
+    const extra = aiLessons[cls.id];
+    if (!Array.isArray(extra) || extra.length === 0) return cls;
+    return { ...cls, steps: [...cls.steps, ...extra] };
+  };
 
   const doneSetFor = (id) => progress[id] || new Set();
   const markDone = (classId, idx, stats) => {
@@ -1360,7 +1464,26 @@ export default function App({ initialState, onPersist, onSignOut } = {}) {
 // ---------- HOME ----------
 function Home({ progress, aiLessons, savedProjects = [], profileDescription = "", onSaveProfileDescription, onOpenClass, onOpenProjects, onOpenSavedProject }) {
   const [query, setQuery] = useState("");
-  const [tab, setTab] = useState("coding"); // coding | ai | hardware
+  // Persist Coding/AI/Hardware selection across Home unmounts (navigating into a
+  // class and back would otherwise reset it to coding). sessionStorage keeps it
+  // per-tab, cleared on tab close.
+  const TAB_KEY = "cq_hometab_v1";
+  const VALID_TABS = ["coding", "ai", "hardware"];
+  const loadTab = () => {
+    try {
+      const raw = typeof sessionStorage !== "undefined" ? sessionStorage.getItem(TAB_KEY) : null;
+      return raw && VALID_TABS.includes(raw) ? raw : "coding";
+    } catch { return "coding"; }
+  };
+  const [tab, setTabRaw] = useState(loadTab);
+  const setTab = (t) => {
+    setTabRaw(t);
+    try {
+      if (typeof sessionStorage === "undefined") return;
+      if (t === "coding") sessionStorage.removeItem(TAB_KEY);
+      else if (VALID_TABS.includes(t)) sessionStorage.setItem(TAB_KEY, t);
+    } catch {}
+  };
   const [profileOpen, setProfileOpen] = useState(false);
   const [draftDesc, setDraftDesc] = useState(profileDescription || "");
   const totalLessonsDone = Object.values(progress).reduce((n, s) => n + s.size, 0);
