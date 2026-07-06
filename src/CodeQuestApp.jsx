@@ -520,6 +520,56 @@ ${jsCode}
 </` + `script></body></html>`;
 }
 
+// ---------- Print-output translation (same idea as visual: AI translates code → JS) ----------
+// For languages we can't run in the browser natively (Java, C++, etc.), we ask
+// Gemini to translate to JavaScript that produces the SAME stdout via console.log.
+// The JS runs in a sandboxed iframe that captures output and posts it back via
+// postMessage. Compare captured stdout to step.expectedOutput.
+async function translateToStdout(langId, code, signal) {
+  // JavaScript can run natively — no translation needed.
+  if (langId === "js" || langId === "ts") return code;
+  const info = VISUAL_LANG[langId] || { label: langId };
+  const sys =
+    "You take a beginner's program that PRINTS text and re-create the same printed output as ONE self-contained JavaScript program. " +
+    "Use console.log(...) for each line of output — exactly the strings the original program would print, in order. " +
+    "Preserve exact case, spacing, punctuation, and line breaks. Don't add extra output. Don't add comments. " +
+    "If the program prints a number, use console.log(number). If it prints a string, use console.log(\"string\"). " +
+    "If it loops and prints multiple times, replicate the same loop in JS. " +
+    "Output ONLY JavaScript code — no explanation, no markdown fences.";
+  const user =
+    `This is a ${info.label} program. Re-create its printed output as JavaScript using console.log:\n\n${code}`;
+  const raw = await callClaude([{ role: "user", content: user }], { system: sys, maxTokens: 1200, signal });
+  return raw.replace(/```javascript/gi, "").replace(/```js/gi, "").replace(/```/g, "").trim();
+}
+function stdoutSandboxHTML(jsCode) {
+  // Overrides console.log/error/info/warn to accumulate output, then sends it
+  // to the parent via postMessage. Also posts on error and after an 8s timeout
+  // so the parent never hangs indefinitely.
+  return `<!doctype html><html><head></head><body>
+<script>
+(function() {
+  var __out = [];
+  var __push = function(x) { __out.push(String(x)); };
+  console.log = function() { __push(Array.prototype.join.call(arguments, ' ')); };
+  console.error = function() { __push(Array.prototype.join.call(arguments, ' ')); };
+  console.info = console.log; console.warn = console.log;
+  var __sent = false;
+  var __send = function(err) {
+    if (__sent) return;
+    __sent = true;
+    parent.postMessage({ cq_stdout: __out.join('\\n'), cq_error: err || null }, '*');
+  };
+  setTimeout(function() { __send('timeout'); }, 8000);
+  try {
+${jsCode}
+    __send();
+  } catch (e) {
+    __send(String(e && e.message || e));
+  }
+})();
+</` + `script></body></html>`;
+}
+
 // ---------- Real code execution for ALL languages via Piston (text output) ----------
 // Non-JS/Python languages don't run in the browser, so we send them to our
 // backend (/api/run), which runs them on a server through the public Piston API
@@ -1169,26 +1219,26 @@ async function askTutor(history, question, signal, context = null) {
 
 // ---------- Class registry (General + every catalog language) ----------
 const JAVA_STEPS = [
-  { type: "run", lang: "java", langLabel: "Java", chapter: "1 · Real Java", title: "Print a greeting",
+  { type: "airun", lang: "java", langLabel: "Java", chapter: "1 · Write Java", title: "Print a greeting",
     teach: "Java prints with System.out.println(...). The code goes inside main. Make it print exactly: Hello, CodeQuest!",
     example: 'System.out.println("Hi"); // prints Hi',
     starter: 'public class Main {\n  public static void main(String[] args) {\n    // print Hello, CodeQuest!\n    \n  }\n}',
     expectedOutput: "Hello, CodeQuest!",
-    why: "🎉 That's real Java — compiled and run on a server, printing your exact line." },
-  { type: "run", lang: "java", langLabel: "Java", chapter: "1 · Real Java", title: "Add two numbers",
+    why: "🎉 That's what your Java code would print — the shape is real Java syntax." },
+  { type: "airun", lang: "java", langLabel: "Java", chapter: "1 · Write Java", title: "Add two numbers",
     teach: "You can print the result of math. Print the sum of 7 and 5 (it should show 12).",
     example: "System.out.println(2 + 3); // prints 5",
     starter: 'public class Main {\n  public static void main(String[] args) {\n    // print 7 + 5\n    \n  }\n}',
     expectedOutput: "12",
-    why: "🎉 Real Java math, really executed." },
+    why: "🎉 Java math printed out — nicely done." },
 ];
 const CPP_STEPS = [
-  { type: "run", lang: "cpp", langLabel: "C++", chapter: "1 · Real C++", title: "Print a greeting",
+  { type: "airun", lang: "cpp", langLabel: "C++", chapter: "1 · Write C++", title: "Print a greeting",
     teach: "C++ prints with std::cout. Make it print exactly: Hello, CodeQuest!",
     example: 'std::cout << "Hi" << std::endl;',
     starter: '#include <iostream>\nint main() {\n  // print Hello, CodeQuest!\n  \n  return 0;\n}',
     expectedOutput: "Hello, CodeQuest!",
-    why: "🎉 Real C++ — compiled and run for real." },
+    why: "🎉 That's what your C++ code would print — real C++ syntax." },
 ];
 const HAND_BUILT = { general: GENERAL_STEPS, js: JS_STEPS, py: PY_STEPS, java: JAVA_STEPS, cpp: CPP_STEPS };
 const CLASSES = [
@@ -1741,6 +1791,7 @@ function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, on
   const [genErr, setGenErr] = useState("");
   const [courseBusy, setCourseBusy] = useState(false);
   const [courseErr, setCourseErr] = useState("");
+  const abortRef = useRef(null); // holds the current generation's AbortController
 
   const isEmpty = total === 0;
   const learnedElsewhere = progress ? conceptsLearnedElsewhere(progress, cls.id) : [];
@@ -1771,7 +1822,7 @@ function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, on
   const removeSet = (i) => setSets((prev) => (prev.length > 1 ? prev.filter((_, j) => j !== i) : prev));
 
   // Generate ONE set based on its config, routing to the right generator.
-  const generateOneSet = async (set) => {
+  const generateOneSet = async (set, signal) => {
     const customTopic = set.mode === "custom" ? set.topic.trim() : null;
     const count = set.count;
     let difficulty = set.difficulty || "medium";
@@ -1788,18 +1839,18 @@ function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, on
     }
 
     if (cls.id === "general") {
-      return await withRetry(() => generateGeneralLessons(progress || {}, undefined, { customTopic, count, difficulty }));
+      return await withRetry(() => generateGeneralLessons(progress || {}, signal, { customTopic, count, difficulty }));
     }
     if (cls.tab === "hardware" || cls.tab === "ai") {
-      return await withRetry(() => generateConceptLessons(cls.tab, { customTopic, count, priorTitles, difficulty }));
+      return await withRetry(() => generateConceptLessons(cls.tab, { customTopic, count, priorTitles, difficulty, signal }));
     }
     if (cls.mode === "real") {
-      const unit = await withRetry(() => generateTopicUnit({ classId: cls.id, langLabel: cls.label, priorTopics, customTopic, count, difficulty }));
+      const unit = await withRetry(() => generateTopicUnit({ classId: cls.id, langLabel: cls.label, priorTopics, customTopic, count, difficulty, signal }));
       if (unit && unit.lessons) { setLastTopic(unit.topic); return unit.lessons; }
       return null;
     }
     // AI-judged languages
-    return await withRetry(() => generateCourse(cls.id, progress || {}));
+    return await withRetry(() => generateCourse(cls.id, progress || {}, signal));
   };
 
   // Generate ALL queued sets at once, then add every resulting lesson.
@@ -1809,16 +1860,28 @@ function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, on
     for (const s of sets) {
       if (s.mode === "custom" && !s.topic.trim()) { setBuildErr("One of your sets is set to “You choose topic” but has no topic typed in."); return; }
     }
+    // Fresh abort controller for this run so Cancel can stop it mid-flight.
+    const controller = new AbortController();
+    abortRef.current = controller;
     setGenBusy(true); setBuildErr("");
     let all = [];
     let firstErr = "";
     for (const s of sets) {
-      try { const lessons = await generateOneSet(s); if (lessons && lessons.length) all = all.concat(lessons); }
-      catch (e) { if (!firstErr) firstErr = e?.message || "generation failed"; }
+      if (controller.signal.aborted) { firstErr = "cancelled"; break; }
+      try { const lessons = await generateOneSet(s, controller.signal); if (lessons && lessons.length) all = all.concat(lessons); }
+      catch (e) {
+        if (controller.signal.aborted || e?.message === "cancelled") { firstErr = "cancelled"; break; }
+        if (!firstErr) firstErr = e?.message || "generation failed";
+      }
     }
+    abortRef.current = null;
     setGenBusy(false);
     if (all.length) { setShowBuilder(false); setSets([{ mode: "ai", topic: "", count: 4, difficulty: "medium" }]); onAddAndOpenSet(all); }
+    else if (firstErr === "cancelled") setBuildErr("Generation cancelled.");
     else setBuildErr("Couldn't generate those sets right now. " + (firstErr ? "(" + firstErr + ")" : "Please try again."));
+  };
+  const cancelGeneration = () => {
+    if (abortRef.current) abortRef.current.abort();
   };
   // Empty class → show the build-course screen
   if (isEmpty) {
@@ -1948,7 +2011,7 @@ function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, on
               <button className="cq-addset" onClick={addSet}>+ Add another topic set</button>
               <div className="cq-builder-actions">
                 <button className="cq-genbtn" onClick={generateAllSets} disabled={genBusy}>{genBusy ? "Generating…" : `Generate ${sets.length} set${sets.length > 1 ? "s" : ""} →`}</button>
-                <button className="cq-clearbtn" onClick={() => { setShowBuilder(false); setBuildErr(""); }} disabled={genBusy}>Cancel</button>
+                <button className="cq-clearbtn" onClick={genBusy ? cancelGeneration : () => { setShowBuilder(false); setBuildErr(""); }}>{genBusy ? "Stop" : "Cancel"}</button>
               </div>
               {buildErr && <p className="cq-generr">{buildErr}</p>}
             </div>
@@ -2005,6 +2068,7 @@ function LessonRunner({ cls, idx, doneSet, onDone, onUndone, onBack, goStep }) {
       {activeStep.type === "build" && <BuildStep key={stepKey} step={activeStep} onDone={complete} />}
       {activeStep.type === "fill" && <FillStep key={stepKey} step={activeStep} onDone={complete} />}
       {activeStep.type === "run" && <RunStep key={stepKey} step={activeStep} onDone={complete} />}
+      {activeStep.type === "airun" && <AiRunStep key={stepKey} step={activeStep} onDone={complete} />}
       {activeStep.type === "visual" && <VisualStep key={stepKey} step={activeStep} onDone={complete} />}
       {activeStep.type === "type" && <TypeStep key={stepKey} step={activeStep} onDone={complete} />}
       {activeStep.type === "aitype" && <AITypeStep key={stepKey} step={activeStep} onDone={complete} />}
@@ -2399,6 +2463,105 @@ function RunStep({ step, onDone }) {
         </div>
       )}
       {out?.passed && <div className="cq-takeaway big">{step.why || "🎉 It compiled, ran, and printed exactly the right thing — for real."}</div>}
+    </div>
+  );
+}
+
+function AiRunStep({ step, onDone }) {
+  // Same idea as VisualStep but for PRINT output. The AI translates the code
+  // into JavaScript that produces the same stdout via console.log; we run it
+  // in a sandboxed iframe that captures the output via postMessage and compare
+  // it against step.expectedOutput. Lets learners "run" Java/C++/etc. without
+  // requiring a live backend (Judge0/Sulu).
+  const [code, setCode] = useState(step.starter || "");
+  const [running, setRunning] = useState(false);
+  const [out, setOut] = useState(null); // { stdout, passed, error }
+  const [err, setErr] = useState("");
+  const stats = useLessonStats();
+  const iframeRef = useRef(null);
+  const timerRef = useRef(null);
+  const listenerRef = useRef(null);
+
+  // Clean up on unmount
+  useEffect(() => () => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    if (listenerRef.current) window.removeEventListener("message", listenerRef.current);
+  }, []);
+
+  const run = async () => {
+    setRunning(true); setErr(""); setOut(null);
+    try {
+      // 1) Python: run headless check first so obvious errors don't waste an AI call
+      if ((step.lang || "") === "py") {
+        const pre = await precheckPython(code);
+        if (!pre.ok) { stats.recordWrong(); setErr("Your code has an error: " + pre.why + " — fix it and try again."); setRunning(false); return; }
+      }
+      // 2) Translate to JS with the retry helper — free-tier flakiness gets one recovery
+      const js = await withRetry(async () => {
+        const out = await translateToStdout(step.lang || "py", code);
+        if (!out || out.length < 3) throw new Error("empty translation");
+        return out;
+      });
+      // 3) Load in sandboxed iframe, listen for postMessage
+      const html = stdoutSandboxHTML(js);
+      const captured = await new Promise((resolve) => {
+        let done = false;
+        const finish = (r) => { if (done) return; done = true; resolve(r); };
+        // Listener for messages from the iframe
+        const listener = (e) => {
+          if (e?.data && e.data.cq_stdout !== undefined) finish({ stdout: e.data.cq_stdout, error: e.data.cq_error });
+        };
+        listenerRef.current = listener;
+        window.addEventListener("message", listener);
+        // Fallback: if no message in 10s, give up
+        timerRef.current = setTimeout(() => finish({ stdout: "", error: "no response — try again" }), 10000);
+        // Kick off: assign srcDoc after listener is set up
+        if (iframeRef.current) iframeRef.current.srcdoc = html;
+      });
+      // Clean up
+      window.removeEventListener("message", listenerRef.current);
+      clearTimeout(timerRef.current);
+      const passed = !captured.error && (step.expectedOutput != null ? outputMatches(captured.stdout, step.expectedOutput) : true);
+      setOut({ stdout: captured.stdout, error: captured.error, passed });
+      if (passed) onDone(stats.buildStats());
+      else stats.recordWrong();
+    } catch (e) {
+      stats.recordWrong();
+      setErr("Couldn't run that just now: " + (e?.message || "unknown") + ". (It uses the live AI to translate — try again in a moment.)");
+    } finally { setRunning(false); }
+  };
+
+  const onKeyDown = (e) => { if (e.key === "Tab") { e.preventDefault(); const el = e.target, s = el.selectionStart; setCode(code.slice(0, s) + "  " + code.slice(el.selectionEnd)); requestAnimationFrame(() => { el.selectionStart = el.selectionEnd = s + 2; }); } };
+
+  return (
+    <div className="cq-card2">
+      <h1 className="cq-h1">{step.title} <span className="cq-universal">simulated run</span></h1>
+      {(step.teach || step.example) ? (
+        <div className="cq-teach">
+          {step.teach && <p className="cq-teach-text">{step.teach}</p>}
+          {step.example && <div className="cq-teach-example"><span className="cq-teach-label">Example</span><pre>{step.example}</pre></div>}
+          <p className="cq-teach-now">Now you try 👇</p>
+        </div>
+      ) : (step.intro && <p className="cq-intro">{step.intro}</p>)}
+      {step.expectedOutput != null && (
+        <div className="cq-expected"><span className="cq-expected-label">Make it print:</span><pre>{step.expectedOutput}</pre></div>
+      )}
+
+      <div className="cq-editor-bar"><span className="cq-dot" /><span className="cq-dot" /><span className="cq-dot" /><span className="cq-filename">{step.langLabel || step.lang}</span></div>
+      <textarea className="cq-editor" value={code} spellCheck={false} onChange={(e) => { setCode(e.target.value); setOut(null); }} onKeyDown={onKeyDown} style={{ minHeight: 180 }} />
+      <div className="cq-buildrow"><button className="cq-run" onClick={run} disabled={running || !code.trim()}>{running ? "Running…" : "▶ Run it"}</button></div>
+
+      {err && <div className="cq-nudge">{err}</div>}
+      {out && (
+        <div className="cq-runout">
+          <div className="cq-runout-label">Output</div>
+          <pre className="cq-console">{out.stdout || (out.error ? "(error: " + out.error + ")" : "(no output)")}</pre>
+          {step.expectedOutput != null && !out.passed && !out.error && <div className="cq-nudge">Close — the output doesn't match what's expected yet. Compare carefully!</div>}
+        </div>
+      )}
+      {out?.passed && <div className="cq-takeaway big">{step.why || "🎉 That's what your code would print — nicely done."}</div>}
+      {/* Hidden iframe that runs the translated JS and posts stdout back */}
+      <iframe ref={iframeRef} title="stdout capture" sandbox="allow-scripts" style={{ display: "none" }} />
     </div>
   );
 }
