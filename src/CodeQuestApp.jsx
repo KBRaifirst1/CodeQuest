@@ -264,12 +264,15 @@ const PY_STEPS = [
 ];
 
 // ---------- AI lesson generation (typing-style, validated) ----------
-async function callClaude(messages, { system, maxTokens = 900, signal, timeoutMs = 45000 } = {}) {
+async function callClaude(messages, { system, maxTokens = 900, signal, timeoutMs = 45000, thinking = false } = {}) {
   // Calls our own backend (/api/ai), which holds the Gemini key secretly and
   // returns { text }. Keeps the same signature + string return as before, so
   // all the generators and validation gates work unchanged.
   // A hard timeout (default 45s) prevents the app from hanging forever if the
   // free Gemini tier stalls — the retry helper will then try again.
+  // `thinking` opts this specific call into Gemini's reasoning mode. It's off
+  // by default (faster, cheaper); we turn it on only for correctness-critical
+  // generation (runnable code, graded solutions) — see the call sites below.
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   // If caller passed their own signal, forward its abort
@@ -277,7 +280,7 @@ async function callClaude(messages, { system, maxTokens = 900, signal, timeoutMs
   try {
     const res = await fetch("/api/ai", {
       method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
-      body: JSON.stringify({ messages, system, maxTokens }),
+      body: JSON.stringify({ messages, system, maxTokens, thinking }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -298,8 +301,20 @@ function extractJSON(raw) {
   if (!raw || typeof raw !== "string") throw new Error("empty response");
   // Strip UTF-8 BOM, markdown code fences (any language tag)
   let s = raw.replace(/^\uFEFF/, "").replace(/```(?:json|javascript|js)?\s*/gi, "").replace(/```/g, "").trim();
-  // Trim off any prose before the first { and after the last }
-  s = s.replace(/^[^{[]*/, "").replace(/[^}\]]*$/, "");
+  // Trim off any prose before the first { or [
+  s = s.replace(/^[^{[]*/, "");
+  // Trim trailing prose after the last } or ] — but ONLY if the string actually
+  // ends with prose after a closing brace/bracket. When Gemini's response is
+  // truncated mid-object (no closing brace at all), this trim would delete the
+  // salvageable content, so we guard it: only strip a trailing prose tail that
+  // comes AFTER a real closing } or ].
+  const lastClose = Math.max(s.lastIndexOf("}"), s.lastIndexOf("]"));
+  if (lastClose !== -1 && lastClose < s.length - 1) {
+    // There's trailing text after the last close — but make sure it's prose, not
+    // more JSON. Only trim if what follows contains no more braces/brackets.
+    const tail = s.slice(lastClose + 1);
+    if (!/[{}[\]]/.test(tail)) s = s.slice(0, lastClose + 1);
+  }
 
   // Root-array handling: Gemini occasionally forgets the outer {lessons: ...}
   // wrapper. If the response is `[ {...}, {...} ]` at root, treat as lessons.
@@ -392,8 +407,71 @@ function extractJSON(raw) {
       }
     }
   }
+  // If the response was truncated mid-object, there's an unterminated trailing
+  // object (objStart set, brace never closed). Try to salvage it by cutting back
+  // to its last complete "key": value pair and closing the brace. This recovers
+  // partial lessons that would otherwise be lost to truncation.
+  if (objStart !== -1 && objDepth > 0) {
+    const salvaged = salvagePartialObject(s.slice(objStart));
+    if (salvaged && Object.keys(salvaged).length > 0) objects.push(salvaged);
+  }
   if (objects.length === 0) throw new Error("no valid objects to salvage");
   return { lessons: objects };
+}
+
+// Salvage a truncated (unclosed) JSON object by cutting back to its last
+// complete "key": value pair and closing the brace. Returns a parsed object or
+// null. Used when Gemini's response is cut off mid-object by MAX_TOKENS.
+function salvagePartialObject(objSrc) {
+  const escapeStringNewlines = (str) => {
+    let out = "", ins = false, e = false;
+    for (let i = 0; i < str.length; i++) {
+      const c = str[i];
+      if (e) { out += c; e = false; continue; }
+      if (c === "\\") { out += c; e = true; continue; }
+      if (c === '"') { ins = !ins; out += c; continue; }
+      if (ins) { if (c === "\n") { out += "\\n"; continue; } if (c === "\r") { out += "\\r"; continue; } if (c === "\t") { out += "\\t"; continue; } }
+      out += c;
+    }
+    return out;
+  };
+  const tryParse = (src) => {
+    try { return JSON.parse(src); } catch {}
+    try { return JSON.parse(src.replace(/,(\s*[}\]])/g, "$1")); } catch {}
+    try { return JSON.parse(escapeStringNewlines(src)); } catch {}
+    try { return JSON.parse(escapeStringNewlines(src).replace(/,(\s*[}\]])/g, "$1")); } catch {}
+    return null;
+  };
+  // Find cut points: indices right after a complete value at object-depth 1.
+  let inStr = false, esc = false, depth = 0, afterColon = false;
+  const cuts = [];
+  for (let i = 0; i < objSrc.length; i++) {
+    const c = objSrc[i];
+    if (esc) { esc = false; continue; }
+    if (c === "\\") { esc = true; continue; }
+    if (c === '"') {
+      inStr = !inStr;
+      if (!inStr && depth === 1 && afterColon) { cuts.push(i + 1); afterColon = false; }
+      continue;
+    }
+    if (inStr) continue;
+    if (c === "{" || c === "[") depth++;
+    else if (c === "}" || c === "]") { depth--; if (depth === 1 && afterColon) { cuts.push(i + 1); afterColon = false; } }
+    else if (c === ":") { if (depth === 1) afterColon = true; }
+    else if (c === ",") { if (depth === 1) afterColon = false; }
+    else if (depth === 1 && afterColon && /[0-9tfn-]/.test(c)) {
+      let j = i;
+      while (j < objSrc.length && /[0-9truefalsn.eE+-]/.test(objSrc[j])) j++;
+      cuts.push(j); afterColon = false; i = j - 1;
+    }
+  }
+  // Try from latest complete boundary backward: cut, close brace, parse.
+  for (let k = cuts.length - 1; k >= 0; k--) {
+    const candidate = objSrc.slice(0, cuts[k]).replace(/,\s*$/, "") + "}";
+    const parsed = tryParse(candidate);
+    if (parsed) return parsed;
+  }
+  return null;
 }
 
 // ---------- Pre-check: validate the learner's Python BEFORE translating ----------
@@ -405,6 +483,35 @@ async function precheckPython(code) {
   try { py = await loadPyodide(); } catch (e) { return { ok: true, skipped: true }; } // if engine won't load, don't block
   const harness = [
     "import sys, types",
+    // Universal duck-typed stub: any attribute access returns another _NoOp,
+    // any call returns another _NoOp. Covers turtle, tkinter, and anything
+    // else the AI/learner might import for graphics. Real Python errors
+    // (NameError, syntax, division by zero, etc.) still surface normally.
+    "class _NoOp:",
+    "    def __init__(self,*a,**k): pass",
+    "    def __call__(self,*a,**k): return _NoOp()",
+    "    def __getattr__(self,n): return _NoOp()",
+    "    def __getitem__(self,k): return _NoOp()",
+    "    def __setitem__(self,k,v): pass",
+    "    def __iter__(self): return iter([])",
+    "    def __enter__(self): return self",
+    "    def __exit__(self,*a): return None",
+    "    def __bool__(self): return False",
+    "    def __len__(self): return 0",
+    "    def __int__(self): return 0",
+    "    def __float__(self): return 0.0",
+    "    def __str__(self): return ''",
+    "    def __eq__(self,o): return False",
+    "    def __hash__(self): return 0",
+    "def _mkstub(name):",
+    "    m = types.ModuleType(name)",
+    "    m.__getattr__ = lambda n: _NoOp()",
+    "    return m",
+    // Stub turtle, tkinter (and its submodules commonly imported)
+    'for _lib in ["turtle","tkinter","tkinter.ttk","tkinter.font","tkinter.messagebox","tkinter.filedialog"]:',
+    "    sys.modules[_lib] = _mkstub(_lib)",
+    // Pygame still needs its typed stub because some game code uses attribute
+    // details (event.type == pygame.QUIT), constants for keys, etc. Keep it.
     'pg = types.ModuleType("pygame")',
     "class _S:",
     "    def fill(self,*a,**k): pass",
@@ -505,11 +612,14 @@ async function translateToCanvas(langId, code, signal) {
   return raw.replace(/```javascript/gi, "").replace(/```js/gi, "").replace(/```/g, "").trim();
 }
 function canvasSandboxHTML(jsCode) {
+  // Escape </script — otherwise user code containing that literal string would
+  // prematurely end the <script> block and the rest gets parsed as HTML.
+  const safe = String(jsCode).replace(/<\/script/gi, "<\\/script");
   return `<!doctype html><html><head><style>html,body{margin:0;height:100%;background:#0e1320;display:flex;align-items:center;justify-content:center}canvas{background:#000;border-radius:8px;max-width:100%}</style></head>
 <body><canvas id="c" width="400" height="400"></canvas>
 <script>
 try {
-${jsCode}
+${safe}
 } catch (e) {
   var ctx = document.getElementById('c').getContext('2d');
   ctx.fillStyle = '#0e1320'; ctx.fillRect(0,0,400,400);
@@ -542,16 +652,25 @@ async function translateToStdout(langId, code, signal) {
   return raw.replace(/```javascript/gi, "").replace(/```js/gi, "").replace(/```/g, "").trim();
 }
 function stdoutSandboxHTML(jsCode) {
-  // Overrides console.log/error/info/warn to accumulate output, then sends it
-  // to the parent via postMessage. Also posts on error and after an 8s timeout
-  // so the parent never hangs indefinitely.
+  // Passing user code through JSON.stringify + Function() makes it a runtime
+  // parse. That way syntax errors in Gemini's translation surface as catchable
+  // errors — instead of failing the outer script's parse silently (which would
+  // leave the parent waiting until the 10s timeout with a confusing message).
+  // JSON.stringify does NOT escape `/`, so a literal </script> in the user code
+  // would still end our <script> block in the HTML. Escape it after stringify:
+  // `<\/script` inside a JS string is exactly `</script>` at runtime, but the
+  // HTML parser doesn't recognize it as the end tag.
+  const safeStr = JSON.stringify(String(jsCode || "")).replace(/<\/script/gi, "<\\/script");
   return `<!doctype html><html><head></head><body>
 <script>
 (function() {
   var __out = [];
   var __push = function(x) { __out.push(String(x)); };
-  console.log = function() { __push(Array.prototype.join.call(arguments, ' ')); };
-  console.error = function() { __push(Array.prototype.join.call(arguments, ' ')); };
+  // Map each argument through String() before joining — otherwise [null].join(' ')
+  // returns "" instead of "null", which drops output for Python's None, etc.
+  var __fmt = function(args) { return Array.prototype.map.call(args, function(a) { return String(a); }).join(' '); };
+  console.log = function() { __push(__fmt(arguments)); };
+  console.error = function() { __push(__fmt(arguments)); };
   console.info = console.log; console.warn = console.log;
   var __sent = false;
   var __send = function(err) {
@@ -561,7 +680,7 @@ function stdoutSandboxHTML(jsCode) {
   };
   setTimeout(function() { __send('timeout'); }, 8000);
   try {
-${jsCode}
+    new Function(${safeStr})();
     __send();
   } catch (e) {
     __send(String(e && e.message || e));
@@ -622,9 +741,12 @@ const GEN_SYSTEM =
   "\"solution\":string (complete correct code), \"tests\":array of >=2 {\"args\":array,\"expected\":any}}. " +
   "Keep it small and beginner-friendly (simple numbers/strings/arrays). Starter must NOT pass the tests; solution MUST pass.";
 // ---------- Topic-unit generator: AI picks a topic + a few lessons under it ----------
-const topicSystemFor = (langLabel, runnable) =>
+const topicSystemFor = (langLabel, runnable, count = null) =>
   `You design a small THEMED set of beginner ${langLabel} exercises grouped under one topic. ` +
-  "YOU choose the topic and how many lessons fit it (between 3 and 5). They build on each other, easy to harder. " +
+  (count
+    ? `YOU choose the topic; make EXACTLY ${count} lesson${count === 1 ? "" : "s"} for it. ` +
+      (count > 1 ? "They build on each other, easy to harder. " : "")
+    : "YOU choose the topic and how many lessons fit it (between 3 and 5). They build on each other, easy to harder. ") +
   "EVERY lesson must TEACH before it tests: explain the new idea in plain words, then show a tiny worked example. " +
   "Respond with ONLY JSON, no prose, no fences: {\"topic\":string (2-4 words), \"lessons\":[ {" +
   "\"title\":string, " +
@@ -640,13 +762,26 @@ const topicSystemFor = (langLabel, runnable) =>
 // The free AI model occasionally returns something that fails validation; a
 // silent retry usually succeeds on the next attempt, so the learner rarely sees
 // an error. Only throws after all attempts fail.
-async function withRetry(fn, attempts = 3, delayMs = 400) {
+async function withRetry(fn, attempts = 3, delayMs = 400, signal) {
   let lastErr;
   for (let i = 0; i < attempts; i++) {
+    if (signal?.aborted) throw new Error("cancelled");
     try { return await fn(); }
     catch (e) {
+      // If cancelled OR the error came from an abort/timeout, propagate immediately
+      // instead of retrying — otherwise a Cancel click just triggers 3 more attempts.
+      if (signal?.aborted || e?.name === "AbortError" || e?.message === "cancelled" ||
+          e?.message?.includes("aborted") || e?.message?.includes("cancelled") || e?.message?.includes("timeout")) {
+        throw signal?.aborted ? new Error("cancelled") : e;
+      }
       lastErr = e;
-      if (i < attempts - 1) await new Promise((r) => setTimeout(r, delayMs));
+      if (i < attempts - 1) {
+        // Abortable delay: signal aborts the wait instead of us sitting through it
+        await new Promise((resolve, reject) => {
+          const t = setTimeout(resolve, delayMs);
+          if (signal) signal.addEventListener("abort", () => { clearTimeout(t); reject(new Error("cancelled")); }, { once: true });
+        });
+      }
     }
   }
   throw lastErr;
@@ -825,20 +960,25 @@ const difficultyClause = (level) => {
   return DIFFICULTY[level] || DIFFICULTY.medium;
 };
 
-async function generateTopicUnit({ classId = "js", langLabel = "JavaScript", priorTopics, customTopic = null, count = null, difficulty = null, signal }) {
+// Generate ONE batch of topic lessons. Returns { topic, chapter, lessons }.
+// Some lessons may be dropped by verification (buggy AI solution, or a starter
+// that accidentally passes) — so the count returned can be < requested. The
+// backfill wrapper below tops up the shortfall.
+async function generateTopicBatch({ classId, langLabel, priorTopics, customTopic, howManyToAsk, wanted, diff, fixedTopic = null, signal }) {
   const runnable = classId === "js" || classId === "py";
-  const howMany = count && count >= 1 && count <= 10 ? count : "3-5";
-  const diff = difficultyClause(difficulty);
+  const topicClause = fixedTopic
+    ? `Keep using the SAME topic: "${fixedTopic}". Make MORE lessons under it (different from any you've made before).`
+    : "";
   const ask = customTopic
-    ? `Make a themed ${langLabel} set about "${customTopic}" now. Create ${howMany} lessons that teach this specific topic, easy to harder. ${diff} Each lesson explains the idea first, then a worked example, then the exercise.`
-    : `Make a fresh themed ${langLabel} set now. Avoid these topics already covered: ${(priorTopics || []).join(", ") || "none"}. Pick a NEW beginner topic and ${howMany} lessons for it. ${diff} Remember: each lesson explains the idea first, then a worked example, then the exercise.`;
+    ? `Make a themed ${langLabel} set about "${customTopic}" now. Create exactly ${howManyToAsk} lesson${howManyToAsk === 1 ? "" : "s"} that teach this specific topic${wanted !== 1 ? ", easy to harder" : ""}. ${diff} ${topicClause} Each lesson explains the idea first, then a worked example, then the exercise.`
+    : `Make a fresh themed ${langLabel} set now. Avoid these topics already covered: ${(priorTopics || []).join(", ") || "none"}. Pick a NEW beginner topic and make exactly ${howManyToAsk} lesson${howManyToAsk === 1 ? "" : "s"} for it. ${diff} ${topicClause} Remember: each lesson explains the idea first, then a worked example, then the exercise.`;
   let raw;
-  try { raw = await callClaude([{ role: "user", content: ask }], { system: topicSystemFor(langLabel, runnable), maxTokens: 3500, signal }); }
+  try { raw = await callClaude([{ role: "user", content: ask }], { system: topicSystemFor(langLabel, runnable, howManyToAsk), maxTokens: 6000, signal, thinking: true }); }
   catch (e) { throw new Error("ai-failed: " + (e?.message || "unknown")); }
   let parsed; try { parsed = extractJSON(raw); } catch (e) { throw new Error("bad-json: " + (e?.message || "parse failed")); }
-  const topic = (parsed.topic || "More practice").toString().slice(0, 40);
+  const topic = fixedTopic || (parsed.topic || "More practice").toString().slice(0, 40);
   const chapter = `✨ ${topic}`;
-  const rawLessons = Array.isArray(parsed.lessons) ? parsed.lessons.slice(0, 6) : [];
+  const rawLessons = Array.isArray(parsed.lessons) ? parsed.lessons.slice(0, 12) : [];
   const out = [];
   for (const L of rawLessons) {
     if (!L.fnName || !L.solution || !Array.isArray(L.tests) || L.tests.length < 2) continue;
@@ -857,8 +997,50 @@ async function generateTopicUnit({ classId = "js", langLabel = "JavaScript", pri
       why: "🎉 You solved it — and it ran for real.",
     });
   }
-  if (out.length === 0) throw new Error("none-valid");
   return { topic, chapter, lessons: out };
+}
+
+async function generateTopicUnit({ classId = "js", langLabel = "JavaScript", priorTopics, customTopic = null, count = null, difficulty = null, signal }) {
+  const wanted = count && count >= 1 && count <= 10 ? count : null; // validated user request
+  const target = wanted || 4; // when the AI picks the count, aim for 4 valid lessons
+  const diff = difficultyClause(difficulty);
+
+  // Backfill loop: lessons can be dropped by verification, so if we come up
+  // short we run another round to top up. Over-ask a little to absorb the drop
+  // rate. Capped at 3 rounds so a persistently-failing topic can't loop forever.
+  let collected = [];
+  let topic = null, chapter = null;
+  const seenTitles = new Set();
+  for (let round = 0; round < 3 && collected.length < target; round++) {
+    if (signal?.aborted) throw new Error("cancelled");
+    const need = target - collected.length;
+    // Round 0 over-asks by 2 (absorbs ~1-2 drops); later rounds ask for the
+    // shortfall plus a small buffer. Never ask for more than 10 in one call.
+    const askFor = Math.min(10, need + (round === 0 ? 2 : 1));
+    let batch;
+    try {
+      batch = await generateTopicBatch({
+        classId, langLabel, priorTopics, customTopic, howManyToAsk: askFor,
+        wanted, diff, fixedTopic: topic, signal,
+      });
+    } catch (e) {
+      // If the first round fails entirely, propagate. If a later round fails,
+      // keep what we already have rather than losing everything.
+      if (collected.length === 0) throw e;
+      break;
+    }
+    if (!topic) { topic = batch.topic; chapter = batch.chapter; }
+    // Dedupe by title so a backfill round doesn't repeat a lesson we already have
+    for (const L of batch.lessons) {
+      const key = (L.title || "").trim().toLowerCase();
+      if (key && seenTitles.has(key)) continue;
+      seenTitles.add(key);
+      collected.push(L);
+    }
+  }
+  if (collected.length === 0) throw new Error("none-valid");
+  // Return exactly what was asked for (or as close as we got). Never more.
+  return { topic, chapter, lessons: collected.slice(0, target) };
 }
 
 // ---------- Python grading via Pyodide (loads on first use) ----------
@@ -983,7 +1165,7 @@ const LANGUAGE_CATALOG = [
 const LANG_CFG = Object.fromEntries(LANGUAGE_CATALOG.map((l) => [l.id, { label: l.label, mode: l.mode, count: l.mode === "real" ? 5 : 4 }]));
 
 // ---------- Kid-proofing filter for General Coding generation ----------
-const HIDDEN_KNOWLEDGE = /\b(tea|coffee|boil|recipe|adult|minor|tax|mortgage|alcohol|drive|licen[cs]e|wine|beer|18\+|salary|invoice|stocks?)\b/i;
+const HIDDEN_KNOWLEDGE = /\b(tea|coffee|boil|recipe|adult|minor|tax(?:es)?|mortgage|alcohol|drive|licen[cs]e|wine|beer|salary|invoice|stocks?)\b|\b18\+/i;
 
 async function generateGeneralLessons(progressMap, signal, { customTopic = null, count = null, difficulty = null } = {}) {
   const howMany = count && count >= 1 && count <= 10 ? count : 5;
@@ -1001,7 +1183,7 @@ async function generateGeneralLessons(progressMap, signal, { customTopic = null,
     diff + " " +
     `Keep numbers small. Make ${howMany} lessons, clearly ramping from easy to challenging.${topicClause}`;
   let raw;
-  try { raw = await callClaude([{ role: "user", content: `Generate ${howMany} kid-safe general-coding lessons now.${topicClause}` }], { system: sys, maxTokens: 3500, signal }); }
+  try { raw = await callClaude([{ role: "user", content: `Generate ${howMany} kid-safe general-coding lessons now.${topicClause}` }], { system: sys, maxTokens: 6000, signal, thinking: true }); }
   catch (e) { throw new Error("ai-failed: " + (e?.message || "unknown")); }
   let parsed; try { parsed = extractJSON(raw); } catch (e) { throw new Error("bad-json: " + (e?.message || "parse failed")); }
   const lessons = Array.isArray(parsed.lessons) ? parsed.lessons : [];
@@ -1088,7 +1270,7 @@ async function generateCourse(classId, progressMap, signal) {
   const prior = priorKnowledgeClause(learned, cfg.label);
   const ask = `Generate the course now. ${prior}`;
   let raw;
-  try { raw = await callClaude([{ role: "user", content: ask }], { system: langGenSystem(cfg), maxTokens: 3500, signal }); }
+  try { raw = await callClaude([{ role: "user", content: ask }], { system: langGenSystem(cfg), maxTokens: 6000, signal, thinking: true }); }
   catch (e) { throw new Error("ai-failed: " + (e?.message || "unknown")); }
   let parsed;
   try { parsed = extractJSON(raw); } catch (e) { throw new Error("bad-json: " + (e?.message || "parse failed")); }
@@ -1124,7 +1306,7 @@ async function gradeAICode(step, code) {
   const raw = await callClaude(
     [{ role: "user", content:
       `Grade this ${step.langLabel} solution. Task: "${step.title}" — ${step.intro}\nCriteria:\n${step.checks.map((c, i) => `${i + 1}. ${c}`).join("\n")}\n\nCode:\n\`\`\`\n${code}\n\`\`\`\n\nRespond ONLY JSON: {"verdict":"pass"|"fail","feedback":string,"checks":[{"label":string,"met":boolean}]}.` }],
-    { system: "You are a precise, fair code reviewer who judges by reading code. Respond with only JSON.", maxTokens: 600 });
+    { system: "You are a precise, fair code reviewer who judges by reading code. Respond with only JSON.", maxTokens: 2000, thinking: true });
   try { const o = extractJSON(raw); return { verdict: o.verdict === "pass" ? "pass" : "fail", feedback: o.feedback || "", checks: Array.isArray(o.checks) ? o.checks : [] }; }
   catch { return { verdict: "fail", feedback: "Couldn't judge that clearly — try again.", checks: [] }; }
 }
@@ -1161,7 +1343,7 @@ async function planProject(idea, signal) {
     "\"tests\":array of >=2 {\"args\":array,\"expected\":any} that verify this step's function" +
     "}] }. " +
     "Make 3-6 steps that build on each other. Keep each step small. Every starter must NOT pass its tests; every solution MUST pass.";
-  const raw = await callClaude([{ role: "user", content: `Project idea: ${idea}\nMake the guided JavaScript build plan now.` }], { system: sys, maxTokens: 3000, signal });
+  const raw = await callClaude([{ role: "user", content: `Project idea: ${idea}\nMake the guided JavaScript build plan now.` }], { system: sys, maxTokens: 3000, signal, thinking: true });
   const parsed = extractJSON(raw);
   if (!parsed.title || !Array.isArray(parsed.steps) || parsed.steps.length < 2) throw new Error("bad-plan");
   // keep only steps whose solution actually runs and whose starter doesn't
@@ -1391,6 +1573,106 @@ export default function App({ initialState, onPersist, onSignOut } = {}) {
   // capture (age, background, "I want a challenge", "go easy", etc.).
   const [profileDescription, setProfileDescription] = useState(() => initialState?.profileDescription || "");
 
+  // Background generation: state lives at App-level so it survives when the
+  // ClassView unmounts (e.g. user tabs away or navigates elsewhere). ClassView
+  // reads status via props and shows the spinner/error for its own class.
+  const [generation, setGeneration] = useState({ classId: null, sets: null, status: "idle", error: "", lastTopic: "" });
+  const generationCtrlRef = useRef(null);
+  const generationLatestRef = useRef({ classId: null, sets: null, status: "idle", error: "", lastTopic: "" });
+  generationLatestRef.current = generation;
+
+  // Kick off a generation — runs in the background regardless of navigation.
+  const startGeneration = async ({ classId, sets, priorTopics, priorTitles }) => {
+    // Only one generation at a time (simplifies state and avoids parallel API storms)
+    if (generation.status === "running") return { blocked: true };
+    // Validate first
+    for (const s of sets) {
+      if (s.mode === "custom" && !s.topic.trim()) {
+        setGeneration({ classId, sets, status: "error", error: "One of your sets is set to “You choose topic” but has no topic typed in.", lastTopic: "" });
+        return { blocked: false };
+      }
+    }
+    const controller = new AbortController();
+    generationCtrlRef.current = controller;
+    setGeneration({ classId, sets, status: "running", error: "", lastTopic: "" });
+
+    const cls = CLASSES.find((c) => c.id === classId);
+    if (!cls) {
+      generationCtrlRef.current = null;
+      setGeneration({ classId, sets, status: "error", error: "Class not found.", lastTopic: "" });
+      return { blocked: false };
+    }
+    const doneSet = doneSetFor(classId);
+
+    // Same generateOneSet logic as before, but here at App level
+    const runOne = async (set, signal) => {
+      const customTopic = set.mode === "custom" ? set.topic.trim() : null;
+      const count = set.count;
+      let difficulty = set.difficulty || "medium";
+      if (difficulty === "auto") {
+        const aiLessonCount = (aiLessons[cls.id] || []).length;
+        const score = computeSkillScore({
+          cls: classWithAI(cls), doneSet, progressMap: progress || {},
+          allClasses: CLASSES, customTopic, aiLessonCount, lessonStats: lessonStats || {},
+        });
+        difficulty = autoDifficultyClause(score, profileDescription);
+      }
+      if (cls.id === "general") {
+        return await withRetry(() => generateGeneralLessons(progress || {}, signal, { customTopic, count, difficulty }), 3, 400, signal);
+      }
+      if (cls.tab === "hardware" || cls.tab === "ai") {
+        return await withRetry(() => generateConceptLessons(cls.tab, { customTopic, count, priorTitles: priorTitles || [], difficulty, signal }), 3, 400, signal);
+      }
+      if (cls.mode === "real") {
+        const unit = await withRetry(() => generateTopicUnit({ classId: cls.id, langLabel: cls.label, priorTopics: priorTopics || [], customTopic, count, difficulty, signal }), 3, 400, signal);
+        if (unit && unit.lessons) {
+          setGeneration((g) => ({ ...g, lastTopic: unit.topic || g.lastTopic }));
+          return unit.lessons;
+        }
+        return null;
+      }
+      return await withRetry(() => generateCourse(cls.id, progress || {}, signal), 3, 400, signal);
+    };
+
+    let all = [];
+    let firstErr = "";
+    for (const s of sets) {
+      if (controller.signal.aborted) { firstErr = "cancelled"; break; }
+      try {
+        const lessons = await runOne(s, controller.signal);
+        if (lessons && lessons.length) all = all.concat(lessons);
+      } catch (e) {
+        if (controller.signal.aborted || e?.message === "cancelled") { firstErr = "cancelled"; break; }
+        if (!firstErr) firstErr = e?.message || "generation failed";
+      }
+    }
+    generationCtrlRef.current = null;
+
+    if (all.length) {
+      // Add lessons to the class's aiLessons pile
+      setAiLessons((prev) => ({ ...prev, [cls.id]: [...(prev[cls.id] || []), ...all] }));
+      // If user is currently on this class page, jump to the first new lesson.
+      // Otherwise leave them wherever they are — lessons quietly available on return.
+      const currentScreen = screen;
+      if (currentScreen.name === "class" && currentScreen.id === cls.id) {
+        const firstNewIdx = cls.steps.length + (aiLessons[cls.id] || []).length;
+        setTimeout(() => setScreen({ name: "lesson", id: cls.id, idx: firstNewIdx }), 0);
+      }
+      setGeneration({ classId: null, sets: null, status: "done", error: "", lastTopic: generationLatestRef.current.lastTopic });
+    } else if (firstErr === "cancelled") {
+      setGeneration({ classId, sets, status: "error", error: "Generation cancelled.", lastTopic: "" });
+    } else {
+      setGeneration({ classId, sets, status: "error", error: "Couldn't generate those sets right now. " + (firstErr ? "(" + firstErr + ")" : "Please try again."), lastTopic: "" });
+    }
+    return { blocked: false };
+  };
+  const cancelGeneration = () => {
+    if (generationCtrlRef.current) generationCtrlRef.current.abort();
+  };
+  const clearGenerationError = () => {
+    setGeneration({ classId: null, sets: null, status: "idle", error: "", lastTopic: "" });
+  };
+
   // Autosave to the cloud whenever saved state changes
   useEffect(() => {
     // Convert Sets to arrays before persisting so the parent gets JSON-safe data.
@@ -1481,6 +1763,10 @@ export default function App({ initialState, onPersist, onSignOut } = {}) {
         };
         const addAndOpenOne = (lesson) => addAndOpenSet([lesson]);
         return <ClassView cls={cls} doneSet={doneSetFor(cls.id)} progress={progress} lessonStats={lessonStats} profileDescription={profileDescription}
+          generation={generation}
+          onStartGeneration={startGeneration}
+          onCancelGeneration={cancelGeneration}
+          onClearGenerationError={clearGenerationError}
           onBack={() => setScreen({ name: "home" })}
           onOpenStep={(idx) => setScreen({ name: "lesson", id: cls.id, idx })}
           onContinue={() => setScreen({ name: "lesson", id: cls.id, idx: resumeIdx(cls, doneSetFor(cls.id)) })}
@@ -1782,16 +2068,20 @@ function TutorChat({ classLabel = null, classKind = null }) {
   );
 }
 
-function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, onBack, onOpenStep, onContinue, onAddAi, onAddCourse, onAddAndOpenSet, onStayOnClass }) {
+function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, generation, onStartGeneration, onCancelGeneration, onClearGenerationError, onBack, onOpenStep, onContinue, onAddAi, onAddCourse, onAddAndOpenSet, onStayOnClass }) {
   const chapters = chaptersOf(cls);
   const done = doneSet.size, total = cls.steps.length;
   const pct = total ? Math.round((100 * done) / total) : 0;
   const resume = resumeIdx(cls, doneSet);
-  const [genBusy, setGenBusy] = useState(false);
-  const [genErr, setGenErr] = useState("");
+  // Read generation state from App-level prop so it survives navigation.
+  // genBusy = true if THIS class is currently being generated.
+  const genBusy = generation && generation.classId === cls.id && generation.status === "running";
+  // buildErr = the App-level error for THIS class (only shows when it matches).
+  const buildErr = (generation && generation.classId === cls.id && generation.status === "error") ? generation.error : "";
+  // setBuildErr shim: only used for clearing errors from the UI (Cancel, etc.).
+  const setBuildErr = (msg) => { if (!msg && onClearGenerationError) onClearGenerationError(); };
   const [courseBusy, setCourseBusy] = useState(false);
   const [courseErr, setCourseErr] = useState("");
-  const abortRef = useRef(null); // holds the current generation's AbortController
 
   const isEmpty = total === 0;
   const learnedElsewhere = progress ? conceptsLearnedElsewhere(progress, cls.id) : [];
@@ -1810,7 +2100,8 @@ function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, on
   // "Make more" now opens a builder where you configure one or more topic sets.
   // Every class supports it (languages, General, Hardware, AI).
   const canGenerate = done >= 1;
-  const [lastTopic, setLastTopic] = useState("");
+  // lastTopic — read from App-level generation if it matches; otherwise blank
+  const lastTopic = (generation && generation.classId === cls.id && generation.lastTopic) || (generation && generation.status === "done" && generation.lastTopic) || "";
   const priorTopics = [...new Set([...cls.steps.map((s) => s.topic).filter(Boolean), lastTopic].filter(Boolean))];
   const priorTitles = cls.steps.map((s) => s.title).filter(Boolean);
 
@@ -1821,68 +2112,25 @@ function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, on
   const addSet = () => setSets((prev) => [...prev, { mode: "ai", topic: "", count: 4, difficulty: "medium" }]);
   const removeSet = (i) => setSets((prev) => (prev.length > 1 ? prev.filter((_, j) => j !== i) : prev));
 
-  // Generate ONE set based on its config, routing to the right generator.
-  const generateOneSet = async (set, signal) => {
-    const customTopic = set.mode === "custom" ? set.topic.trim() : null;
-    const count = set.count;
-    let difficulty = set.difficulty || "medium";
-
-    // "auto" → compute a fine-grained skill score from what they've actually done
-    // and hand the AI a precise guidance string instead of a preset level.
-    if (difficulty === "auto") {
-      const aiLessonCount = cls.steps.filter((s) => s.generated).length;
-      const score = computeSkillScore({
-        cls, doneSet, progressMap: progress || {},
-        allClasses: CLASSES, customTopic, aiLessonCount, lessonStats: lessonStats || {},
-      });
-      difficulty = autoDifficultyClause(score, profileDescription);
-    }
-
-    if (cls.id === "general") {
-      return await withRetry(() => generateGeneralLessons(progress || {}, signal, { customTopic, count, difficulty }));
-    }
-    if (cls.tab === "hardware" || cls.tab === "ai") {
-      return await withRetry(() => generateConceptLessons(cls.tab, { customTopic, count, priorTitles, difficulty, signal }));
-    }
-    if (cls.mode === "real") {
-      const unit = await withRetry(() => generateTopicUnit({ classId: cls.id, langLabel: cls.label, priorTopics, customTopic, count, difficulty, signal }));
-      if (unit && unit.lessons) { setLastTopic(unit.topic); return unit.lessons; }
-      return null;
-    }
-    // AI-judged languages
-    return await withRetry(() => generateCourse(cls.id, progress || {}, signal));
-  };
-
-  // Generate ALL queued sets at once, then add every resulting lesson.
-  const [buildErr, setBuildErr] = useState("");
+  // Generation logic lives at App level so it survives ClassView unmounting
+  // (e.g. user tabs away or navigates elsewhere). All we do here is hand off
+  // the queued sets, and delegate cancel to the App.
   const generateAllSets = async () => {
-    // validate
-    for (const s of sets) {
-      if (s.mode === "custom" && !s.topic.trim()) { setBuildErr("One of your sets is set to “You choose topic” but has no topic typed in."); return; }
-    }
-    // Fresh abort controller for this run so Cancel can stop it mid-flight.
-    const controller = new AbortController();
-    abortRef.current = controller;
-    setGenBusy(true); setBuildErr("");
-    let all = [];
-    let firstErr = "";
-    for (const s of sets) {
-      if (controller.signal.aborted) { firstErr = "cancelled"; break; }
-      try { const lessons = await generateOneSet(s, controller.signal); if (lessons && lessons.length) all = all.concat(lessons); }
-      catch (e) {
-        if (controller.signal.aborted || e?.message === "cancelled") { firstErr = "cancelled"; break; }
-        if (!firstErr) firstErr = e?.message || "generation failed";
+    // Reset any prior error for this class first
+    if (buildErr && onClearGenerationError) onClearGenerationError();
+    // priorTopics and priorTitles are already computed above from cls.steps
+    const result = await onStartGeneration({ classId: cls.id, sets, priorTopics, priorTitles });
+    if (result?.blocked) return; // silently: shouldn't happen from the disabled button, but safe
+    // On success (App added the lessons already), reset the builder UI
+    // (peek at latest state via a small delay — simpler than adding a callback)
+    setTimeout(() => {
+      if (!(generation && generation.classId === cls.id && generation.status === "error")) {
+        setShowBuilder(false);
+        setSets([{ mode: "ai", topic: "", count: 4, difficulty: "medium" }]);
       }
-    }
-    abortRef.current = null;
-    setGenBusy(false);
-    if (all.length) { setShowBuilder(false); setSets([{ mode: "ai", topic: "", count: 4, difficulty: "medium" }]); onAddAndOpenSet(all); }
-    else if (firstErr === "cancelled") setBuildErr("Generation cancelled.");
-    else setBuildErr("Couldn't generate those sets right now. " + (firstErr ? "(" + firstErr + ")" : "Please try again."));
+    }, 0);
   };
-  const cancelGeneration = () => {
-    if (abortRef.current) abortRef.current.abort();
-  };
+  const cancelGeneration = () => { if (onCancelGeneration) onCancelGeneration(); };
   // Empty class → show the build-course screen
   if (isEmpty) {
     return (
