@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useSyncExternalStore } from "react"
 // Build marker — check this in the browser console to confirm which version is
 // actually running: type  window.__CQ_VERSION  in DevTools. If it's not the
 // value below, your browser/Vercel is serving an older bundle.
-const CQ_VERSION = "2026-07-08-print-turtle-tab-fixes";
+const CQ_VERSION = "2026-07-08-v2-indent-io-badge";
 if (typeof window !== "undefined") {
   window.__CQ_VERSION = CQ_VERSION;
   try { console.log("%cCodeQuest build: " + CQ_VERSION, "color:#6366f1;font-weight:bold"); } catch {}
@@ -630,7 +630,7 @@ async function translateToCanvas(langId, code, signal) {
     "You take a beginner's visual/graphics program written in any language and RE-CREATE the same visual as ONE self-contained JavaScript program drawing on an HTML canvas. " +
     "The page already has <canvas id=\"c\" width=\"400\" height=\"400\"></canvas> with a WHITE background; grab its 2D context yourself. " +
     "Figure out what the program draws (shapes, colors, positions, text, sprites) and reproduce it faithfully on the canvas. " +
-    "IMPORTANT: the canvas is white. Keep every drawing visible on white — turtle/tkinter code that relies on a default black pen should stroke in a dark color (black is fine), and if the original program fills its own background color, do that first so its shapes sit on the right backdrop. Never draw white shapes on the white canvas with no background fill (they'd be invisible). " +
+    "IMPORTANT — COLORS AND CONTRAST: the canvas starts WHITE. Every shape MUST be clearly visible. Rules: (1) If the original code does not specify a color, use a bold contrasting color like blue, red, green, or black — NEVER white or very light colors. (2) turtle/tkinter default to a black pen — keep it dark so it shows on white. (3) If the program sets its own background (Pygame screen.fill, etc.), paint that background first, THEN choose shape colors that contrast with THAT background. (4) Never draw a shape the same color as what is behind it. When unsure, use dark shapes on the white canvas. " +
     "Translate any animation/game loop to requestAnimationFrame, and any keyboard/mouse input to browser events (keydown, mousemove, etc.). " +
     "If the program uses a coordinate system or window size, map it sensibly into 400x400. For turtle, remember its origin (0,0) is the CENTER and positive Y is UP — translate accordingly so shapes land on-canvas. " +
     "Output ONLY JavaScript code — no explanation, no comments needed, no markdown fences.";
@@ -852,11 +852,12 @@ const topicSystemFor = (langLabel, runnable, count = null) =>
   "\"teach\":string (2-3 plain sentences that EXPLAIN the new concept clearly, as if to a beginner who has never seen it; may use `inline code`), " +
   "\"example\":string (a short worked example line or two showing the idea in " + langLabel + ", e.g. an input and what it produces), " +
   "\"fnName\":string (camelCase), " +
+  "\"io\":string — either \"return\" or \"print\". Use \"return\" for lessons where the function RETURNS a value (most lessons), and \"print\" for lessons that TEACH printing, where the function PRINTS its output. Mix both styles across a set so learners practice each. " +
   "\"starter\":string (a " + langLabel + " skeleton with the right name, empty body, a comment — NOT a solution), " +
   "\"solution\":string (complete correct " + langLabel + " code), " +
   "\"tests\":array of >=2 {\"args\":array,\"expected\":any}} ] }. " +
   `Use real ${langLabel} syntax exactly. Keep it beginner-friendly. ` +
-  "CRITICAL: the function must RETURN the expected value for each test — the tests call the function and compare its RETURN value, so a lesson that only PRINTS the answer will fail. If the concept is about printing, still have the function RETURN the string it would print (the checker also accepts printed output, but returning is the reliable path). " +
+  "CRITICAL — match tests to the io style: For \"return\" lessons the function must RETURN the expected value (the checker compares the return value). For \"print\" lessons the function must PRINT exactly the expected value as text (the checker compares what's printed) — and the lesson's teach/example must clearly tell the learner to use print. Never write a lesson whose solution prints but whose io says \"return\" (or vice-versa) — the io field must match what the solution actually does, and expected must match that output. " +
   `Every starter must NOT pass its tests; every solution MUST pass.`;
 
 // Retry a generate-and-validate operation a few times before giving up.
@@ -1092,7 +1093,7 @@ async function generateTopicBatch({ classId, langLabel, priorTopics, customTopic
     // verify the solution actually runs (JS natively, Python via Pyodide)
     let valid;
     if (classId === "js") valid = verifyRuns(L.solution, L.fnName, L.tests).ok && !verifyRuns(L.starter || "", L.fnName, L.tests).ok;
-    else if (classId === "py") { const v = await verifyPython(L.solution, L.fnName, L.tests); valid = v.ok; }
+    else if (classId === "py") { const v = await verifyPython(L.solution, L.fnName, L.tests, L.io); valid = v.ok; }
     else valid = true; // shouldn't reach here for non-runnable, handled elsewhere
     if (!valid) continue;
     out.push({
@@ -1100,7 +1101,7 @@ async function generateTopicBatch({ classId, langLabel, priorTopics, customTopic
       type: "type", chapter, topic, generated: true, lang: classId,
       title: L.title || "Lesson", teach: L.teach || "", example: L.example || "",
       intro: L.teach || "Type the function so the tests pass.",
-      starter: L.starter || `function ${L.fnName}() {\n  \n}`, fnName: L.fnName, tests: L.tests,
+      starter: L.starter || `function ${L.fnName}() {\n  \n}`, fnName: L.fnName, tests: L.tests, io: L.io === "print" ? "print" : "return",
       why: "🎉 You solved it — and it ran for real.",
     });
   }
@@ -1121,9 +1122,13 @@ async function generateTopicUnit({ classId = "js", langLabel = "JavaScript", pri
   for (let round = 0; round < 3 && collected.length < target; round++) {
     if (signal?.aborted) throw new Error("cancelled");
     const need = target - collected.length;
-    // Round 0 over-asks by 2 (absorbs ~1-2 drops); later rounds ask for the
-    // shortfall plus a small buffer. Never ask for more than 10 in one call.
-    const askFor = Math.min(10, need + (round === 0 ? 2 : 1));
+    // Over-ask to absorb verification drops. Round 0 asks for a healthy buffer
+    // (target + 3, capped at 10) so a SINGLE successful call usually yields the
+    // full count — important on the free tier, where later backfill rounds may
+    // hit the rate limit and never run. Later rounds top up the shortfall + 2.
+    const askFor = round === 0
+      ? Math.min(10, target + 3)
+      : Math.min(10, need + 2);
     let batch;
     try {
       batch = await generateTopicBatch({
@@ -1165,18 +1170,20 @@ function loadPyodide() {
   });
   return _pyLoading;
 }
-async function verifyPython(code, fnName, tests) {
+async function verifyPython(code, fnName, tests, io) {
   let py;
   try { py = await loadPyodide(); } catch (e) { return { ok: false, why: e.message, engineError: true }; }
   // A test passes if the function's RETURN value matches expected, OR (for
-  // print-style exercises) if what it PRINTS matches. Beginners very often
-  // solve "is it positive?" by printing rather than returning, and that
-  // shouldn't be marked wrong when the lesson is about printing. We compare the
-  // printed text against expected both as-is and stringified, trimmed.
+  // print-style exercises) if what it PRINTS matches. This leniency is
+  // intentional: a beginner who solves it either way shouldn't be marked wrong.
+  // The `io` hint ("return" | "print" | undefined) only tunes the failure TIP
+  // so we nudge toward the style the lesson is actually teaching.
+  const ioMode = io === "print" ? "print" : io === "return" ? "return" : "";
   const harness = `
 import json, io, contextlib
 ${code}
 __tests = json.loads(r'''${JSON.stringify(tests)}''')
+__io_mode = ${JSON.stringify(ioMode)}
 def __norm(x):
     return str(x).strip()
 __res = []
@@ -1196,8 +1203,18 @@ for __t in __tests:
         __res.append(bool(__ok))
         if not __ok and __first_fail is None:
             # Describe the mismatch for a helpful message.
-            __shown = repr(__g) if __printed == "" else ("printed " + repr(__printed.strip()))
+            if __printed == "":
+                __shown = repr(__g)
+            else:
+                __shown = "printed " + repr(__printed.strip()) + " and returned " + repr(__g)
             __first_fail = "with " + ", ".join(repr(a) for a in __t["args"]) + " it gave " + __shown + ", but should give " + repr(__exp)
+            # Style-aware tip. For a RETURN lesson where they printed but returned
+            # None, nudge toward return. For a PRINT lesson where they returned but
+            # printed nothing, nudge toward print.
+            if __io_mode == "print" and __printed.strip() == "" and __g is not None:
+                __first_fail += ". Tip: this lesson wants you to print() the answer, not return it"
+            elif __printed.strip() != "" and __g is None and __exp is not None:
+                __first_fail += ". Tip: use 'return' to give back the value, not 'print' — the checker reads what you RETURN"
     except Exception as __e:
         __res.append(False)
         if __first_fail is None:
@@ -1430,12 +1447,12 @@ async function generateCourse(classId, progressMap, signal) {
       // validate: JS runs natively; Python via Pyodide
       let valid;
       if (classId === "js") valid = verifyRuns(L.solution, L.fnName, L.tests).ok && !verifyRuns(L.starter || "", L.fnName, L.tests).ok;
-      else { const v = await verifyPython(L.solution, L.fnName, L.tests); valid = v.ok; } // starter-pass check skipped for py (rare)
+      else { const v = await verifyPython(L.solution, L.fnName, L.tests, L.io); valid = v.ok; } // starter-pass check skipped for py (rare)
       if (!valid) continue;
       out.push({ id: "g_" + Math.random().toString(36).slice(2, 7), type: "type", chapter: `✨ ${cfg.label} course`, generated: true,
         title: L.title || "Lesson", intro: L.teach || "Solve it so the tests pass.", concept: L.concept || L.title,
         teach: L.teach || "", example: L.example || "",
-        starter: L.starter || `// write ${L.fnName}\n`, fnName: L.fnName, tests: L.tests, lang: classId,
+        starter: L.starter || `// write ${L.fnName}\n`, fnName: L.fnName, tests: L.tests, lang: classId, io: L.io === "print" ? "print" : "return",
         why: "🎉 Solved — and it ran for real." });
     } else {
       if (!L.title || !Array.isArray(L.checks) || L.checks.length < 2) continue;
@@ -2025,6 +2042,19 @@ function AppInner({ initialState, onPersist, onSignOut } = {}) {
     }
     GEN_STORE.ctrl = null;
 
+    // If the user cancelled (signal aborted, or cancelGeneration already flipped
+    // the store to a cancelled/idle state), do NOT resurrect the run by setting
+    // "done" or adding lessons. Respect the cancel.
+    const wasCancelled = controller.signal.aborted || firstErr === "cancelled" || GEN_STORE.get().status !== "running";
+    if (wasCancelled) {
+      // cancelGeneration already set the cancelled message; just make sure we
+      // don't leave a running state hanging.
+      if (GEN_STORE.get().status === "running") {
+        GEN_STORE.set({ classId, sets, status: "error", error: "Generation cancelled.", lastTopic: "" });
+      }
+      return { blocked: false };
+    }
+
     if (all.length) {
       // Park the lessons in the store; the drain effect of whichever App
       // instance is currently mounted moves them into React state (and
@@ -2042,7 +2072,16 @@ function AppInner({ initialState, onPersist, onSignOut } = {}) {
     return { blocked: false };
   };
   const cancelGeneration = () => {
-    if (GEN_STORE.ctrl) GEN_STORE.ctrl.abort();
+    // Abort the in-flight request AND flip the UI to a cancelled state immediately,
+    // so the Stop button responds instantly instead of waiting for the current
+    // batch/verification to unwind. The generation promise will also see the
+    // aborted signal and stop; whichever sets state first, the result is the same.
+    if (GEN_STORE.ctrl) { try { GEN_STORE.ctrl.abort(); } catch {} }
+    GEN_STORE.ctrl = null;
+    // Only flip if we're actually running (don't clobber a just-finished "done").
+    if (GEN_STORE.get().status === "running") {
+      GEN_STORE.set((g) => ({ ...g, status: "error", error: "Generation cancelled.", sets: g.sets }));
+    }
   };
   const clearGenerationError = () => {
     GEN_STORE.set({ classId: null, sets: null, status: "idle", error: "", lastTopic: "" });
@@ -2711,8 +2750,11 @@ function LessonRunner({ cls, idx, doneSet, onDone, onUndone, onBack, goStep }) {
       <button className="cq-back" onClick={onBack}>← {cls.label} lessons</button>
       <div className="cq-chaptag">{activeStep.chapter}</div>
 
-      {/* Difficulty controls — shown for skill lessons that have variants; hidden for concept puzzles */}
-      {cls.mode !== "concept" && (
+      {/* Difficulty controls — only for hand-built skill lessons that actually
+          have harder variants. Generated lessons and lessons with no variant
+          shouldn't show "Hardest level" (it's misleading — it doesn't mean the
+          difficulty you picked, just that there's no pre-built harder version). */}
+      {cls.mode !== "concept" && !activeStep.generated && (hasHarder || depth > 0) && (
         <div className="cq-difficulty">
           {depth > 0 && <button className="cq-difbtn easier" onClick={goEasier}>← Make it easier</button>}
           {depth > 0 && <span className="cq-diflevel">Harder level {depth}</span>}
@@ -2753,6 +2795,47 @@ function LessonRunner({ cls, idx, doneSet, onDone, onUndone, onBack, goStep }) {
 // Starts a timer on mount, tracks wrong-answer count, produces a { time, firstTry, retries }
 // stats object at completion. Backward-compatible: components that don't record
 // answer attempts (read/concept/visual) just pass `null` for firstTry.
+// ---------- Shared code-editor key handling ----------
+// Gives all code textareas real editor behavior:
+//  • Tab inserts 2 spaces (indent) instead of leaving the field
+//  • Shift+Tab removes up to 2 leading spaces (dedent)
+//  • Enter keeps the current line's indentation, and adds one extra level (2
+//    spaces) when the line ends with ":" (Python/Ruby style blocks)
+function makeCodeKeyDown(value, setValue) {
+  return (e) => {
+    const el = e.target;
+    const s = el.selectionStart, eend = el.selectionEnd;
+    if (e.key === "Tab") {
+      e.preventDefault();
+      if (e.shiftKey) {
+        const lineStart = value.lastIndexOf("\n", s - 1) + 1;
+        const lead = value.slice(lineStart, s);
+        const remove = lead.endsWith("  ") ? 2 : lead.endsWith(" ") ? 1 : 0;
+        if (remove) {
+          setValue(value.slice(0, s - remove) + value.slice(s));
+          requestAnimationFrame(() => { el.selectionStart = el.selectionEnd = s - remove; });
+        }
+      } else {
+        setValue(value.slice(0, s) + "  " + value.slice(eend));
+        requestAnimationFrame(() => { el.selectionStart = el.selectionEnd = s + 2; });
+      }
+      return;
+    }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      const lineStart = value.lastIndexOf("\n", s - 1) + 1;
+      const line = value.slice(lineStart, s);
+      const indentMatch = line.match(/^[ \t]*/);
+      let indent = indentMatch ? indentMatch[0] : "";
+      if (/:\s*$/.test(line)) indent += "  ";
+      const insert = "\n" + indent;
+      setValue(value.slice(0, s) + insert + value.slice(eend));
+      requestAnimationFrame(() => { el.selectionStart = el.selectionEnd = s + insert.length; });
+      return;
+    }
+  };
+}
+
 function useLessonStats() {
   const startRef = useRef(Date.now());
   const wrongRef = useRef(0);
@@ -3097,7 +3180,7 @@ function RunStep({ step, onDone }) {
     } finally { setRunning(false); }
   };
 
-  const onKeyDown = (e) => { if (e.key === "Tab") { e.preventDefault(); const el = e.target, s = el.selectionStart; setCode(code.slice(0, s) + "  " + code.slice(el.selectionEnd)); requestAnimationFrame(() => { el.selectionStart = el.selectionEnd = s + 2; }); } };
+  const onKeyDown = makeCodeKeyDown(code, setCode);
 
   return (
     <div className="cq-card2">
@@ -3195,7 +3278,7 @@ function AiRunStep({ step, onDone }) {
     } finally { setRunning(false); }
   };
 
-  const onKeyDown = (e) => { if (e.key === "Tab") { e.preventDefault(); const el = e.target, s = el.selectionStart; setCode(code.slice(0, s) + "  " + code.slice(el.selectionEnd)); requestAnimationFrame(() => { el.selectionStart = el.selectionEnd = s + 2; }); } };
+  const onKeyDown = makeCodeKeyDown(code, setCode);
 
   return (
     <div className="cq-card2">
@@ -3282,7 +3365,7 @@ function VisualStep({ step, onDone }) {
     } finally { setBusy(false); }
   };
 
-  const onKeyDown = (e) => { if (e.key === "Tab") { e.preventDefault(); const el = e.target, s = el.selectionStart; setCode(code.slice(0, s) + "  " + code.slice(el.selectionEnd)); requestAnimationFrame(() => { el.selectionStart = el.selectionEnd = s + 2; }); } };
+  const onKeyDown = makeCodeKeyDown(code, setCode);
   const fileName = step.lang === "py" ? "game.py" : (step.lang || "code") + " file";
 
   return (
@@ -3320,13 +3403,13 @@ function TypeStep({ step, onDone }) {
     setRunning(true);
     // Python lessons verify via Pyodide; JS via native runner
     let v;
-    if (step.lang === "py") v = await verifyPython(code, step.fnName, step.tests);
+    if (step.lang === "py") v = await verifyPython(code, step.fnName, step.tests, step.io);
     else v = verifyRuns(code, step.fnName, step.tests);
     setResult(v); setRunning(false);
     if (v.ok) onDone(stats.buildStats());
     else stats.recordWrong();
   };
-  const onKeyDown = (e) => { if (e.key === "Tab") { e.preventDefault(); const el = e.target, s = el.selectionStart; setCode(code.slice(0, s) + "  " + code.slice(el.selectionEnd)); requestAnimationFrame(() => { el.selectionStart = el.selectionEnd = s + 2; }); } };
+  const onKeyDown = makeCodeKeyDown(code, setCode);
   const fileName = step.lang === "py" ? "solution.py" : "your-code.js";
   return (
     <div className="cq-card2">
@@ -3372,7 +3455,7 @@ function AITypeStep({ step, onDone }) {
     catch { stats.recordWrong(); setResult({ verdict: "fail", feedback: "Couldn't reach the reviewer — try again.", checks: [] }); }
     finally { setRunning(false); }
   };
-  const onKeyDown = (e) => { if (e.key === "Tab") { e.preventDefault(); const el = e.target, s = el.selectionStart; setCode(code.slice(0, s) + "  " + code.slice(el.selectionEnd)); requestAnimationFrame(() => { el.selectionStart = el.selectionEnd = s + 2; }); } };
+  const onKeyDown = makeCodeKeyDown(code, setCode);
   return (
     <div className="cq-card2">
       <h1 className="cq-h1">{step.title} <span className="cq-aijudge">AI-judged</span></h1>
@@ -3438,7 +3521,7 @@ function MarkupStep({ step, onDone }) {
     } finally { setRunning(false); }
   };
 
-  const onKeyDown = (e) => { if (e.key === "Tab") { e.preventDefault(); const el = e.target, s = el.selectionStart; setCode(code.slice(0, s) + "  " + code.slice(el.selectionEnd)); requestAnimationFrame(() => { el.selectionStart = el.selectionEnd = s + 2; }); } };
+  const onKeyDown = makeCodeKeyDown(code, setCode);
   const fileName = { html: "index.html", css: "styles.css", jsx: "App.jsx", vue: "App.vue", svelte: "App.svelte" }[step.kind || step.lang] || "code";
 
   return (
@@ -3589,7 +3672,7 @@ function ProjectBuilder({ plan, onBack, onComplete, onHome, reviewMode = false }
     } finally { setAsking(false); }
   };
 
-  const onKeyDown = (e) => { if (e.key === "Tab") { e.preventDefault(); const el = e.target, s = el.selectionStart; setCode(code.slice(0, s) + "  " + code.slice(el.selectionEnd)); requestAnimationFrame(() => { el.selectionStart = el.selectionEnd = s + 2; }); } };
+  const onKeyDown = makeCodeKeyDown(code, setCode);
 
   return (
     <main className="cq-main">
