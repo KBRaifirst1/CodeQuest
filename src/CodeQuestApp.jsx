@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useSyncExternalStore } from "react"
 // Build marker — check this in the browser console to confirm which version is
 // actually running: type  window.__CQ_VERSION  in DevTools. If it's not the
 // value below, your browser/Vercel is serving an older bundle.
-const CQ_VERSION = "2026-07-08-v5-tip-note-drag";
+const CQ_VERSION = "2026-07-08-v6-rename-topic";
 if (typeof window !== "undefined") {
   window.__CQ_VERSION = CQ_VERSION;
   try { console.log("%cCodeQuest build: " + CQ_VERSION, "color:#6366f1;font-weight:bold"); } catch {}
@@ -2163,6 +2163,30 @@ function AppInner({ initialState, onPersist, onSignOut } = {}) {
     list.splice(to, 0, moved);
     return { ...a, [classId]: list };
   });
+  // Rename a generated chapter/topic: update the `chapter` field on every
+  // generated lesson currently in that group. Only affects AI lessons (base
+  // curriculum chapters are fixed). Persists via the aiLessons autosave.
+  const renameChapter = (classId, oldName, newName) => {
+    let clean = (newName || "").trim();
+    if (!clean || clean === oldName) return;
+    // Keep the ✨ marker so renamed AI topics still read as generated sets.
+    if (!clean.startsWith("✨")) clean = "✨ " + clean;
+    if (clean === oldName) return;
+    setAiLessons((a) => {
+      const list = a[classId] || [];
+      if (!list.some((l) => (l.chapter || "") === oldName)) return a;
+      return { ...a, [classId]: list.map((l) => (l.chapter || "") === oldName ? { ...l, chapter: clean } : l) };
+    });
+  };
+  // Move a generated lesson into a different section (by chapter name).
+  const moveAiLessonToChapter = (classId, aiIdx, chapterName) => {
+    setAiLessons((a) => {
+      const list = a[classId] ? [...a[classId]] : [];
+      if (aiIdx < 0 || aiIdx >= list.length) return a;
+      list[aiIdx] = { ...list[aiIdx], chapter: chapterName };
+      return { ...a, [classId]: list };
+    });
+  };
 
   const totalDone = Object.values(progress).reduce((n, s) => n + s.size, 0);
 
@@ -2230,6 +2254,8 @@ function AppInner({ initialState, onPersist, onSignOut } = {}) {
           onAddCourse={(lessons) => setAiLessons((a) => ({ ...a, [baseCls.id]: [...(a[baseCls.id] || []), ...lessons] }))}
           onAddAndOpenSet={addAndOpenSet}
           onReorderAi={reorderAiLesson}
+          onRenameChapter={renameChapter}
+          onMoveAiToChapter={moveAiLessonToChapter}
           baseStepCount={baseCls.steps.length}
           onStayOnClass={() => setScreen({ name: "class", id: cls.id })} />;
       })()}
@@ -2619,7 +2645,7 @@ function TutorChat({ classLabel = null, classKind = null }) {
   );
 }
 
-function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, generation, onStartGeneration, onCancelGeneration, onClearGenerationError, onBack, onOpenStep, onContinue, onAddAi, onAddCourse, onAddAndOpenSet, onReorderAi, baseStepCount = 0, onStayOnClass }) {
+function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, generation, onStartGeneration, onCancelGeneration, onClearGenerationError, onBack, onOpenStep, onContinue, onAddAi, onAddCourse, onAddAndOpenSet, onReorderAi, onRenameChapter, onMoveAiToChapter, baseStepCount = 0, onStayOnClass }) {
   const chapters = chaptersOf(cls);
   const done = doneSet.size, total = cls.steps.length;
   const pct = total ? Math.round((100 * done) / total) : 0;
@@ -2636,6 +2662,11 @@ function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, ge
   // being dragged; dragOver = global index it's hovering over.
   const [dragFrom, setDragFrom] = useState(null);
   const [dragOver, setDragOver] = useState(null);
+  // Which chapter is being renamed, and the working text.
+  const [editingChapter, setEditingChapter] = useState(null);
+  const [chapterDraft, setChapterDraft] = useState("");
+  // A chapter is renamable if it's a generated topic (all its lessons are AI-made).
+  const isGeneratedChapter = (stepIdxs) => stepIdxs.length > 0 && stepIdxs.every((i) => cls.steps[i] && cls.steps[i].generated);
   const canReorder = (i) => i >= baseStepCount && cls.steps[i] && cls.steps[i].generated;
   const commitReorder = () => {
     if (dragFrom != null && dragOver != null && dragFrom !== dragOver && canReorder(dragFrom) && canReorder(dragOver)) {
@@ -2750,7 +2781,26 @@ function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, ge
           return (
             <div key={ch.name} className="cq-chapter">
               <div className="cq-chapter-head">
-                <h2 className="cq-chapter-name">{ch.name}</h2>
+                {editingChapter === ch.name ? (
+                  <div className="cq-chapter-edit">
+                    <input className="cq-chapter-input" value={chapterDraft} autoFocus
+                      onChange={(e) => setChapterDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") { onRenameChapter && onRenameChapter(cls.id, ch.name, chapterDraft); setEditingChapter(null); }
+                        if (e.key === "Escape") setEditingChapter(null);
+                      }} />
+                    <button className="cq-chapter-save" onClick={() => { onRenameChapter && onRenameChapter(cls.id, ch.name, chapterDraft); setEditingChapter(null); }}>Save</button>
+                    <button className="cq-chapter-cancel" onClick={() => setEditingChapter(null)}>✕</button>
+                  </div>
+                ) : (
+                  <div className="cq-chapter-titlewrap">
+                    <h2 className="cq-chapter-name">{ch.name}</h2>
+                    {isGeneratedChapter(ch.stepIdxs) && onRenameChapter && (
+                      <button className="cq-chapter-rename" title="Rename this topic"
+                        onClick={() => { setEditingChapter(ch.name); setChapterDraft(ch.name.replace(/^✨\s*/, "")); }}>✏️</button>
+                    )}
+                  </div>
+                )}
                 <span className="cq-chapter-count">{chDone}/{ch.stepIdxs.length}</span>
               </div>
               <div className="cq-lessonrows">
@@ -4009,6 +4059,13 @@ const CSS = `
 .cq-chapters{display:flex;flex-direction:column;gap:16px}
 .cq-chapter{background:linear-gradient(180deg,var(--bg-1),var(--bg-1));border:1px solid var(--line);border-radius:var(--radius);padding:20px}
 .cq-chapter-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:14px}
+.cq-chapter-titlewrap{display:flex;align-items:center;gap:8px}
+.cq-chapter-rename{background:transparent;border:none;cursor:pointer;font-size:13px;opacity:.55;padding:2px 4px;border-radius:6px}
+.cq-chapter-rename:hover{opacity:1;background:rgba(139,92,246,.12)}
+.cq-chapter-edit{display:flex;align-items:center;gap:6px;flex:1}
+.cq-chapter-input{flex:1;max-width:280px;background:var(--bg-2);border:1.5px solid var(--violet);border-radius:8px;padding:6px 10px;color:var(--text);font-size:15px;font-family:var(--display)}
+.cq-chapter-save{background:var(--violet);color:#fff;border:none;border-radius:8px;padding:6px 12px;font-size:13px;font-weight:600;cursor:pointer}
+.cq-chapter-cancel{background:transparent;border:1px solid var(--line);color:var(--muted);border-radius:8px;padding:6px 10px;font-size:13px;cursor:pointer}
 .cq-chapter-name{font-family:var(--display);font-size:17px;font-weight:600;margin:0;letter-spacing:-.2px}
 .cq-chapter-count{font-size:11.5px;color:var(--ink-faint);font-family:var(--mono);background:var(--bg-0);padding:3px 9px;border-radius:99px}
 .cq-lessonrows{display:flex;flex-direction:column;gap:8px}
