@@ -1806,6 +1806,26 @@ const modeLabel = (mode) => mode === "real" ? "real test grading" : mode === "co
 // in `pendingLessons` until a mounted App drains them into state.
 // (A full page reload still kills the in-flight promise — that needs a server
 // job queue, out of scope. Tab-switch remounts are the case this fixes.)
+// Durable per-user-session storage for UI state (which screen/tab you're on).
+// We prefer localStorage over sessionStorage because sessionStorage is cleared
+// by Safari/iOS tab suspension and some focus/refocus cycles — which was
+// bouncing users back to Home when they tabbed away and came back. localStorage
+// survives all of that. Falls back to sessionStorage, then a no-op, so it never
+// throws in a locked-down environment.
+const CQ_STORE = (() => {
+  const pick = () => {
+    try { if (typeof localStorage !== "undefined") { localStorage.setItem("__cq_t", "1"); localStorage.removeItem("__cq_t"); return localStorage; } } catch {}
+    try { if (typeof sessionStorage !== "undefined") return sessionStorage; } catch {}
+    return null;
+  };
+  const store = pick();
+  return {
+    get(k) { try { return store ? store.getItem(k) : null; } catch { return null; } },
+    set(k, v) { try { if (store) store.setItem(k, v); } catch {} },
+    remove(k) { try { if (store) store.removeItem(k); } catch {} },
+  };
+})();
+
 const GEN_STORE = {
   state: { classId: null, sets: null, status: "idle", error: "", lastTopic: "" },
   ctrl: null,            // current AbortController — survives remounts so Stop always works
@@ -1826,7 +1846,7 @@ function AppInner({ initialState, onPersist, onSignOut } = {}) {
   const SCREEN_KEY = "cq_screen_v1";
   const loadScreen = () => {
     try {
-      const raw = typeof sessionStorage !== "undefined" ? sessionStorage.getItem(SCREEN_KEY) : null;
+      const raw = CQ_STORE.get(SCREEN_KEY);
       if (!raw) return { name: "home" };
       const p = JSON.parse(raw);
       if (!p || typeof p !== "object" || typeof p.name !== "string") return { name: "home" };
@@ -1839,9 +1859,8 @@ function AppInner({ initialState, onPersist, onSignOut } = {}) {
   const setScreen = (s) => {
     setScreenRaw(s);
     try {
-      if (typeof sessionStorage === "undefined") return;
-      if (!s || s.name === "home") sessionStorage.removeItem(SCREEN_KEY);
-      else sessionStorage.setItem(SCREEN_KEY, JSON.stringify(s));
+      if (!s || s.name === "home") CQ_STORE.remove(SCREEN_KEY);
+      else CQ_STORE.set(SCREEN_KEY, JSON.stringify(s));
     } catch {}
   };
   // Recovery: if the auth wrapper (or anything else) clobbers React state and
@@ -2196,7 +2215,7 @@ function Home({ progress, aiLessons, savedProjects = [], profileDescription = ""
   const VALID_TABS = ["coding", "ai", "hardware"];
   const loadTab = () => {
     try {
-      const raw = typeof sessionStorage !== "undefined" ? sessionStorage.getItem(TAB_KEY) : null;
+      const raw = CQ_STORE.get(TAB_KEY);
       return raw && VALID_TABS.includes(raw) ? raw : "coding";
     } catch { return "coding"; }
   };
@@ -2204,9 +2223,8 @@ function Home({ progress, aiLessons, savedProjects = [], profileDescription = ""
   const setTab = (t) => {
     setTabRaw(t);
     try {
-      if (typeof sessionStorage === "undefined") return;
-      if (t === "coding") sessionStorage.removeItem(TAB_KEY);
-      else if (VALID_TABS.includes(t)) sessionStorage.setItem(TAB_KEY, t);
+      if (t === "coding") CQ_STORE.remove(TAB_KEY);
+      else if (VALID_TABS.includes(t)) CQ_STORE.set(TAB_KEY, t);
     } catch {}
   };
   const [profileOpen, setProfileOpen] = useState(false);
