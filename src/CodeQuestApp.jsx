@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useSyncExternalStore } from "react"
 // Build marker — check this in the browser console to confirm which version is
 // actually running: type  window.__CQ_VERSION  in DevTools. If it's not the
 // value below, your browser/Vercel is serving an older bundle.
-const CQ_VERSION = "2026-07-08-v8-clearer-naming";
+const CQ_VERSION = "2026-07-08-v9-drag-shift-crosssection";
 if (typeof window !== "undefined") {
   window.__CQ_VERSION = CQ_VERSION;
   try { console.log("%cCodeQuest build: " + CQ_VERSION, "color:#6366f1;font-weight:bold"); } catch {}
@@ -2163,12 +2163,28 @@ function AppInner({ initialState, onPersist, onSignOut } = {}) {
   const moveAiLesson = (classId, dragId, targetId, targetChapter) => setAiLessons((a) => {
     const list = a[classId] ? [...a[classId]] : [];
     const fromIdx = list.findIndex((l) => l.id === dragId);
-    if (fromIdx < 0) return a;
+    if (fromIdx < 0 || dragId === targetId) return a;
+    const origTargetIdx = targetId ? list.findIndex((l) => l.id === targetId) : -1;
+    // Pull the dragged item out.
     const [moved] = list.splice(fromIdx, 1);
-    // Reassign chapter if the drop lands in a different topic.
+    // Reassign chapter for cross-section moves.
     if (targetChapter != null && (moved.chapter || "") !== targetChapter) moved.chapter = targetChapter;
-    // Insert before the target lesson (or at end if target not found / is itself).
-    let insertAt = targetId ? list.findIndex((l) => l.id === targetId) : list.length;
+    let insertAt;
+    if (!targetId) {
+      // Drop at END of the target chapter: after the last lesson carrying that
+      // chapter. If none exist yet, append to the whole list.
+      let last = -1;
+      for (let k = 0; k < list.length; k++) if ((list[k].chapter || "") === targetChapter) last = k;
+      insertAt = last >= 0 ? last + 1 : list.length;
+    } else if (origTargetIdx < 0) {
+      insertAt = list.length;
+    } else {
+      // Direction-aware insert (shift, not swap): dragging down inserts after
+      // the target; dragging up inserts before.
+      const newTargetIdx = list.findIndex((l) => l.id === targetId);
+      const draggingDown = origTargetIdx > fromIdx;
+      insertAt = draggingDown ? newTargetIdx + 1 : newTargetIdx;
+    }
     if (insertAt < 0) insertAt = list.length;
     list.splice(insertAt, 0, { ...moved });
     return { ...a, [classId]: list };
@@ -2680,23 +2696,43 @@ function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, ge
     const onMove = (ev) => {
       const point = ev.touches ? ev.touches[0] : ev;
       const el = document.elementFromPoint(point.clientX, point.clientY);
-      const row = el && el.closest ? el.closest("[data-lesson-id]") : null;
-      if (row) {
+      if (!el || !el.closest) return;
+      // First: are we over a specific generated lesson row?
+      const row = el.closest("[data-lesson-id]");
+      if (row && row.getAttribute("data-generated") === "1") {
         const overId = row.getAttribute("data-lesson-id");
         const overChapter = row.getAttribute("data-chapter") || "";
-        if (row.getAttribute("data-generated") === "1") {
-          dragRef.current.overId = overId;
-          dragRef.current.overChapter = overChapter;
-          setDragState((s) => s.overId === overId ? s : { ...s, overId });
+        dragRef.current.overId = overId;
+        dragRef.current.overChapter = overChapter;
+        dragRef.current.dropAtEnd = false;
+        setDragState((s) => s.overId === overId ? s : { ...s, overId });
+        return;
+      }
+      // Otherwise: are we over a generated SECTION (its header/empty area)? Then
+      // we'll drop at the END of that section — this is how you move a lesson
+      // INTO another topic even if you don't land exactly on a row.
+      const zone = el.closest("[data-chapter-zone]");
+      if (zone) {
+        const chapterName = zone.getAttribute("data-chapter-zone");
+        if (chapterName) {
+          dragRef.current.overId = null;      // no specific row → end of section
+          dragRef.current.overChapter = chapterName;
+          dragRef.current.dropAtEnd = true;
+          setDragState((s) => s.overChapter === chapterName && s.overId === null ? s : { ...s, overId: null, overChapter: chapterName });
         }
       }
     };
     const onUp = () => {
-      const { dragId, overId, overChapter } = dragRef.current;
-      if (dragId && overId && dragId !== overId) {
-        onMoveAiLesson && onMoveAiLesson(cls.id, dragId, overId, overChapter);
+      const { dragId, overId, overChapter, dropAtEnd } = dragRef.current;
+      if (dragId && (overId || dropAtEnd) && dragId !== overId) {
+        if (dropAtEnd && overChapter) {
+          // Dropped onto a section (not a specific row) → move to end of it.
+          onMoveAiLesson && onMoveAiLesson(cls.id, dragId, null, overChapter);
+        } else if (overId) {
+          onMoveAiLesson && onMoveAiLesson(cls.id, dragId, overId, overChapter);
+        }
       }
-      dragRef.current = { dragId: null, overId: null, overChapter: null };
+      dragRef.current = { dragId: null, overId: null, overChapter: null, dropAtEnd: false };
       setDragState({ dragId: null, overId: null });
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
@@ -2813,8 +2849,9 @@ function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, ge
       <div className="cq-chapters">
         {chapters.map((ch) => {
           const chDone = ch.stepIdxs.filter((i) => doneSet.has(i)).length;
+          const chIsGenerated = isGeneratedChapter(ch.stepIdxs);
           return (
-            <div key={ch.name} className="cq-chapter">
+            <div key={ch.name} className="cq-chapter" data-chapter-zone={chIsGenerated ? ch.name : ""}>
               <div className="cq-chapter-head">
                 {editingChapter === ch.name ? (
                   <div className="cq-chapter-edit">
