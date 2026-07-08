@@ -2213,6 +2213,7 @@ function AppInner({ initialState, onPersist, onSignOut } = {}) {
       <header className="cq-header">
         <div className="cq-brand" onClick={() => setScreen({ name: "home" })} style={{ cursor: "pointer" }}>
           <span className="cq-logo">{"</>"}</span><span className="cq-name">CodeQuest</span>
+          <span style={{ fontSize: 10, opacity: 0.4, marginLeft: 8, fontWeight: 400 }}>{CQ_VERSION}</span>
         </div>
         <div className="cq-headerright">
           <button className="cq-projbtn" onClick={() => setScreen({ name: "projectPick" })}>🛠️ Projects</button>
