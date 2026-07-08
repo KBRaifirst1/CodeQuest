@@ -1544,7 +1544,7 @@ const GEN_STORE = {
   subscribe(fn) { this.subs.add(fn); return () => this.subs.delete(fn); },
 };
 
-export default function App({ initialState, onPersist, onSignOut } = {}) {
+function AppInner({ initialState, onPersist, onSignOut } = {}) {
   // Screen state is remembered in sessionStorage so a tab-away → tab-back
   // doesn't bounce you out of the lesson/class you were in. sessionStorage
   // survives navigation and remounts within the tab but clears when the tab closes.
@@ -1626,7 +1626,8 @@ export default function App({ initialState, onPersist, onSignOut } = {}) {
   // so React re-renders whenever the store changes.
   const generation = useSyncExternalStore(
     (cb) => GEN_STORE.subscribe(cb),
-    () => GEN_STORE.get()
+    () => GEN_STORE.get(),
+    () => GEN_STORE.get() // getServerSnapshot — same value; prevents SSR/hydration throw
   );
   // Live refs so the drain effect can read current screen/aiLessons without
   // stale closures.
@@ -1865,6 +1866,48 @@ export default function App({ initialState, onPersist, onSignOut } = {}) {
 
       <footer className="cq-footer">Signed in · your progress, AI sets, and projects save to your account automatically</footer>
     </div>
+  );
+}
+
+// ---------- Error boundary ----------
+// A render error anywhere below App used to unmount the whole tree, leaving a
+// BLANK WHITE SCREEN (the classic "tab away and come back to nothing" bug —
+// the parent auth wrapper remounts App, some render throws, React bails out
+// and shows white). This boundary catches any such throw and shows a friendly
+// recovery card with a Reload button instead of a void. Progress is safe: it's
+// persisted to the account/sessionStorage, so a reload restores it.
+class AppErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { crashed: false, msg: "" }; }
+  static getDerivedStateFromError(error) { return { crashed: true, msg: String(error?.message || error || "Unknown error") }; }
+  componentDidCatch(error, info) { try { console.error("CodeQuest crashed:", error, info); } catch {} }
+  render() {
+    if (this.state.crashed) {
+      return (
+        <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#0e1320", color: "#e8ecf5", fontFamily: "system-ui, sans-serif", padding: 24 }}>
+          <div style={{ maxWidth: 460, textAlign: "center", background: "#141a2b", border: "1px solid #263049", borderRadius: 16, padding: 32, boxShadow: "0 8px 40px rgba(0,0,0,.4)" }}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}>🔧</div>
+            <h1 style={{ fontSize: 20, margin: "0 0 10px" }}>Something hiccupped</h1>
+            <p style={{ fontSize: 14, lineHeight: 1.6, color: "#9aa6c0", margin: "0 0 20px" }}>
+              The app hit a snag and needs a quick reload. Your progress is saved — reloading picks up right where you were.
+            </p>
+            <button onClick={() => { try { window.location.reload(); } catch {} }}
+              style={{ background: "#6366f1", color: "#fff", border: "none", borderRadius: 10, padding: "12px 28px", fontSize: 15, fontWeight: 600, cursor: "pointer" }}>
+              Reload
+            </button>
+            <p style={{ fontSize: 11, color: "#5a6280", marginTop: 18, fontFamily: "monospace", wordBreak: "break-word" }}>{this.state.msg}</p>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+export default function App(props) {
+  return (
+    <AppErrorBoundary>
+      <AppInner {...props} />
+    </AppErrorBoundary>
   );
 }
 
@@ -2338,7 +2381,6 @@ function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, ge
         ) : (
           <p className="cq-genlocked">✨ Finish your first lesson to unlock more AI-made practice.</p>
         )}
-        {genErr && <p className="cq-generr">{genErr}</p>}
       </div>
     </main>
   );
@@ -2911,17 +2953,29 @@ function VisualStep({ step, onDone }) {
       }
       // 2) Only valid code reaches the AI translator. Retry a few times, since
       //    the free model occasionally returns empty/garbage on the first try.
-      const js = await withRetry(async () => {
-        const out = await translateToCanvas(step.lang || "py", code);
-        if (!out || out.length < 10) throw new Error("empty");
-        return out;
-      });
+      let js;
+      try {
+        js = await withRetry(async () => {
+          const out = await translateToCanvas(step.lang || "py", code);
+          if (!out || out.length < 10) throw new Error("The AI returned an empty drawing. Try again.");
+          return out;
+        });
+      } catch (e) {
+        stats.recordWrong();
+        const msg = e?.message || "";
+        if (/rate-limited|429/i.test(msg)) setErr("Gemini's free-tier limit was hit. Wait a minute, then tap Run again.");
+        else if (/timeout/i.test(msg)) setErr("The AI took too long to translate this. Tap Run to try again.");
+        else if (/cancelled/i.test(msg)) setErr("Cancelled.");
+        else setErr("Couldn't translate this to a drawing just now: " + (msg || "unknown") + ". Tap Run to try again.");
+        setBusy(false);
+        return;
+      }
       setSrcDoc(canvasSandboxHTML(js));
       setHasRun(true);
       onDone(stats.buildStats({ applicable: false })); // visual lessons complete on a successful show
-    } catch {
+    } catch (e) {
       stats.recordWrong();
-      setErr("Couldn't run that visual just now — it needs the live AI connection to translate. Try again in a moment.");
+      setErr("Couldn't run that visual just now: " + (e?.message || "unknown") + ". Try again in a moment.");
     } finally { setBusy(false); }
   };
 
