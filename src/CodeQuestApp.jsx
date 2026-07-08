@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useSyncExternalStore } from "react"
 // Build marker — check this in the browser console to confirm which version is
 // actually running: type  window.__CQ_VERSION  in DevTools. If it's not the
 // value below, your browser/Vercel is serving an older bundle.
-const CQ_VERSION = "2026-07-08-v6-rename-topic";
+const CQ_VERSION = "2026-07-08-v8-clearer-naming";
 if (typeof window !== "undefined") {
   window.__CQ_VERSION = CQ_VERSION;
   try { console.log("%cCodeQuest build: " + CQ_VERSION, "color:#6366f1;font-weight:bold"); } catch {}
@@ -2012,7 +2012,7 @@ function AppInner({ initialState, onPersist, onSignOut } = {}) {
     // Validate first
     for (const s of sets) {
       if (s.mode === "custom" && !s.topic.trim()) {
-        GEN_STORE.set({ classId, sets, status: "error", error: "One of your sets is set to “You choose topic” but has no topic typed in.", lastTopic: "" });
+        GEN_STORE.set({ classId, sets, status: "error", error: "One of your sets is set to “I'll name the topic” but has no topic typed in.", lastTopic: "" });
         return { blocked: false };
       }
     }
@@ -2156,11 +2156,21 @@ function AppInner({ initialState, onPersist, onSignOut } = {}) {
   const addAiLesson = (classId, lesson) => setAiLessons((a) => ({ ...a, [classId]: [...(a[classId] || []), lesson] }));
   // Reorder generated lessons within a class (drag-to-reorder). Persists via the
   // aiLessons autosave. from/to are indices within aiLessons[classId].
-  const reorderAiLesson = (classId, from, to) => setAiLessons((a) => {
+  // Move a generated lesson (identified by its stable id) to sit right before
+  // the target lesson (targetId), optionally into a different chapter. Handles
+  // BOTH same-topic reordering and cross-topic moves in one operation. Using ids
+  // (not indices) is essential because indices shift as the array changes.
+  const moveAiLesson = (classId, dragId, targetId, targetChapter) => setAiLessons((a) => {
     const list = a[classId] ? [...a[classId]] : [];
-    if (from < 0 || from >= list.length || to < 0 || to >= list.length || from === to) return a;
-    const [moved] = list.splice(from, 1);
-    list.splice(to, 0, moved);
+    const fromIdx = list.findIndex((l) => l.id === dragId);
+    if (fromIdx < 0) return a;
+    const [moved] = list.splice(fromIdx, 1);
+    // Reassign chapter if the drop lands in a different topic.
+    if (targetChapter != null && (moved.chapter || "") !== targetChapter) moved.chapter = targetChapter;
+    // Insert before the target lesson (or at end if target not found / is itself).
+    let insertAt = targetId ? list.findIndex((l) => l.id === targetId) : list.length;
+    if (insertAt < 0) insertAt = list.length;
+    list.splice(insertAt, 0, { ...moved });
     return { ...a, [classId]: list };
   });
   // Rename a generated chapter/topic: update the `chapter` field on every
@@ -2176,15 +2186,6 @@ function AppInner({ initialState, onPersist, onSignOut } = {}) {
       const list = a[classId] || [];
       if (!list.some((l) => (l.chapter || "") === oldName)) return a;
       return { ...a, [classId]: list.map((l) => (l.chapter || "") === oldName ? { ...l, chapter: clean } : l) };
-    });
-  };
-  // Move a generated lesson into a different section (by chapter name).
-  const moveAiLessonToChapter = (classId, aiIdx, chapterName) => {
-    setAiLessons((a) => {
-      const list = a[classId] ? [...a[classId]] : [];
-      if (aiIdx < 0 || aiIdx >= list.length) return a;
-      list[aiIdx] = { ...list[aiIdx], chapter: chapterName };
-      return { ...a, [classId]: list };
     });
   };
 
@@ -2253,9 +2254,8 @@ function AppInner({ initialState, onPersist, onSignOut } = {}) {
           onAddAi={addAndOpenOne}
           onAddCourse={(lessons) => setAiLessons((a) => ({ ...a, [baseCls.id]: [...(a[baseCls.id] || []), ...lessons] }))}
           onAddAndOpenSet={addAndOpenSet}
-          onReorderAi={reorderAiLesson}
+          onMoveAiLesson={moveAiLesson}
           onRenameChapter={renameChapter}
-          onMoveAiToChapter={moveAiLessonToChapter}
           baseStepCount={baseCls.steps.length}
           onStayOnClass={() => setScreen({ name: "class", id: cls.id })} />;
       })()}
@@ -2276,7 +2276,7 @@ function AppInner({ initialState, onPersist, onSignOut } = {}) {
           goStep={(i) => setScreen({ name: "lesson", id: cls.id, idx: i })} />;
       })()}
 
-      <footer className="cq-footer">Signed in · your progress, AI sets, and projects save to your account automatically</footer>
+      <footer className="cq-footer">Signed in · your progress, AI sets, and projects save to your account automatically<br /><span style={{ opacity: 0.5, fontSize: 11 }}>build {CQ_VERSION}</span></footer>
     </div>
   );
 }
@@ -2645,7 +2645,7 @@ function TutorChat({ classLabel = null, classKind = null }) {
   );
 }
 
-function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, generation, onStartGeneration, onCancelGeneration, onClearGenerationError, onBack, onOpenStep, onContinue, onAddAi, onAddCourse, onAddAndOpenSet, onReorderAi, onRenameChapter, onMoveAiToChapter, baseStepCount = 0, onStayOnClass }) {
+function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, generation, onStartGeneration, onCancelGeneration, onClearGenerationError, onBack, onOpenStep, onContinue, onAddAi, onAddCourse, onAddAndOpenSet, onMoveAiLesson, onRenameChapter, baseStepCount = 0, onStayOnClass }) {
   const chapters = chaptersOf(cls);
   const done = doneSet.size, total = cls.steps.length;
   const pct = total ? Math.round((100 * done) / total) : 0;
@@ -2658,21 +2658,56 @@ function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, ge
   // setBuildErr shim: only used for clearing errors from the UI (Cancel, etc.).
   const setBuildErr = (msg) => { if (!msg && onClearGenerationError) onClearGenerationError(); };
   const [courseBusy, setCourseBusy] = useState(false);
-  // Drag-to-reorder state for generated lessons. dragFrom = global step index
-  // being dragged; dragOver = global index it's hovering over.
-  const [dragFrom, setDragFrom] = useState(null);
-  const [dragOver, setDragOver] = useState(null);
+  // Drag-to-reorder for generated lessons, using POINTER events so it works on
+  // Safari and touchscreens (HTML5 draggable is flaky on both). We track the
+  // dragged lesson's id and the current hover target in a ref (read fresh at
+  // drop time — state closures would be stale). dragState triggers re-renders
+  // for the visual feedback.
+  const dragRef = useRef({ dragId: null, overId: null, overChapter: null });
+  const [dragState, setDragState] = useState({ dragId: null, overId: null });
   // Which chapter is being renamed, and the working text.
   const [editingChapter, setEditingChapter] = useState(null);
   const [chapterDraft, setChapterDraft] = useState("");
   // A chapter is renamable if it's a generated topic (all its lessons are AI-made).
   const isGeneratedChapter = (stepIdxs) => stepIdxs.length > 0 && stepIdxs.every((i) => cls.steps[i] && cls.steps[i].generated);
   const canReorder = (i) => i >= baseStepCount && cls.steps[i] && cls.steps[i].generated;
-  const commitReorder = () => {
-    if (dragFrom != null && dragOver != null && dragFrom !== dragOver && canReorder(dragFrom) && canReorder(dragOver)) {
-      onReorderAi && onReorderAi(cls.id, dragFrom - baseStepCount, dragOver - baseStepCount);
-    }
-    setDragFrom(null); setDragOver(null);
+
+  const onPointerDownRow = (e, step) => {
+    if (!step.generated) return;
+    dragRef.current = { dragId: step.id, overId: step.id, overChapter: step.chapter || "" };
+    setDragState({ dragId: step.id, overId: step.id });
+    // Capture subsequent moves globally.
+    const onMove = (ev) => {
+      const point = ev.touches ? ev.touches[0] : ev;
+      const el = document.elementFromPoint(point.clientX, point.clientY);
+      const row = el && el.closest ? el.closest("[data-lesson-id]") : null;
+      if (row) {
+        const overId = row.getAttribute("data-lesson-id");
+        const overChapter = row.getAttribute("data-chapter") || "";
+        if (row.getAttribute("data-generated") === "1") {
+          dragRef.current.overId = overId;
+          dragRef.current.overChapter = overChapter;
+          setDragState((s) => s.overId === overId ? s : { ...s, overId });
+        }
+      }
+    };
+    const onUp = () => {
+      const { dragId, overId, overChapter } = dragRef.current;
+      if (dragId && overId && dragId !== overId) {
+        onMoveAiLesson && onMoveAiLesson(cls.id, dragId, overId, overChapter);
+      }
+      dragRef.current = { dragId: null, overId: null, overChapter: null };
+      setDragState({ dragId: null, overId: null });
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("touchmove", onMove);
+      window.removeEventListener("touchend", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("touchmove", onMove, { passive: true });
+    window.addEventListener("touchend", onUp);
+    e.preventDefault();
   };
   const [courseErr, setCourseErr] = useState("");
 
@@ -2809,21 +2844,25 @@ function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, ge
                   const isDone = doneSet.has(i);
                   const isResume = i === resume && !isDone;
                   const draggable = canReorder(i);
-                  const isDragging = dragFrom === i;
-                  const isDropTarget = dragOver === i && dragFrom != null && dragFrom !== i;
+                  const isDragging = dragState.dragId === s.id;
+                  const isDropTarget = dragState.overId === s.id && dragState.dragId != null && dragState.dragId !== s.id;
                   return (
                     <div
-                      key={i}
+                      key={s.id || i}
+                      data-lesson-id={s.id || ""}
+                      data-chapter={s.chapter || ""}
+                      data-generated={s.generated ? "1" : "0"}
                       className={`cq-lessonrow ${isDone ? "done" : ""} ${isResume ? "resume" : ""} ${isDragging ? "dragging" : ""} ${isDropTarget ? "droptarget" : ""}`}
-                      onClick={() => { if (dragFrom == null) onOpenStep(i); }}
-                      draggable={draggable}
-                      onDragStart={draggable ? (e) => { setDragFrom(i); try { e.dataTransfer.effectAllowed = "move"; } catch {} } : undefined}
-                      onDragOver={draggable ? (e) => { e.preventDefault(); if (dragOver !== i) setDragOver(i); } : undefined}
-                      onDrop={draggable ? (e) => { e.preventDefault(); commitReorder(); } : undefined}
-                      onDragEnd={draggable ? () => { setDragFrom(null); setDragOver(null); } : undefined}
-                      style={draggable ? { cursor: dragFrom != null ? "grabbing" : "pointer" } : undefined}
+                      onClick={() => { if (dragState.dragId == null) onOpenStep(i); }}
                     >
-                      {draggable && <span className="cq-draghandle" title="Drag to reorder">⠿</span>}
+                      {draggable && (
+                        <span
+                          className="cq-draghandle"
+                          title="Drag to reorder (also between topics)"
+                          onPointerDown={(e) => onPointerDownRow(e, s)}
+                          onTouchStart={(e) => onPointerDownRow(e, s)}
+                        >⠿</span>
+                      )}
                       <span className="cq-lessonrow-icon">{isDone ? "✓" : isResume ? "▶" : "○"}</span>
                       <span className="cq-lessonrow-title">{s.title}{s.generated ? " ✨" : ""}</span>
                       <span className="cq-lessonrow-type">{s.type}</span>
@@ -2857,12 +2896,16 @@ function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, ge
                     {sets.length > 1 && <button className="cq-set-remove" onClick={() => removeSet(i)}>✕ remove</button>}
                   </div>
                   <div className="cq-set-modes">
-                    <button className={`cq-set-mode ${s.mode === "ai" ? "on" : ""}`} onClick={() => updateSet(i, { mode: "ai" })}>🤖 AI chooses topic</button>
-                    <button className={`cq-set-mode ${s.mode === "custom" ? "on" : ""}`} onClick={() => updateSet(i, { mode: "custom" })}>✏️ You choose topic</button>
+                    <button className={`cq-set-mode ${s.mode === "ai" ? "on" : ""}`} onClick={() => updateSet(i, { mode: "ai" })}>🤖 Surprise me</button>
+                    <button className={`cq-set-mode ${s.mode === "custom" ? "on" : ""}`} onClick={() => updateSet(i, { mode: "custom" })}>✏️ I'll name the topic</button>
                   </div>
                   {s.mode === "custom" && (
-                    <input className="cq-set-topic" placeholder="What do you want to learn? e.g. loops, transistors, how AI learns…"
-                      value={s.topic} onChange={(e) => updateSet(i, { topic: e.target.value })} />
+                    <div className="cq-set-topicwrap">
+                      <label className="cq-set-topiclabel">📝 Name your topic (what to learn)</label>
+                      <input className="cq-set-topic" placeholder="e.g. Loops, String Magic, How AI learns…"
+                        value={s.topic} onChange={(e) => updateSet(i, { topic: e.target.value })} />
+                      <p className="cq-set-topichint">This name becomes the ✨ header for the set. You can rename it later with the ✏️ pencil.</p>
+                    </div>
                   )}
                   <div className="cq-set-count">
                     <label>How many mini-lessons?</label>
@@ -4072,7 +4115,8 @@ const CSS = `
 .cq-lessonrow{display:flex;align-items:center;gap:13px;background:var(--bg-2);border:1px solid var(--line-soft);border-radius:var(--radius-sm);padding:13px 16px;cursor:pointer;transition:border-color .15s,transform .15s,background .15s;color:inherit;font-family:inherit;text-align:left}
 .cq-lessonrow.dragging{opacity:.5;border-color:var(--violet)}
 .cq-lessonrow.droptarget{border-color:var(--violet);border-style:dashed;background:rgba(139,92,246,.08)}
-.cq-draghandle{color:var(--muted);font-size:16px;cursor:grab;user-select:none;line-height:1}
+.cq-draghandle{color:var(--muted);font-size:18px;cursor:grab;user-select:none;line-height:1;touch-action:none;padding:4px 2px}
+.cq-draghandle:active{cursor:grabbing}
 .cq-lessonrow:hover{border-color:var(--line);transform:translateX(3px);background:var(--bg-3)}
 .cq-lessonrow.done{border-color:rgba(94,224,192,.32)}
 .cq-lessonrow.resume{border-color:var(--teal);box-shadow:0 0 0 1px var(--teal),0 8px 22px -14px var(--teal-deep)}
@@ -4102,6 +4146,10 @@ const CSS = `
 .cq-set-mode{flex:1;background:var(--bg-2);border:1.5px solid var(--line);color:var(--ink-soft);border-radius:10px;padding:11px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:.15s}
 .cq-set-mode.on{border-color:var(--violet);color:var(--ink);background:var(--violet-ghost)}
 .cq-set-topic{width:100%;box-sizing:border-box;padding:11px 13px;border-radius:10px;background:var(--bg-2);border:1px solid var(--line);color:var(--ink);font-family:inherit;font-size:14px;margin-bottom:12px;outline:none}
+.cq-set-topicwrap{margin-bottom:6px}
+.cq-set-topiclabel{display:block;font-size:13px;font-weight:600;color:var(--ink);margin-bottom:6px}
+.cq-set-topic:focus{border-color:var(--violet)}
+.cq-set-topichint{font-size:11px;color:var(--muted);margin:-6px 0 10px;line-height:1.4}
 .cq-set-count{display:flex;align-items:center;gap:10px}
 .cq-set-diff{margin-top:12px}
 .cq-set-diff label{display:block;font-size:13px;color:var(--ink-soft);margin-bottom:7px}
