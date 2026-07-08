@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useSyncExternalStore } from "react";
 
 // CODEQUEST_VERSION_MARKER: TABS_AND_HERO_V1
 // (search this string to confirm you have the latest file)
@@ -275,8 +275,14 @@ async function callClaude(messages, { system, maxTokens = 900, signal, timeoutMs
   // generation (runnable code, graded solutions) — see the call sites below.
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  // If caller passed their own signal, forward its abort
-  if (signal) signal.addEventListener("abort", () => controller.abort());
+  // If caller passed their own signal, forward its abort. CRITICAL: also check
+  // if it's ALREADY aborted — addEventListener never fires for a signal that
+  // aborted before registration, which previously let a "cancelled" fetch run
+  // the full 45s.
+  if (signal) {
+    if (signal.aborted) { clearTimeout(timer); throw new Error("cancelled"); }
+    signal.addEventListener("abort", () => controller.abort(), { once: true });
+  }
   try {
     const res = await fetch("/api/ai", {
       method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
@@ -284,6 +290,11 @@ async function callClaude(messages, { system, maxTokens = 900, signal, timeoutMs
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
+      // Rate limits get a distinct, non-retryable error: retrying a 429
+      // immediately just burns more quota and makes the limit worse.
+      if (res.status === 429 || /429|RESOURCE_EXHAUSTED|quota/i.test(String(data.error || "") + String(data.detail || ""))) {
+        throw new Error("rate-limited: Gemini free-tier quota hit — wait a minute and try again");
+      }
       // Surface the real reason (from api/ai.js) so failures are diagnosable.
       const reason = data.error || `HTTP ${res.status}`;
       const extra = data.detail ? ` — ${String(data.detail).slice(0, 160)}` : "";
@@ -291,7 +302,10 @@ async function callClaude(messages, { system, maxTokens = 900, signal, timeoutMs
     }
     return (data.text || "").trim();
   } catch (e) {
-    if (e?.name === "AbortError") throw new Error("timeout — the AI took too long to respond");
+    if (e?.name === "AbortError") {
+      // Distinguish user cancel from a genuine stall so the UI says the truth.
+      throw new Error(signal?.aborted ? "cancelled" : "timeout — the AI took too long to respond");
+    }
     throw e;
   } finally {
     clearTimeout(timer);
@@ -506,6 +520,11 @@ async function precheckPython(code) {
     "def _mkstub(name):",
     "    m = types.ModuleType(name)",
     "    m.__getattr__ = lambda n: _NoOp()",
+    // __all__ makes `from X import *` work: the star-import machinery reads
+    // __all__ then getattr's each name (which our __getattr__ answers with a
+    // _NoOp). Without it, star imports either crash or import nothing — and
+    // `from turtle import *` is THE most common style in kid turtle tutorials.
+    "    m.__all__ = ['Turtle','Screen','forward','fd','backward','bk','back','right','rt','left','lt','goto','setpos','setposition','penup','pu','up','pendown','pd','down','pencolor','color','fillcolor','begin_fill','end_fill','speed','circle','dot','stamp','hideturtle','ht','showturtle','st','setheading','seth','home','clear','clearscreen','reset','write','shape','pensize','width','bgcolor','title','done','mainloop','exitonclick','tracer','update','position','pos','xcor','ycor','heading','distance','towards','undo','Tk','Canvas','Frame','Label','Button','Entry','Text','mainloop','StringVar','IntVar','PhotoImage','Menu','Toplevel','messagebox','ttk','font','N','S','E','W','NE','NW','SE','SW','CENTER','TOP','BOTTOM','LEFT','RIGHT','BOTH','X','Y','END','NORMAL','DISABLED']",
     "    return m",
     // Stub turtle, tkinter (and its submodules commonly imported)
     'for _lib in ["turtle","tkinter","tkinter.ttk","tkinter.font","tkinter.messagebox","tkinter.filedialog"]:',
@@ -770,8 +789,11 @@ async function withRetry(fn, attempts = 3, delayMs = 400, signal) {
     catch (e) {
       // If cancelled OR the error came from an abort/timeout, propagate immediately
       // instead of retrying — otherwise a Cancel click just triggers 3 more attempts.
+      // Rate limits (429) are also non-retryable: immediate retries burn MORE quota
+      // and extend the lockout. Fail fast with the friendly message instead.
       if (signal?.aborted || e?.name === "AbortError" || e?.message === "cancelled" ||
-          e?.message?.includes("aborted") || e?.message?.includes("cancelled") || e?.message?.includes("timeout")) {
+          e?.message?.includes("aborted") || e?.message?.includes("cancelled") || e?.message?.includes("timeout") ||
+          e?.message?.includes("rate-limited") || e?.message?.includes("429")) {
         throw signal?.aborted ? new Error("cancelled") : e;
       }
       lastErr = e;
@@ -981,6 +1003,9 @@ async function generateTopicBatch({ classId, langLabel, priorTopics, customTopic
   const rawLessons = Array.isArray(parsed.lessons) ? parsed.lessons.slice(0, 12) : [];
   const out = [];
   for (const L of rawLessons) {
+    // Cancel check per-lesson: Python verification via Pyodide can take seconds
+    // per lesson, so without this a Stop during validation waits for ALL of them.
+    if (signal?.aborted) throw new Error("cancelled");
     if (!L.fnName || !L.solution || !Array.isArray(L.tests) || L.tests.length < 2) continue;
     // verify the solution actually runs (JS natively, Python via Pyodide)
     let valid;
@@ -1496,6 +1521,29 @@ const chaptersOf = (cls) => {
 const resumeIdx = (cls, doneSet) => { for (let i = 0; i < cls.steps.length; i++) if (!doneSet.has(i)) return i; return Math.max(0, cls.steps.length - 1); };
 const modeLabel = (mode) => mode === "real" ? "real test grading" : mode === "concept" ? "think like a coder" : "AI-guided";
 
+// ---------- Module-level generation store ----------
+// Generation state lives OUTSIDE React because the parent auth wrapper remounts
+// App on tab refocus (same reason screen/tab needed sessionStorage). useState
+// would be wiped by a remount — killing the progress display AND the Stop
+// button (whose AbortController ref would be lost, making Stop a no-op).
+// This store survives remounts; the running promise keeps working; any newly
+// mounted App re-subscribes and picks up live status, and finished lessons wait
+// in `pendingLessons` until a mounted App drains them into state.
+// (A full page reload still kills the in-flight promise — that needs a server
+// job queue, out of scope. Tab-switch remounts are the case this fixes.)
+const GEN_STORE = {
+  state: { classId: null, sets: null, status: "idle", error: "", lastTopic: "" },
+  ctrl: null,            // current AbortController — survives remounts so Stop always works
+  pendingLessons: null,  // { classId, lessons } finished while no App was watching
+  subs: new Set(),
+  get() { return this.state; },
+  set(next) {
+    this.state = typeof next === "function" ? next(this.state) : next;
+    this.subs.forEach((fn) => { try { fn(); } catch {} });
+  },
+  subscribe(fn) { this.subs.add(fn); return () => this.subs.delete(fn); },
+};
+
 export default function App({ initialState, onPersist, onSignOut } = {}) {
   // Screen state is remembered in sessionStorage so a tab-away → tab-back
   // doesn't bounce you out of the lesson/class you were in. sessionStorage
@@ -1573,33 +1621,55 @@ export default function App({ initialState, onPersist, onSignOut } = {}) {
   // capture (age, background, "I want a challenge", "go easy", etc.).
   const [profileDescription, setProfileDescription] = useState(() => initialState?.profileDescription || "");
 
-  // Background generation: state lives at App-level so it survives when the
-  // ClassView unmounts (e.g. user tabs away or navigates elsewhere). ClassView
-  // reads status via props and shows the spinner/error for its own class.
-  const [generation, setGeneration] = useState({ classId: null, sets: null, status: "idle", error: "", lastTopic: "" });
-  const generationCtrlRef = useRef(null);
-  const generationLatestRef = useRef({ classId: null, sets: null, status: "idle", error: "", lastTopic: "" });
-  generationLatestRef.current = generation;
+  // Background generation: state lives in GEN_STORE (module scope) so it
+  // survives App remounts (tab refocus). We subscribe via useSyncExternalStore
+  // so React re-renders whenever the store changes.
+  const generation = useSyncExternalStore(
+    (cb) => GEN_STORE.subscribe(cb),
+    () => GEN_STORE.get()
+  );
+  // Live refs so the drain effect can read current screen/aiLessons without
+  // stale closures.
+  const screenRef = useRef(screen); screenRef.current = screen;
 
-  // Kick off a generation — runs in the background regardless of navigation.
+  // Drain finished lessons from the store into React state. Runs on mount too,
+  // so lessons that finished while App was remounting aren't lost.
+  useEffect(() => {
+    if (!GEN_STORE.pendingLessons) return;
+    const { classId, lessons } = GEN_STORE.pendingLessons;
+    GEN_STORE.pendingLessons = null;
+    const cls = CLASSES.find((c) => c.id === classId);
+    setAiLessons((prev) => {
+      const existing = prev[classId] || [];
+      // Auto-open the first new lesson only if the user is on that class page.
+      if (cls && screenRef.current.name === "class" && screenRef.current.id === classId) {
+        const firstNewIdx = cls.steps.length + existing.length;
+        setTimeout(() => setScreen({ name: "lesson", id: classId, idx: firstNewIdx }), 0);
+      }
+      return { ...prev, [classId]: [...existing, ...lessons] };
+    });
+  }, [generation]);
+
+  // Kick off a generation — runs in the background regardless of navigation
+  // or App remounts.
   const startGeneration = async ({ classId, sets, priorTopics, priorTitles }) => {
     // Only one generation at a time (simplifies state and avoids parallel API storms)
-    if (generation.status === "running") return { blocked: true };
+    if (GEN_STORE.get().status === "running") return { blocked: true };
     // Validate first
     for (const s of sets) {
       if (s.mode === "custom" && !s.topic.trim()) {
-        setGeneration({ classId, sets, status: "error", error: "One of your sets is set to “You choose topic” but has no topic typed in.", lastTopic: "" });
+        GEN_STORE.set({ classId, sets, status: "error", error: "One of your sets is set to “You choose topic” but has no topic typed in.", lastTopic: "" });
         return { blocked: false };
       }
     }
     const controller = new AbortController();
-    generationCtrlRef.current = controller;
-    setGeneration({ classId, sets, status: "running", error: "", lastTopic: "" });
+    GEN_STORE.ctrl = controller;
+    GEN_STORE.set({ classId, sets, status: "running", error: "", lastTopic: "" });
 
     const cls = CLASSES.find((c) => c.id === classId);
     if (!cls) {
-      generationCtrlRef.current = null;
-      setGeneration({ classId, sets, status: "error", error: "Class not found.", lastTopic: "" });
+      GEN_STORE.ctrl = null;
+      GEN_STORE.set({ classId, sets, status: "error", error: "Class not found.", lastTopic: "" });
       return { blocked: false };
     }
     const doneSet = doneSetFor(classId);
@@ -1626,7 +1696,7 @@ export default function App({ initialState, onPersist, onSignOut } = {}) {
       if (cls.mode === "real") {
         const unit = await withRetry(() => generateTopicUnit({ classId: cls.id, langLabel: cls.label, priorTopics: priorTopics || [], customTopic, count, difficulty, signal }), 3, 400, signal);
         if (unit && unit.lessons) {
-          setGeneration((g) => ({ ...g, lastTopic: unit.topic || g.lastTopic }));
+          GEN_STORE.set((g) => ({ ...g, lastTopic: unit.topic || g.lastTopic }));
           return unit.lessons;
         }
         return null;
@@ -1644,33 +1714,34 @@ export default function App({ initialState, onPersist, onSignOut } = {}) {
       } catch (e) {
         if (controller.signal.aborted || e?.message === "cancelled") { firstErr = "cancelled"; break; }
         if (!firstErr) firstErr = e?.message || "generation failed";
+        // Quota wall: every further set would hit the same 429 and burn more
+        // quota. Stop the whole run; keep any lessons already generated.
+        if (/rate-limited|429/i.test(e?.message || "")) break;
       }
     }
-    generationCtrlRef.current = null;
+    GEN_STORE.ctrl = null;
 
     if (all.length) {
-      // Add lessons to the class's aiLessons pile
-      setAiLessons((prev) => ({ ...prev, [cls.id]: [...(prev[cls.id] || []), ...all] }));
-      // If user is currently on this class page, jump to the first new lesson.
-      // Otherwise leave them wherever they are — lessons quietly available on return.
-      const currentScreen = screen;
-      if (currentScreen.name === "class" && currentScreen.id === cls.id) {
-        const firstNewIdx = cls.steps.length + (aiLessons[cls.id] || []).length;
-        setTimeout(() => setScreen({ name: "lesson", id: cls.id, idx: firstNewIdx }), 0);
-      }
-      setGeneration({ classId: null, sets: null, status: "done", error: "", lastTopic: generationLatestRef.current.lastTopic });
+      // Park the lessons in the store; the drain effect of whichever App
+      // instance is currently mounted moves them into React state (and
+      // auto-opens the first new lesson if the user is on that class page).
+      // Direct setAiLessons here would be lost if App remounted mid-generation.
+      GEN_STORE.pendingLessons = { classId: cls.id, lessons: all };
+      GEN_STORE.set((g) => ({ classId: null, sets: null, status: "done", error: "", lastTopic: g.lastTopic }));
     } else if (firstErr === "cancelled") {
-      setGeneration({ classId, sets, status: "error", error: "Generation cancelled.", lastTopic: "" });
+      GEN_STORE.set({ classId, sets, status: "error", error: "Generation cancelled.", lastTopic: "" });
+    } else if (/rate-limited|429/i.test(firstErr)) {
+      GEN_STORE.set({ classId, sets, status: "error", error: "Gemini's free-tier limit was hit. Wait a minute (or until tomorrow if the daily cap ran out), then try again.", lastTopic: "" });
     } else {
-      setGeneration({ classId, sets, status: "error", error: "Couldn't generate those sets right now. " + (firstErr ? "(" + firstErr + ")" : "Please try again."), lastTopic: "" });
+      GEN_STORE.set({ classId, sets, status: "error", error: "Couldn't generate those sets right now. " + (firstErr ? "(" + firstErr + ")" : "Please try again."), lastTopic: "" });
     }
     return { blocked: false };
   };
   const cancelGeneration = () => {
-    if (generationCtrlRef.current) generationCtrlRef.current.abort();
+    if (GEN_STORE.ctrl) GEN_STORE.ctrl.abort();
   };
   const clearGenerationError = () => {
-    setGeneration({ classId: null, sets: null, status: "idle", error: "", lastTopic: "" });
+    GEN_STORE.set({ classId: null, sets: null, status: "idle", error: "", lastTopic: "" });
   };
 
   // Autosave to the cloud whenever saved state changes
