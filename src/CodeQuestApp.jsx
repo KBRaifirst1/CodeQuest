@@ -619,10 +619,11 @@ async function translateToCanvas(langId, code, signal) {
   const info = VISUAL_LANG[langId] || { label: langId, libs: "its usual graphics library" };
   const sys =
     "You take a beginner's visual/graphics program written in any language and RE-CREATE the same visual as ONE self-contained JavaScript program drawing on an HTML canvas. " +
-    "The page already has <canvas id=\"c\" width=\"400\" height=\"400\"></canvas>; grab its 2D context yourself. " +
+    "The page already has <canvas id=\"c\" width=\"400\" height=\"400\"></canvas> with a WHITE background; grab its 2D context yourself. " +
     "Figure out what the program draws (shapes, colors, positions, text, sprites) and reproduce it faithfully on the canvas. " +
+    "IMPORTANT: the canvas is white. Keep every drawing visible on white — turtle/tkinter code that relies on a default black pen should stroke in a dark color (black is fine), and if the original program fills its own background color, do that first so its shapes sit on the right backdrop. Never draw white shapes on the white canvas with no background fill (they'd be invisible). " +
     "Translate any animation/game loop to requestAnimationFrame, and any keyboard/mouse input to browser events (keydown, mousemove, etc.). " +
-    "If the program uses a coordinate system or window size, map it sensibly into 400x400. " +
+    "If the program uses a coordinate system or window size, map it sensibly into 400x400. For turtle, remember its origin (0,0) is the CENTER and positive Y is UP — translate accordingly so shapes land on-canvas. " +
     "Output ONLY JavaScript code — no explanation, no comments needed, no markdown fences.";
   const user =
     `This is a ${info.label} program (likely using ${info.libs}). ` +
@@ -634,9 +635,18 @@ function canvasSandboxHTML(jsCode) {
   // Escape </script — otherwise user code containing that literal string would
   // prematurely end the <script> block and the rest gets parsed as HTML.
   const safe = String(jsCode).replace(/<\/script/gi, "<\\/script");
-  return `<!doctype html><html><head><style>html,body{margin:0;height:100%;background:#0e1320;display:flex;align-items:center;justify-content:center}canvas{background:#000;border-radius:8px;max-width:100%}</style></head>
+  // The canvas background is WHITE. This matters: turtle and tkinter default to
+  // a BLACK pen on a WHITE page. If our canvas were black (it used to be), a
+  // faithful translation would draw black-on-black → invisible → "black screen".
+  // White canvas means default-black drawings show up, matching what these
+  // libraries actually look like. Programs that set their own background (Pygame
+  // fills the screen, etc.) paint over the white on their first draw, so they're
+  // unaffected. We also pre-fill white before running, so code that draws
+  // nothing (or errors early) shows a blank white canvas, never a black void.
+  return `<!doctype html><html><head><style>html,body{margin:0;height:100%;background:#0e1320;display:flex;align-items:center;justify-content:center}canvas{background:#fff;border-radius:8px;max-width:100%}</style></head>
 <body><canvas id="c" width="400" height="400"></canvas>
 <script>
+(function(){ var _c = document.getElementById('c').getContext('2d'); _c.fillStyle = '#ffffff'; _c.fillRect(0,0,400,400); })();
 try {
 ${safe}
 } catch (e) {
@@ -649,7 +659,68 @@ ${safe}
 </` + `script></body></html>`;
 }
 
-// ---------- Print-output translation (same idea as visual: AI translates code → JS) ----------
+// ---------- Markup / web-UI live preview (HTML, CSS, JSX, Vue, Svelte) ----------
+// These languages RENDER rather than return a value, so we show the learner's
+// code running live in a sandboxed iframe. Each kind gets the right runtime:
+//   html   → rendered directly
+//   css    → applied to a small fixed HTML scaffold so there's something to style
+//   jsx    → React + Babel-standalone from CDN, code transpiled in-browser
+//   vue    → Vue 3 global build from CDN
+//   svelte → Svelte compiler from CDN, component compiled + mounted in-browser
+// The iframe is sandboxed (allow-scripts, no same-origin) so nothing escapes.
+// NOTE: jsx/vue/svelte depend on their CDN scripts loading at runtime; if the
+// CDN is unreachable the preview shows an error, which is surfaced to the user.
+function markupSandboxHTML(kind, code) {
+  const raw = String(code || "");
+  const escScript = (s) => s.replace(/<\/script/gi, "<\\/script");
+  const shell = (head, body) => `<!doctype html><html><head><meta charset="utf-8">
+<style>html,body{margin:0;padding:16px;font-family:system-ui,-apple-system,sans-serif;background:#fff;color:#111;line-height:1.5}</style>
+${head}</head><body>${body}</body></html>`;
+
+  if (kind === "html") return shell("", raw);
+  if (kind === "css") {
+    // Give CSS learners a small scaffold to style so their rules have targets.
+    return shell(`<style>${escScript(raw)}</style>`,
+      `<div class="box">Box</div>\n<button class="btn">Button</button>\n<p class="text">Some text to style.</p>\n<ul class="list"><li>One</li><li>Two</li></ul>`);
+  }
+  if (kind === "jsx") {
+    return shell(
+      `<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>`,
+      `<div id="root"></div>
+<script type="text/babel" data-presets="react">
+try {
+${escScript(raw)}
+} catch(e){ document.getElementById('root').innerHTML = '<pre style="color:#c0392b;white-space:pre-wrap">'+String(e && e.message || e)+'</pre>'; }
+</` + `script>`);
+  }
+  if (kind === "vue") {
+    return shell(
+      `<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>`,
+      `<div id="app"></div>
+<script>
+try {
+${escScript(raw)}
+} catch(e){ document.getElementById('app').innerHTML = '<pre style="color:#c0392b;white-space:pre-wrap">'+String(e && e.message || e)+'</pre>'; }
+</` + `script>`);
+  }
+  if (kind === "svelte") {
+    return shell(
+      `<script src="https://unpkg.com/svelte@4/compiler.js"></script>`,
+      `<div id="app"></div>
+<script>
+try {
+  var __src = ${JSON.stringify(raw)};
+  var __c = svelte.compile(__src, { format: 'iife', name: 'App' });
+  var __App = new Function(__c.js.code + '; return App;')();
+  new __App({ target: document.getElementById('app') });
+} catch(e){ document.getElementById('app').innerHTML = '<pre style="color:#c0392b;white-space:pre-wrap">'+String(e && e.message || e)+'</pre>'; }
+</` + `script>`);
+  }
+  return shell("", raw);
+}
+
 // For languages we can't run in the browser natively (Java, C++, etc.), we ask
 // Gemini to translate to JavaScript that produces the SAME stdout via console.log.
 // The JS runs in a sandboxed iframe that captures output and posts it back via
@@ -775,7 +846,9 @@ const topicSystemFor = (langLabel, runnable, count = null) =>
   "\"starter\":string (a " + langLabel + " skeleton with the right name, empty body, a comment — NOT a solution), " +
   "\"solution\":string (complete correct " + langLabel + " code), " +
   "\"tests\":array of >=2 {\"args\":array,\"expected\":any}} ] }. " +
-  `Use real ${langLabel} syntax exactly. Keep it beginner-friendly. Every starter must NOT pass its tests; every solution MUST pass.`;
+  `Use real ${langLabel} syntax exactly. Keep it beginner-friendly. ` +
+  "CRITICAL: the function must RETURN the expected value for each test — the tests call the function and compare its RETURN value, so a lesson that only PRINTS the answer will fail. If the concept is about printing, still have the function RETURN the string it would print (the checker also accepts printed output, but returning is the reliable path). " +
+  `Every starter must NOT pass its tests; every solution MUST pass.`;
 
 // Retry a generate-and-validate operation a few times before giving up.
 // The free AI model occasionally returns something that fails validation; a
@@ -1086,20 +1159,48 @@ function loadPyodide() {
 async function verifyPython(code, fnName, tests) {
   let py;
   try { py = await loadPyodide(); } catch (e) { return { ok: false, why: e.message, engineError: true }; }
+  // A test passes if the function's RETURN value matches expected, OR (for
+  // print-style exercises) if what it PRINTS matches. Beginners very often
+  // solve "is it positive?" by printing rather than returning, and that
+  // shouldn't be marked wrong when the lesson is about printing. We compare the
+  // printed text against expected both as-is and stringified, trimmed.
   const harness = `
-import json
+import json, io, contextlib
 ${code}
 __tests = json.loads(r'''${JSON.stringify(tests)}''')
+def __norm(x):
+    return str(x).strip()
 __res = []
+__first_fail = None
 for __t in __tests:
     try:
-        __g = ${fnName}(*__t["args"])
-        __res.append(bool(__g == __t["expected"]))
+        __buf = io.StringIO()
+        with contextlib.redirect_stdout(__buf):
+            __g = ${fnName}(*__t["args"])
+        __printed = __buf.getvalue()
+        __exp = __t["expected"]
+        __ok = (__g == __exp)
+        if not __ok:
+            __po = __norm(__printed)
+            if __po != "" and (__po == __norm(__exp)):
+                __ok = True
+        __res.append(bool(__ok))
+        if not __ok and __first_fail is None:
+            # Describe the mismatch for a helpful message.
+            __shown = repr(__g) if __printed == "" else ("printed " + repr(__printed.strip()))
+            __first_fail = "with " + ", ".join(repr(a) for a in __t["args"]) + " it gave " + __shown + ", but should give " + repr(__exp)
     except Exception as __e:
         __res.append(False)
-json.dumps(__res)
+        if __first_fail is None:
+            __first_fail = "it hit an error: " + type(__e).__name__ + ": " + str(__e)
+json.dumps({"res": __res, "why": __first_fail})
 `;
-  try { const raw = await py.runPythonAsync(harness); const arr = JSON.parse(raw); return { ok: arr.every(Boolean) }; }
+  try {
+    const raw = await py.runPythonAsync(harness);
+    const parsed = JSON.parse(raw);
+    const ok = Array.isArray(parsed.res) && parsed.res.every(Boolean);
+    return ok ? { ok: true } : { ok: false, why: parsed.why || "the tests didn't all pass yet" };
+  }
   catch (e) { return { ok: false, why: (e.message || "").split("\n").filter(Boolean).pop() || "Python error" }; }
 }
 
@@ -1141,6 +1242,11 @@ const LANGUAGE_CATALOG = [
   { id: "js", label: "JavaScript", emoji: "🟨", mode: "real", blurb: "The language of the web — runs in every browser." },
   { id: "py", label: "Python", emoji: "🐍", mode: "real", blurb: "Famous for being readable. Great first or second language." },
   { id: "ts", label: "TypeScript", emoji: "🔷", mode: "ai", blurb: "JavaScript with type-safety. Popular for big apps." },
+  { id: "html", label: "HTML", emoji: "📄", mode: "markup", blurb: "The skeleton of every web page — structure and content." },
+  { id: "css", label: "CSS", emoji: "🎨", mode: "markup", blurb: "Makes web pages beautiful — colors, layout, and style." },
+  { id: "jsx", label: "React (JSX)", emoji: "⚛️", mode: "markup", blurb: "Build interactive UIs with components — the modern web standard." },
+  { id: "vue", label: "Vue", emoji: "💚", mode: "markup", blurb: "A friendly framework for building web interfaces." },
+  { id: "svelte", label: "Svelte", emoji: "🧡", mode: "markup", blurb: "Write less code — a fresh take on building web UIs." },
   { id: "java", label: "Java", emoji: "☕", mode: "ai", blurb: "Powers big apps and Android." },
   { id: "cpp", label: "C++", emoji: "⚙️", mode: "ai", blurb: "Fast and powerful, used in games and systems." },
   { id: "c", label: "C", emoji: "🔧", mode: "ai", blurb: "The classic low-level language behind everything." },
@@ -1185,6 +1291,14 @@ const LANGUAGE_CATALOG = [
   { id: "ada", label: "Ada", emoji: "✈️", mode: "ai", blurb: "Built for safety-critical systems like aviation." },
   { id: "prolog", label: "Prolog", emoji: "🧠", mode: "ai", blurb: "Logic programming — you state facts and rules." },
   { id: "smalltalk", label: "Smalltalk", emoji: "💬", mode: "ai", blurb: "A pure object-oriented pioneer that shaped modern code." },
+  { id: "processing", label: "Processing", emoji: "🖼️", mode: "ai", blurb: "Built for visual art and creative coding — draw with code." },
+  { id: "p5", label: "p5.js", emoji: "🎏", mode: "ai", blurb: "Processing for the web — interactive art in the browser." },
+  { id: "gdscript", label: "GDScript", emoji: "🎮", mode: "ai", blurb: "The language of the Godot game engine — make games." },
+  { id: "nim", label: "Nim", emoji: "👑", mode: "ai", blurb: "Reads like Python, runs fast like C." },
+  { id: "zig", label: "Zig", emoji: "⚡", mode: "ai", blurb: "A modern, simple systems language — a fresh take on C." },
+  { id: "crystal", label: "Crystal", emoji: "💎", mode: "ai", blurb: "Ruby-like syntax with the speed of a compiled language." },
+  { id: "d", label: "D", emoji: "🇩", mode: "ai", blurb: "A powerful systems language — C++ made friendlier." },
+  { id: "v", label: "V", emoji: "🇻", mode: "ai", blurb: "A simple, fast language for maintainable software." },
 ];
 
 const LANG_CFG = Object.fromEntries(LANGUAGE_CATALOG.map((l) => [l.id, { label: l.label, mode: l.mode, count: l.mode === "real" ? 5 : 4 }]));
@@ -1328,9 +1442,10 @@ async function generateCourse(classId, progressMap, signal) {
 
 // ---------- AI grading for compiled languages ----------
 async function gradeAICode(step, code) {
+  const context = step.intro || step.teach || "";
   const raw = await callClaude(
     [{ role: "user", content:
-      `Grade this ${step.langLabel} solution. Task: "${step.title}" — ${step.intro}\nCriteria:\n${step.checks.map((c, i) => `${i + 1}. ${c}`).join("\n")}\n\nCode:\n\`\`\`\n${code}\n\`\`\`\n\nRespond ONLY JSON: {"verdict":"pass"|"fail","feedback":string,"checks":[{"label":string,"met":boolean}]}.` }],
+      `Grade this ${step.langLabel} solution. Task: "${step.title}" — ${context}\nCriteria:\n${step.checks.map((c, i) => `${i + 1}. ${c}`).join("\n")}\n\nCode:\n\`\`\`\n${code}\n\`\`\`\n\nRespond ONLY JSON: {"verdict":"pass"|"fail","feedback":string,"checks":[{"label":string,"met":boolean}]}.` }],
     { system: "You are a precise, fair code reviewer who judges by reading code. Respond with only JSON.", maxTokens: 2000, thinking: true });
   try { const o = extractJSON(raw); return { verdict: o.verdict === "pass" ? "pass" : "fail", feedback: o.feedback || "", checks: Array.isArray(o.checks) ? o.checks : [] }; }
   catch { return { verdict: "fail", feedback: "Couldn't judge that clearly — try again.", checks: [] }; }
@@ -1448,9 +1563,169 @@ const CPP_STEPS = [
     why: "🎉 That's what your C++ code would print — real C++ syntax." },
 ];
 const HAND_BUILT = { general: GENERAL_STEPS, js: JS_STEPS, py: PY_STEPS, java: JAVA_STEPS, cpp: CPP_STEPS };
+
+// ---------- Per-language visual lessons ----------
+// A real graphics starter for every language that HAS idiomatic graphics.
+// Injected as a "visual" step into each language class below. The AI
+// translates the code to canvas so the learner sees their shape. Languages
+// without real graphics (SQL, Bash, Assembly, COBOL, Prolog, Solidity) are
+// intentionally absent — a "draw a shape" lesson there would be fake.
+const VISUAL_STARTERS = {
+  js: {"lib":"HTML5 canvas","title":"Draw with canvas","teach":"In the browser, JavaScript draws on a <canvas>. You grab its 2D context and call drawing commands. Draw a blue square — write it, then Run visually.","example":"ctx.fillStyle = \"blue\";\nctx.fillRect(120, 120, 160, 160);","starter":"const ctx = document.getElementById(\"c\").getContext(\"2d\");\nctx.fillStyle = \"blue\";\nctx.fillRect(120, 120, 160, 160);\n","why":"🎉 That's real canvas drawing — the same API real web games use!"},
+  ts: {"lib":"HTML5 canvas","title":"Draw with canvas","teach":"TypeScript draws on a browser <canvas> just like JavaScript, with types added. Grab the 2D context and draw. Make a blue square, then Run visually.","example":"ctx.fillStyle = \"blue\";\nctx.fillRect(120, 120, 160, 160);","starter":"const ctx = (document.getElementById(\"c\") as HTMLCanvasElement).getContext(\"2d\")!;\nctx.fillStyle = \"blue\";\nctx.fillRect(120, 120, 160, 160);\n","why":"🎉 Typed canvas drawing — real graphics with type safety!"},
+  py: {"lib":"turtle","title":"Draw a square with turtle","teach":"Turtle lets you steer a little pen that leaves a trail. Move forward, turn, repeat. Draw a square, then Run visually.","example":"for i in range(4):\n    t.forward(100)\n    t.right(90)","starter":"import turtle\nt = turtle.Turtle()\n\nfor i in range(4):\n    t.forward(120)\n    t.right(90)\n","why":"🎉 Your turtle drew a square!"},
+  java: {"lib":"Swing/Graphics2D","title":"Draw with Java graphics","teach":"Java draws with Graphics2D inside a JPanel. You get a graphics object g and call fill/draw methods. Draw a blue square, then Run visually.","example":"g.setColor(Color.BLUE);\ng.fillRect(120, 120, 160, 160);","starter":"import java.awt.*;\nimport javax.swing.*;\n\npublic class Draw extends JPanel {\n    public void paintComponent(Graphics g) {\n        g.setColor(Color.BLUE);\n        g.fillRect(120, 120, 160, 160);\n    }\n}\n","why":"🎉 Real Java graphics — that's how Swing apps draw!"},
+  cpp: {"lib":"SFML","title":"Draw with SFML","teach":"C++ often uses SFML for graphics. You create a shape, set its color and position, then draw it to a window. Draw a blue square, then Run visually.","example":"sf::RectangleShape sq({160, 160});\nsq.setFillColor(sf::Color::Blue);","starter":"#include <SFML/Graphics.hpp>\n\nint main() {\n    sf::RenderWindow window(sf::VideoMode(400, 400), \"Draw\");\n    sf::RectangleShape square({160.f, 160.f});\n    square.setPosition(120.f, 120.f);\n    square.setFillColor(sf::Color::Blue);\n    window.draw(square);\n    return 0;\n}\n","why":"🎉 That's SFML — real C++ game graphics!"},
+  c: {"lib":"raylib","title":"Draw with raylib","teach":"C uses raylib for simple graphics. You open a window and call draw functions between BeginDrawing and EndDrawing. Draw a blue square, then Run visually.","example":"DrawRectangle(120, 120, 160, 160, BLUE);","starter":"#include \"raylib.h\"\n\nint main() {\n    InitWindow(400, 400, \"Draw\");\n    BeginDrawing();\n    ClearBackground(RAYWHITE);\n    DrawRectangle(120, 120, 160, 160, BLUE);\n    EndDrawing();\n    return 0;\n}\n","why":"🎉 raylib graphics in C — clean and real!"},
+  csharp: {"lib":"System.Drawing","title":"Draw with C# graphics","teach":"C# draws with System.Drawing. You get a Graphics object and call Fill methods with a brush. Draw a blue square, then Run visually.","example":"g.FillRectangle(Brushes.Blue, 120, 120, 160, 160);","starter":"using System.Drawing;\n\nvoid Paint(Graphics g) {\n    g.FillRectangle(Brushes.Blue, 120, 120, 160, 160);\n}\n","why":"🎉 Real C# drawing with System.Drawing!"},
+  go: {"lib":"image package","title":"Draw with Go's image package","teach":"Go draws with its image package: you make an image and set pixel colors, or fill a rectangle. Draw a blue square, then Run visually.","example":"draw.Draw(img, square, &image.Uniform{blue}, image.Point{}, draw.Src)","starter":"package main\n\nimport (\n    \"image\"\n    \"image/color\"\n    \"image/draw\"\n)\n\nfunc main() {\n    img := image.NewRGBA(image.Rect(0, 0, 400, 400))\n    blue := color.RGBA{0, 0, 255, 255}\n    square := image.Rect(120, 120, 280, 280)\n    draw.Draw(img, square, &image.Uniform{blue}, image.Point{}, draw.Src)\n}\n","why":"🎉 That's Go drawing a square with the image package!"},
+  rust: {"lib":"macroquad","title":"Draw with macroquad","teach":"Rust uses macroquad for easy graphics. You draw shapes each frame. Draw a blue square, then Run visually.","example":"draw_rectangle(120.0, 120.0, 160.0, 160.0, BLUE);","starter":"use macroquad::prelude::*;\n\n#[macroquad::main(\"Draw\")]\nasync fn main() {\n    clear_background(WHITE);\n    draw_rectangle(120.0, 120.0, 160.0, 160.0, BLUE);\n    next_frame().await;\n}\n","why":"🎉 macroquad graphics in Rust — real and fast!"},
+  ruby: {"lib":"Ruby2D","title":"Draw with Ruby2D","teach":"Ruby draws with Ruby2D. You create a Square with a position, size, and color. Draw a blue square, then Run visually.","example":"Square.new(x: 120, y: 120, size: 160, color: \"blue\")","starter":"require \"ruby2d\"\n\nSquare.new(x: 120, y: 120, size: 160, color: \"blue\")\n\nshow\n","why":"🎉 Ruby2D drawing — clean and simple!"},
+  swift: {"lib":"SwiftUI Canvas","title":"Draw with SwiftUI","teach":"Swift draws with SwiftUI's Canvas. You fill a path with a color. Draw a blue square, then Run visually.","example":"context.fill(Path(CGRect(x: 120, y: 120, width: 160, height: 160)), with: .color(.blue))","starter":"import SwiftUI\n\nCanvas { context, size in\n    let square = Path(CGRect(x: 120, y: 120, width: 160, height: 160))\n    context.fill(square, with: .color(.blue))\n}\n","why":"🎉 SwiftUI Canvas drawing — real iOS graphics!"},
+  kotlin: {"lib":"Compose Canvas","title":"Draw with Compose","teach":"Kotlin draws with Jetpack Compose's Canvas. You call drawRect with a color and position. Draw a blue square, then Run visually.","example":"drawRect(Color.Blue, topLeft = Offset(120f, 120f), size = Size(160f, 160f))","starter":"import androidx.compose.foundation.Canvas\nimport androidx.compose.ui.graphics.Color\nimport androidx.compose.ui.geometry.*\n\nCanvas(modifier = Modifier.size(400.dp)) {\n    drawRect(Color.Blue, topLeft = Offset(120f, 120f), size = Size(160f, 160f))\n}\n","why":"🎉 Compose Canvas — real Android graphics!"},
+  php: {"lib":"GD library","title":"Draw with PHP GD","teach":"PHP draws images with the GD library. You make an image, allocate a color, and fill a rectangle. Draw a blue square, then Run visually.","example":"imagefilledrectangle($img, 120, 120, 280, 280, $blue);","starter":"<?php\n$img = imagecreatetruecolor(400, 400);\n$white = imagecolorallocate($img, 255, 255, 255);\nimagefill($img, 0, 0, $white);\n$blue = imagecolorallocate($img, 0, 0, 255);\nimagefilledrectangle($img, 120, 120, 280, 280, $blue);\n","why":"🎉 GD library drawing — real PHP image generation!"},
+  lua: {"lib":"LÖVE","title":"Draw with LÖVE","teach":"Lua draws games with LÖVE. In love.draw you set a color and draw shapes. Draw a blue square, then Run visually.","example":"love.graphics.rectangle(\"fill\", 120, 120, 160, 160)","starter":"function love.draw()\n    love.graphics.setColor(0, 0, 1)\n    love.graphics.rectangle(\"fill\", 120, 120, 160, 160)\nend\n","why":"🎉 LÖVE graphics in Lua — real game drawing!"},
+  r: {"lib":"base plotting","title":"Draw with R plotting","teach":"R draws shapes with its base plotting. You make a plot then add a rectangle. Draw a blue square, then Run visually.","example":"rect(120, 120, 280, 280, col = \"blue\")","starter":"plot(c(0, 400), c(0, 400), type = \"n\", xlab = \"\", ylab = \"\")\nrect(120, 120, 280, 280, col = \"blue\")\n","why":"🎉 R drawing a square — graphics beyond just charts!"},
+  dart: {"lib":"Flutter CustomPainter","title":"Draw with Flutter","teach":"Dart draws with Flutter's CustomPainter. In paint you draw a rect with a paint color. Draw a blue square, then Run visually.","example":"canvas.drawRect(Rect.fromLTWH(120, 120, 160, 160), paint);","starter":"import \"package:flutter/material.dart\";\n\nvoid paint(Canvas canvas, Size size) {\n  final paint = Paint()..color = Colors.blue;\n  canvas.drawRect(Rect.fromLTWH(120, 120, 160, 160), paint);\n}\n","why":"🎉 Flutter Canvas — real cross-platform graphics!"},
+  scala: {"lib":"Java2D","title":"Draw with Scala graphics","teach":"Scala can use Java's Graphics2D. You get a graphics object and fill a rectangle. Draw a blue square, then Run visually.","example":"g.setColor(Color.BLUE)\ng.fillRect(120, 120, 160, 160)","starter":"import java.awt.{Color, Graphics}\n\ndef paint(g: Graphics): Unit = {\n  g.setColor(Color.BLUE)\n  g.fillRect(120, 120, 160, 160)\n}\n","why":"🎉 Scala drawing with Java2D — real graphics!"},
+  perl: {"lib":"GD","title":"Draw with Perl GD","teach":"Perl draws images with the GD module. You make an image, allocate a color, and fill a rectangle. Draw a blue square, then Run visually.","example":"$img->filledRectangle(120, 120, 280, 280, $blue);","starter":"use GD;\nmy $img = GD::Image->new(400, 400);\nmy $white = $img->colorAllocate(255, 255, 255);\nmy $blue = $img->colorAllocate(0, 0, 255);\n$img->filledRectangle(120, 120, 280, 280, $blue);\n","why":"🎉 GD drawing in Perl — real image code!"},
+  haskell: {"lib":"Gloss","title":"Draw with Gloss","teach":"Haskell draws with Gloss. You describe a picture — a colored square — declaratively. Draw a blue square, then Run visually.","example":"color blue (rectangleSolid 160 160)","starter":"import Graphics.Gloss\n\nmain :: IO ()\nmain = display (InWindow \"Draw\" (400, 400) (0, 0)) white picture\n  where picture = color blue (rectangleSolid 160 160)\n","why":"🎉 Gloss graphics in Haskell — functional drawing!"},
+  objc: {"lib":"Core Graphics","title":"Draw with Core Graphics","teach":"Objective-C draws with Core Graphics. You set a fill color and fill a rectangle in the context. Draw a blue square, then Run visually.","example":"CGContextFillRect(ctx, CGRectMake(120, 120, 160, 160));","starter":"#import <CoreGraphics/CoreGraphics.h>\n\nvoid draw(CGContextRef ctx) {\n    CGContextSetRGBFillColor(ctx, 0, 0, 1, 1);\n    CGContextFillRect(ctx, CGRectMake(120, 120, 160, 160));\n}\n","why":"🎉 Core Graphics — real Apple drawing!"},
+  vb: {"lib":"System.Drawing","title":"Draw with VB graphics","teach":"Visual Basic draws with System.Drawing. You get a Graphics object and fill a rectangle with a brush. Draw a blue square, then Run visually.","example":"g.FillRectangle(Brushes.Blue, 120, 120, 160, 160)","starter":"Imports System.Drawing\n\nSub Paint(g As Graphics)\n    g.FillRectangle(Brushes.Blue, 120, 120, 160, 160)\nEnd Sub\n","why":"🎉 VB drawing with System.Drawing!"},
+  matlab: {"lib":"plotting","title":"Draw with MATLAB","teach":"MATLAB draws shapes with rectangle(). You set position and color. Draw a blue square, then Run visually.","example":"rectangle('Position', [120 120 160 160], 'FaceColor', 'blue')","starter":"figure;\naxis([0 400 0 400]);\nrectangle('Position', [120 120 160 160], 'FaceColor', 'b');\n","why":"🎉 MATLAB drawing a square — graphics beyond plots!"},
+  groovy: {"lib":"Java2D","title":"Draw with Groovy graphics","teach":"Groovy uses Java's Graphics2D. You get a graphics object and fill a rectangle. Draw a blue square, then Run visually.","example":"g.color = Color.BLUE\ng.fillRect(120, 120, 160, 160)","starter":"import java.awt.*\n\ndef paint(Graphics g) {\n    g.color = Color.BLUE\n    g.fillRect(120, 120, 160, 160)\n}\n","why":"🎉 Groovy drawing with Java2D!"},
+  powershell: {"lib":"System.Drawing","title":"Draw with PowerShell","teach":"PowerShell can use .NET's System.Drawing. You make a bitmap, get graphics, and fill a rectangle. Draw a blue square, then Run visually.","example":"$g.FillRectangle($blue, 120, 120, 160, 160)","starter":"Add-Type -AssemblyName System.Drawing\n$bmp = New-Object System.Drawing.Bitmap 400, 400\n$g = [System.Drawing.Graphics]::FromImage($bmp)\n$blue = [System.Drawing.Brushes]::Blue\n$g.FillRectangle($blue, 120, 120, 160, 160)\n","why":"🎉 PowerShell drawing with .NET graphics!"},
+  vba: {"lib":"Shapes","title":"Draw with VBA shapes","teach":"VBA draws shapes on a sheet or slide. You add a rectangle shape and set its fill color. Draw a blue square, then Run visually.","example":"Shapes.AddShape(msoShapeRectangle, 120, 120, 160, 160)","starter":"Sub DrawSquare()\n    Dim s As Shape\n    Set s = ActiveSheet.Shapes.AddShape(msoShapeRectangle, 120, 120, 160, 160)\n    s.Fill.ForeColor.RGB = RGB(0, 0, 255)\nEnd Sub\n","why":"🎉 VBA drawing a shape — real Office automation!"},
+  julia: {"lib":"Luxor","title":"Draw with Luxor","teach":"Julia draws with Luxor. You set a color and draw a box at a point. Draw a blue square, then Run visually.","example":"box(Point(200, 200), 160, 160, :fill)","starter":"using Luxor\n\n@draw begin\n    sethue(\"blue\")\n    box(Point(200, 200), 160, 160, :fill)\nend 400 400\n","why":"🎉 Luxor graphics in Julia — real drawing!"},
+  elixir: {"lib":"Scenic","title":"Draw with Elixir","teach":"Elixir draws UIs with Scenic. You add a rectangle primitive with a fill color to the graph. Draw a blue square, then Run visually.","example":"rect({160, 160}, fill: :blue, translate: {120, 120})","starter":"import Scenic.Primitives\n\ngraph =\n  Scenic.Graph.build()\n  |> rect({160, 160}, fill: :blue, translate: {120, 120})\n","why":"🎉 Scenic graphics in Elixir!"},
+  clojure: {"lib":"Quil","title":"Draw with Quil","teach":"Clojure draws with Quil. You set a fill color and draw a rect. Draw a blue square, then Run visually.","example":"(rect 120 120 160 160)","starter":"(ns draw (:require [quil.core :as q]))\n\n(defn draw []\n  (q/fill 0 0 255)\n  (q/rect 120 120 160 160))\n","why":"🎉 Quil graphics in Clojure!"},
+  fsharp: {"lib":"System.Drawing","title":"Draw with F# graphics","teach":"F# uses .NET's System.Drawing. You get a graphics object and fill a rectangle. Draw a blue square, then Run visually.","example":"g.FillRectangle(Brushes.Blue, 120, 120, 160, 160)","starter":"open System.Drawing\n\nlet paint (g: Graphics) =\n    g.FillRectangle(Brushes.Blue, 120, 120, 160, 160)\n","why":"🎉 F# drawing with System.Drawing!"},
+  erlang: {"lib":"wxWidgets","title":"Draw with Erlang","teach":"Erlang draws with the wx module. You get a device context and draw a rectangle. Draw a blue square, then Run visually.","example":"wxDC:drawRectangle(DC, {120, 120}, {160, 160})","starter":"draw(DC) ->\n    Blue = wxBrush:new({0, 0, 255}),\n    wxDC:setBrush(DC, Blue),\n    wxDC:drawRectangle(DC, {120, 120}, {160, 160}).\n","why":"🎉 Erlang drawing with wx!"},
+  ocaml: {"lib":"Graphics","title":"Draw with OCaml Graphics","teach":"OCaml has a built-in Graphics module. You set a color and fill a rectangle. Draw a blue square, then Run visually.","example":"fill_rect 120 120 160 160","starter":"open Graphics\n\nlet () =\n  open_graph \" 400x400\";\n  set_color blue;\n  fill_rect 120 120 160 160\n","why":"🎉 OCaml's Graphics module — real built-in drawing!"},
+  elm: {"lib":"elm/svg","title":"Draw with Elm","teach":"Elm draws with SVG. You describe a rect with position, size, and fill. Draw a blue square, then Run visually.","example":"rect [ x \"120\", y \"120\", width \"160\", height \"160\", fill \"blue\" ] []","starter":"import Svg exposing (svg, rect)\nimport Svg.Attributes exposing (..)\n\nview =\n    svg [ width \"400\", height \"400\" ]\n        [ rect [ x \"120\", y \"120\", width \"160\", height \"160\", fill \"blue\" ] [] ]\n","why":"🎉 Elm drawing with SVG — declarative graphics!"},
+  scheme: {"lib":"racket/draw","title":"Draw with Scheme","teach":"Scheme (Racket) draws with racket/draw. You get a drawing context, set a brush, and draw a rectangle. Draw a blue square, then Run visually.","example":"(send dc draw-rectangle 120 120 160 160)","starter":"(require racket/draw)\n\n(define (draw dc)\n  (send dc set-brush \"blue\" 'solid)\n  (send dc draw-rectangle 120 120 160 160))\n","why":"🎉 Racket drawing in Scheme!"},
+  fortran: {"lib":"PLplot","title":"Draw with Fortran","teach":"Fortran draws with PLplot. You set a color and fill a rectangle from vertices. Draw a blue square, then Run visually.","example":"call plfill(x, y)  ! fills the square","starter":"program draw\n  use plplot\n  call plinit()\n  call plcol0(9)  ! blue\n  call plfill([120.0, 280.0, 280.0, 120.0], [120.0, 120.0, 280.0, 280.0])\n  call plend()\nend program draw\n","why":"🎉 Fortran graphics with PLplot!"},
+  pascal: {"lib":"Graph unit","title":"Draw with Pascal","teach":"Pascal draws with the Graph unit. You set a color and fill a bar (rectangle). Draw a blue square, then Run visually.","example":"Bar(120, 120, 280, 280);","starter":"uses Graph;\nbegin\n  SetFillStyle(SolidFill, Blue);\n  Bar(120, 120, 280, 280);\nend.\n","why":"🎉 Pascal drawing with the Graph unit!"},
+  lisp: {"lib":"CLIM","title":"Draw with Lisp","teach":"Common Lisp draws with CLIM. You draw a rectangle with a color on a stream. Draw a blue square, then Run visually.","example":"(draw-rectangle* stream 120 120 280 280 :ink +blue+)","starter":"(draw-rectangle* stream 120 120 280 280 :ink +blue+)\n","why":"🎉 Lisp drawing with CLIM!"},
+  ada: {"lib":"GtkAda","title":"Draw with Ada","teach":"Ada draws with GtkAda's Cairo. You set a source color and fill a rectangle. Draw a blue square, then Run visually.","example":"Rectangle (Cr, 120.0, 120.0, 160.0, 160.0);","starter":"with Cairo; use Cairo;\n\nprocedure Draw (Cr : Cairo_Context) is\nbegin\n   Set_Source_Rgb (Cr, 0.0, 0.0, 1.0);\n   Rectangle (Cr, 120.0, 120.0, 160.0, 160.0);\n   Fill (Cr);\nend Draw;\n","why":"🎉 Ada drawing with Cairo!"},
+  smalltalk: {"lib":"Morphic","title":"Draw with Smalltalk","teach":"Smalltalk draws with Morphic. You make a rectangle morph, color it, and add it. Draw a blue square, then Run visually.","example":"morph color: Color blue.","starter":"| morph |\nmorph := Morph new.\nmorph bounds: (120@120 corner: 280@280).\nmorph color: Color blue.\nmorph openInWorld.\n","why":"🎉 Smalltalk drawing with Morphic!"},
+  processing: {"lib":"Processing","title":"Draw with Processing","teach":"Processing is built for visual art. You set the canvas size, pick a fill color, and draw shapes like rect() and ellipse(). Draw a blue square, then Run visually.","example":"size(400, 400);\nfill(0, 0, 255);\nrect(120, 120, 160, 160);","starter":"size(400, 400);\nbackground(255);\nfill(0, 0, 255);\nrect(120, 120, 160, 160);\n","why":"🎉 Processing is made for creative coding — that's real generative art!"},
+  p5: {"lib":"p5.js","title":"Draw with p5.js","teach":"p5.js is Processing for the web. In setup you make the canvas; in draw you paint. Use fill() and rect() to draw. Draw a blue square, then Run visually.","example":"function setup(){ createCanvas(400,400); }\nfunction draw(){ fill(0,0,255); rect(120,120,160,160); }","starter":"function setup() {\n  createCanvas(400, 400);\n  background(255);\n}\nfunction draw() {\n  fill(0, 0, 255);\n  rect(120, 120, 160, 160);\n}\n","why":"🎉 p5.js powers interactive art all over the web — you just made some!"},
+  gdscript: {"lib":"Godot","title":"Draw with GDScript","teach":"GDScript is the language of the Godot game engine. In _draw() you call draw_rect() with a color and rectangle. Draw a blue square, then Run visually.","example":"func _draw():\n    draw_rect(Rect2(120, 120, 160, 160), Color.BLUE)","starter":"extends Node2D\n\nfunc _draw():\n    draw_rect(Rect2(120, 120, 160, 160), Color(0, 0, 1))\n","why":"🎉 That's how Godot games draw — you're doing real game dev!"},
+  nim: {"lib":"raylib (naylib)","title":"Draw with Nim","teach":"Nim reads like Python but compiles to fast code. With the raylib binding you draw shapes between beginning and ending a frame. Draw a blue square, then Run visually.","example":"drawRectangle(120, 120, 160, 160, Blue)","starter":"import raylib\n\ninitWindow(400, 400, \"Draw\")\nbeginDrawing()\nclearBackground(RayWhite)\ndrawRectangle(120, 120, 160, 160, Blue)\nendDrawing()\n","why":"🎉 Nim graphics — Python-like syntax, real speed!"},
+  zig: {"lib":"raylib","title":"Draw with Zig","teach":"Zig is a modern systems language. With raylib you draw shapes each frame. Draw a blue square, then Run visually.","example":"rl.drawRectangle(120, 120, 160, 160, rl.Color.blue);","starter":"const rl = @import(\"raylib\");\n\npub fn main() void {\n    rl.initWindow(400, 400, \"Draw\");\n    rl.beginDrawing();\n    rl.clearBackground(rl.Color.white);\n    rl.drawRectangle(120, 120, 160, 160, rl.Color.blue);\n    rl.endDrawing();\n}\n","why":"🎉 Zig with raylib — modern systems graphics!"},
+};
+// Build a visual lesson step for a language, or null if it has no graphics.
+
+// ---------- Web/markup lessons (HTML, CSS, JSX, Vue, Svelte) ----------
+const MARKUP_LESSONS = {
+  html: [
+    { title: "Your first HTML", teach: "HTML uses tags like <h1> (a big heading) and <p> (a paragraph) to structure content. Tags usually come in pairs: an opening <p> and a closing </p>.",
+      example: "<h1>Title</h1>\n<p>A paragraph of text.</p>",
+      starter: "<h1>My Page</h1>\n<p>Write a sentence about yourself here.</p>\n",
+      checks: ["Has an <h1> heading", "Has a <p> paragraph with text"],
+      why: "🎉 That's a real web page structure — headings and paragraphs are the backbone of HTML!" },
+    { title: "Lists and links", teach: "A <ul> makes a bulleted list, with each item in <li> tags. An <a href=\"...\"> makes a clickable link.",
+      example: '<ul>\n  <li>First</li>\n  <li>Second</li>\n</ul>\n<a href="https://example.com">A link</a>',
+      starter: '<ul>\n  <li>Add three</li>\n  <li>list items</li>\n</ul>\n<a href="https://example.com">Click me</a>\n',
+      checks: ["Has a <ul> with at least 2 <li> items", "Has an <a> link with href"],
+      why: "🎉 Lists and links — now your pages can organize info and connect to others!" },
+    { title: "Images and structure", teach: "An <img src=\"...\"> shows an image. A <div> groups content into a block you can style later.",
+      example: '<div>\n  <h2>A section</h2>\n  <img src="https://picsum.photos/200" alt="random">\n</div>',
+      starter: '<div>\n  <h2>My favorite thing</h2>\n  <img src="https://picsum.photos/200" alt="a picture">\n</div>\n',
+      checks: ["Has a <div> wrapping content", "Has an <img> with src and alt"],
+      why: "🎉 Images and divs — the building blocks of real layouts!" },
+  ],
+  css: [
+    { title: "Colors and text", teach: "CSS styles HTML. You select an element (like .box) and set properties. `background` sets the color behind it, `color` sets the text color.",
+      example: ".box {\n  background: skyblue;\n  color: white;\n}",
+      starter: ".box {\n  background: coral;\n  color: white;\n  padding: 20px;\n}\n",
+      checks: ["Styles .box with a background color", "Sets a text color"],
+      why: "🎉 You styled an element — color is the first step to beautiful pages!" },
+    { title: "Size and spacing", teach: "`width` and `height` set an element's size. `padding` adds space inside it, `margin` adds space outside. `border` draws a line around it.",
+      example: ".box {\n  width: 150px;\n  height: 150px;\n  border: 3px solid navy;\n}",
+      starter: ".box {\n  width: 150px;\n  height: 150px;\n  background: gold;\n  border: 4px solid darkorange;\n}\n",
+      checks: ["Sets a width and height on .box", "Adds a border"],
+      why: "🎉 Sizing and borders — you're controlling the box model, the heart of CSS layout!" },
+    { title: "Make a button pretty", teach: "You can style any element. Round corners with `border-radius`, and remove the default look. `cursor: pointer` makes it feel clickable.",
+      example: ".btn {\n  background: purple;\n  color: white;\n  border-radius: 8px;\n}",
+      starter: ".btn {\n  background: mediumseagreen;\n  color: white;\n  border: none;\n  border-radius: 10px;\n  padding: 12px 24px;\n  cursor: pointer;\n}\n",
+      checks: ["Styles .btn with background and color", "Uses border-radius for rounded corners"],
+      why: "🎉 A custom button — real UI styling right there!" },
+  ],
+  jsx: [
+    { title: "Your first component", teach: "React builds UIs from components — functions that return JSX (HTML-like markup). You render one into the page with ReactDOM.",
+      example: 'const App = () => <h1>Hello!</h1>;\nReactDOM.createRoot(document.getElementById("root")).render(<App />);',
+      starter: 'const App = () => <h1>Hello from React!</h1>;\n\nReactDOM.createRoot(document.getElementById("root")).render(<App />);\n',
+      checks: ["Defines a component returning JSX", "Renders it with ReactDOM into #root"],
+      why: "🎉 Your first React component rendered live — this is how modern web apps are built!" },
+    { title: "Props and multiple elements", teach: "Components can take props (inputs). Wrap multiple elements in a fragment <>...</> or a <div>. Use {curly braces} to insert values.",
+      example: 'const Greet = ({name}) => <p>Hi, {name}!</p>;\nconst App = () => <div><h1>Welcome</h1><Greet name="Sam" /></div>;',
+      starter: 'const Greet = ({ name }) => <p>Hi, {name}!</p>;\n\nconst App = () => (\n  <div>\n    <h1>Welcome</h1>\n    <Greet name="Sam" />\n  </div>\n);\n\nReactDOM.createRoot(document.getElementById("root")).render(<App />);\n',
+      checks: ["A component accepts and uses a prop", "Renders multiple elements together"],
+      why: "🎉 Props let components reuse and compose — the superpower of React!" },
+  ],
+  vue: [
+    { title: "Your first Vue app", teach: "Vue mounts an app onto an element. The `template` describes the HTML, and `data` holds values you can show with {{ curly braces }}.",
+      example: 'Vue.createApp({\n  data() { return { msg: "Hello!" }; },\n  template: "<h1>{{ msg }}</h1>"\n}).mount("#app");',
+      starter: 'Vue.createApp({\n  data() {\n    return { message: "Hello from Vue!" };\n  },\n  template: "<h1>{{ message }}</h1>"\n}).mount("#app");\n',
+      checks: ["Creates a Vue app with data", "Shows a data value in the template with {{ }}"],
+      why: "🎉 A reactive Vue app — change the data and the page updates automatically!" },
+    { title: "Vue with a list", teach: "Vue's v-for repeats an element for each item in an array. You bind it in the template to render lists from data.",
+      example: 'template: "<ul><li v-for=\'item in items\'>{{ item }}</li></ul>"',
+      starter: 'Vue.createApp({\n  data() {\n    return { items: ["Apple", "Banana", "Cherry"] };\n  },\n  template: "<ul><li v-for=\'item in items\'>{{ item }}</li></ul>"\n}).mount("#app");\n',
+      checks: ["Has an array in data", "Uses v-for to render the list"],
+      why: "🎉 v-for renders lists from data — a core Vue pattern!" },
+  ],
+  svelte: [
+    { title: "Your first Svelte component", teach: "Svelte components are HTML with a <script> block for logic. Variables in the script show up in the markup with {curly braces}.",
+      example: '<script>\n  let name = "world";\n</script>\n\n<h1>Hello {name}!</h1>',
+      starter: '<script>\n  let name = "Svelte";\n</script>\n\n<h1>Hello {name}!</h1>\n<p>This is a Svelte component.</p>\n',
+      checks: ["Has a <script> with a variable", "Shows the variable in the markup with { }"],
+      why: "🎉 A live Svelte component — clean and simple, no boilerplate!" },
+    { title: "Svelte with a list", teach: "Svelte's {#each} block loops over an array to render repeated markup. It's Svelte's way of building lists.",
+      example: '{#each items as item}\n  <li>{item}</li>\n{/each}',
+      starter: '<script>\n  let items = ["One", "Two", "Three"];\n</script>\n\n<ul>\n  {#each items as item}\n    <li>{item}</li>\n  {/each}\n</ul>\n',
+      checks: ["Has an array in the script", "Uses {#each} to render the list"],
+      why: "🎉 The {#each} block — Svelte's elegant way to render lists!" },
+  ],
+};
+
+// Map a markup language id to its kind for the sandbox (id IS the kind here).
+function markupStepsFor(langId) {
+  const lessons = MARKUP_LESSONS[langId];
+  if (!lessons) return [];
+  return lessons.map((L, i) => ({
+    type: "markup", kind: langId, lang: langId,
+    chapter: "★ Build for the web",
+    title: L.title, teach: L.teach, example: L.example,
+    starter: L.starter, checks: L.checks, why: L.why,
+  }));
+}
+
+function visualStepFor(langId) {
+  const v = VISUAL_STARTERS[langId];
+  if (!v) return null;
+  return { type: "visual", chapter: "★ Draw with code", lang: langId, title: v.title,
+    teach: v.teach, example: v.example, starter: v.starter, why: v.why };
+}
+
 const CLASSES = [
   { id: "general", tab: "coding", label: "General Coding", emoji: "🧠", mode: "concept", blurb: "Start here. Learn to THINK like a coder — patterns, steps, and the universal building blocks (functions, return, loops…) that exist in every language.", steps: GENERAL_STEPS },
-  ...LANGUAGE_CATALOG.map((l) => ({ id: l.id, tab: "coding", label: l.label, emoji: l.emoji, mode: l.mode, blurb: l.blurb, steps: HAND_BUILT[l.id] || [] })),
+  ...LANGUAGE_CATALOG.map((l) => {
+    // Every language with real graphics gets a hands-on "draw a shape" visual
+    // lesson appended to its steps (via visualStepFor). Languages without
+    // graphics get null, which we filter out.
+    const vis = visualStepFor(l.id);
+    const markup = markupStepsFor(l.id);
+    const baseSteps = HAND_BUILT[l.id] || [];
+    // Markup languages (HTML/CSS/JSX/Vue/Svelte) get their hand-built web lessons.
+    // Graphics languages get a visual "draw" lesson. Others just use base steps.
+    let steps = baseSteps;
+    if (markup.length) steps = [...baseSteps, ...markup];
+    else if (vis) steps = [...baseSteps, vis];
+    return { id: l.id, tab: "coding", label: l.label, emoji: l.emoji, mode: l.mode, blurb: l.blurb, steps };
+  }),
   // ===== AI tab =====
   { id: "ai_general", tab: "ai", label: "AI Basics", emoji: "🤖", mode: "concept", blurb: "Start here. What AI actually is, in plain words — and what it isn't.", steps: [
     { type: "puzzle", chapter: "1 · What AI really is", title: "AI is pattern-spotting", intro: "Here's the core idea behind all AI: instead of a person writing exact rules, the computer looks at MANY examples and figures out the pattern itself. Imagine showing a friend 500 photos of cats and 500 of dogs without ever explaining the difference — after enough photos, they'd just 'get' which is which. AI learns the same way: from examples, not from being told the rules.", q: "What's the main way AI figures things out?", why: "Exactly — AI learns patterns from examples. Nobody wrote a rule like 'cats have pointy ears'; the AI noticed it across thousands of pictures.", choices: ["By spotting patterns in lots of examples", "By being told every exact rule by a person", "By guessing randomly each time"], correctIndex: 0 },
@@ -2433,6 +2708,7 @@ function LessonRunner({ cls, idx, doneSet, onDone, onUndone, onBack, goStep }) {
       {activeStep.type === "visual" && <VisualStep key={stepKey} step={activeStep} onDone={complete} />}
       {activeStep.type === "type" && <TypeStep key={stepKey} step={activeStep} onDone={complete} />}
       {activeStep.type === "aitype" && <AITypeStep key={stepKey} step={activeStep} onDone={complete} />}
+      {activeStep.type === "markup" && <MarkupStep key={stepKey} step={activeStep} onDone={complete} />}
 
       <div className="cq-nav">
         <button className="cq-navbtn" onClick={prevStep} disabled={idx === 0}>← Back</button>
@@ -3092,6 +3368,79 @@ function AITypeStep({ step, onDone }) {
       {result && (
         <div className="cq-results" style={{ padding: "12px 0 0" }}>
           <div className={`cq-verdict-badge ${result.verdict}`}>{result.verdict === "pass" ? "✓ AI says: looks good" : "✗ AI says: not yet"}<span className="cq-verdict-note">AI-judged · not a real test run</span></div>
+          {result.checks?.map((c, i) => (<div key={i} className={`cq-testrow ${c.met ? "pass" : "fail"}`}><span className="cq-test-icon">{c.met ? "✓" : "✗"}</span><span className="cq-test-detail">{c.label}</span></div>))}
+          {result.feedback && <p className="cq-ai-feedback">{result.feedback}</p>}
+          {result.verdict === "pass" && <div className="cq-takeaway" style={{ marginTop: 12 }}>{step.why}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------- MARKUP STEP: live web preview + AI feedback ----------
+// For HTML, CSS, JSX, Vue, Svelte. The learner writes markup/code, sees it
+// render LIVE in a sandboxed iframe, and gets AI feedback on the checks.
+// Unlike TypeStep (return-value tests), success here is AI-judged — because
+// "does this look right?" isn't a function return value.
+function MarkupStep({ step, onDone }) {
+  const [code, setCode] = useState(step.starter || "");
+  const [srcDoc, setSrcDoc] = useState("");
+  const [result, setResult] = useState(null);
+  const [running, setRunning] = useState(false);
+  const stats = useLessonStats();
+
+  // Live preview updates as they type (debounced), so they see changes instantly.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      try { setSrcDoc(markupSandboxHTML(step.kind || step.lang, code)); } catch {}
+    }, 300);
+    return () => clearTimeout(t);
+  }, [code, step.kind, step.lang]);
+
+  const submit = async () => {
+    setRunning(true);
+    try {
+      // Reuse the AI code reviewer, framed for markup.
+      const r = await gradeAICode({ ...step, langLabel: step.lang }, code);
+      setResult(r);
+      if (r.verdict === "pass") onDone(stats.buildStats());
+      else stats.recordWrong();
+    } catch {
+      stats.recordWrong();
+      setResult({ verdict: "fail", feedback: "Couldn't reach the reviewer — try again.", checks: [] });
+    } finally { setRunning(false); }
+  };
+
+  const onKeyDown = (e) => { if (e.key === "Tab") { e.preventDefault(); const el = e.target, s = el.selectionStart; setCode(code.slice(0, s) + "  " + code.slice(el.selectionEnd)); requestAnimationFrame(() => { el.selectionStart = el.selectionEnd = s + 2; }); } };
+  const fileName = { html: "index.html", css: "styles.css", jsx: "App.jsx", vue: "App.vue", svelte: "App.svelte" }[step.kind || step.lang] || "code";
+
+  return (
+    <div className="cq-card2">
+      <h1 className="cq-h1">{step.title} <span className="cq-universal">live preview</span></h1>
+      {(step.teach || step.example) ? (
+        <div className="cq-teach">
+          {step.teach && <p className="cq-teach-text">{step.teach}</p>}
+          {step.example && <div className="cq-teach-example"><span className="cq-teach-label">Example</span><pre>{step.example}</pre></div>}
+          <p className="cq-teach-now">Write it below — the preview updates live 👇</p>
+        </div>
+      ) : (step.intro && <p className="cq-intro">{step.intro}</p>)}
+
+      {step.checks && <div className="cq-checks"><p className="cq-task">You'll be judged on:</p><ul>{step.checks.map((c, i) => <li key={i}>{c}</li>)}</ul></div>}
+
+      <div className="cq-editor-bar"><span className="cq-dot" /><span className="cq-dot" /><span className="cq-dot" /><span className="cq-filename">{fileName}</span></div>
+      <textarea className="cq-editor" value={code} spellCheck={false} onChange={(e) => { setCode(e.target.value); setResult(null); }} onKeyDown={onKeyDown} style={{ minHeight: 180 }} />
+
+      {srcDoc && (
+        <div className="cq-canvaswrap" style={{ background: "#fff" }}>
+          <iframe title="live preview" className="cq-canvas" sandbox="allow-scripts" srcDoc={srcDoc} style={{ width: "100%", height: 260, border: "none", borderRadius: 8, background: "#fff" }} />
+        </div>
+      )}
+
+      <div className="cq-buildrow"><button className="cq-run" onClick={submit} disabled={running || !code.trim()}>{running ? "Reviewing…" : "✦ Submit for review"}</button></div>
+
+      {result && (
+        <div className="cq-results" style={{ padding: "12px 0 0" }}>
+          <div className={`cq-verdict-badge ${result.verdict}`}>{result.verdict === "pass" ? "✓ AI says: looks good" : "✗ AI says: not yet"}<span className="cq-verdict-note">AI-judged · preview is real</span></div>
           {result.checks?.map((c, i) => (<div key={i} className={`cq-testrow ${c.met ? "pass" : "fail"}`}><span className="cq-test-icon">{c.met ? "✓" : "✗"}</span><span className="cq-test-detail">{c.label}</span></div>))}
           {result.feedback && <p className="cq-ai-feedback">{result.feedback}</p>}
           {result.verdict === "pass" && <div className="cq-takeaway" style={{ marginTop: 12 }}>{step.why}</div>}
