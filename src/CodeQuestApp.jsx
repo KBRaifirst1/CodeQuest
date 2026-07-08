@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useSyncExternalStore } from "react"
 // Build marker — check this in the browser console to confirm which version is
 // actually running: type  window.__CQ_VERSION  in DevTools. If it's not the
 // value below, your browser/Vercel is serving an older bundle.
-const CQ_VERSION = "2026-07-08-v2-indent-io-badge";
+const CQ_VERSION = "2026-07-08-v5-tip-note-drag";
 if (typeof window !== "undefined") {
   window.__CQ_VERSION = CQ_VERSION;
   try { console.log("%cCodeQuest build: " + CQ_VERSION, "color:#6366f1;font-weight:bold"); } catch {}
@@ -1188,6 +1188,7 @@ def __norm(x):
     return str(x).strip()
 __res = []
 __first_fail = None
+__tip = ""
 for __t in __tests:
     try:
         __buf = io.StringIO()
@@ -1208,24 +1209,23 @@ for __t in __tests:
             else:
                 __shown = "printed " + repr(__printed.strip()) + " and returned " + repr(__g)
             __first_fail = "with " + ", ".join(repr(a) for a in __t["args"]) + " it gave " + __shown + ", but should give " + repr(__exp)
-            # Style-aware tip. For a RETURN lesson where they printed but returned
-            # None, nudge toward return. For a PRINT lesson where they returned but
-            # printed nothing, nudge toward print.
+            # Style-aware tip, returned as its OWN field so the UI can show it as a
+            # prominent callout (not buried in the failure text).
             if __io_mode == "print" and __printed.strip() == "" and __g is not None:
-                __first_fail += ". Tip: this lesson wants you to print() the answer, not return it"
+                __tip = "This lesson wants you to PRINT the answer with print(…), not return it."
             elif __printed.strip() != "" and __g is None and __exp is not None:
-                __first_fail += ". Tip: use 'return' to give back the value, not 'print' — the checker reads what you RETURN"
+                __tip = "Use return to give back the value — not print(). The checker reads what you RETURN."
     except Exception as __e:
         __res.append(False)
         if __first_fail is None:
             __first_fail = "it hit an error: " + type(__e).__name__ + ": " + str(__e)
-json.dumps({"res": __res, "why": __first_fail})
+json.dumps({"res": __res, "why": __first_fail, "tip": __tip})
 `;
   try {
     const raw = await py.runPythonAsync(harness);
     const parsed = JSON.parse(raw);
     const ok = Array.isArray(parsed.res) && parsed.res.every(Boolean);
-    return ok ? { ok: true } : { ok: false, why: parsed.why || "the tests didn't all pass yet" };
+    return ok ? { ok: true } : { ok: false, why: parsed.why || "the tests didn't all pass yet", tip: parsed.tip || "" };
   }
   catch (e) { return { ok: false, why: (e.message || "").split("\n").filter(Boolean).pop() || "Python error" }; }
 }
@@ -1564,6 +1564,39 @@ async function askTutor(history, question, signal, context = null) {
   ];
   return await callClaude(msgs, { system: sys, maxTokens: 700, signal });
 }
+
+// Per-lesson helper: the tutor sees the EXACT lesson the learner is stuck on —
+// its title, the teaching text, the task, and the learner's current code — so it
+// can give targeted help. It's told to GUIDE, not hand over the full answer, so
+// the learner still learns. `lesson` = { title, teach, example, lang, code }.
+async function askLessonHelper(history, question, lesson, signal) {
+  let sys =
+    "You are a warm, patient coding tutor helping a beginner who is stuck on ONE specific lesson. " +
+    "Explain in plain, simple language a beginner understands, and keep answers short. " +
+    "IMPORTANT: guide them toward the answer with hints, questions, and small examples — do NOT just write the whole solution for them, because they learn by doing. If they're really stuck after a hint, you can show a small piece. Stay encouraging and age-appropriate.";
+  if (lesson) {
+    sys += `\n\nThe lesson they're on:\nTitle: ${lesson.title || "(untitled)"}`;
+    if (lesson.lang) sys += `\nLanguage: ${lesson.lang}`;
+    if (lesson.teach) sys += `\nWhat it teaches: ${lesson.teach}`;
+    if (lesson.example) sys += `\nExample given: ${lesson.example}`;
+    if (lesson.code) sys += `\n\nThe learner's current code:\n\`\`\`\n${lesson.code}\n\`\`\``;
+    sys += `\n\nAnswer their question in the context of THIS lesson and their code.`;
+  }
+  const msgs = [
+    ...history.map((m) => ({ role: m.role === "you" ? "user" : "assistant", content: m.text })),
+    { role: "user", content: question },
+  ];
+  return await callClaude(msgs, { system: sys, maxTokens: 700, signal });
+}
+
+// Per-lesson chat persistence. Chats are keyed by a stable lesson key and kept
+// in localStorage so they survive reloads and tab-switches — come back to a
+// lesson and your conversation is still there.
+const LESSON_CHAT = {
+  key: (k) => "cq_lessonchat_" + k,
+  load(k) { try { const r = CQ_STORE.get(LESSON_CHAT.key(k)); return r ? JSON.parse(r) : []; } catch { return []; } },
+  save(k, chat) { try { CQ_STORE.set(LESSON_CHAT.key(k), JSON.stringify(chat.slice(-30))); } catch {} },
+};
 
 // ---------- Class registry (General + every catalog language) ----------
 const JAVA_STEPS = [
@@ -2121,6 +2154,15 @@ function AppInner({ initialState, onPersist, onSignOut } = {}) {
   };
   const clearDone = (classId, idx) => setProgress((p) => { const s = new Set(p[classId] || new Set()); s.delete(idx); return { ...p, [classId]: s }; });
   const addAiLesson = (classId, lesson) => setAiLessons((a) => ({ ...a, [classId]: [...(a[classId] || []), lesson] }));
+  // Reorder generated lessons within a class (drag-to-reorder). Persists via the
+  // aiLessons autosave. from/to are indices within aiLessons[classId].
+  const reorderAiLesson = (classId, from, to) => setAiLessons((a) => {
+    const list = a[classId] ? [...a[classId]] : [];
+    if (from < 0 || from >= list.length || to < 0 || to >= list.length || from === to) return a;
+    const [moved] = list.splice(from, 1);
+    list.splice(to, 0, moved);
+    return { ...a, [classId]: list };
+  });
 
   const totalDone = Object.values(progress).reduce((n, s) => n + s.size, 0);
 
@@ -2187,6 +2229,8 @@ function AppInner({ initialState, onPersist, onSignOut } = {}) {
           onAddAi={addAndOpenOne}
           onAddCourse={(lessons) => setAiLessons((a) => ({ ...a, [baseCls.id]: [...(a[baseCls.id] || []), ...lessons] }))}
           onAddAndOpenSet={addAndOpenSet}
+          onReorderAi={reorderAiLesson}
+          baseStepCount={baseCls.steps.length}
           onStayOnClass={() => setScreen({ name: "class", id: cls.id })} />;
       })()}
 
@@ -2486,6 +2530,58 @@ function Home({ progress, aiLessons, savedProjects = [], profileDescription = ""
 }
 
 // ---------- CLASS VIEW (chapters) ----------
+// In-lesson AI helper. Shows a collapsible "Stuck? Ask for help" panel inside a
+// lesson. It knows the lesson + the learner's code, and its chat is saved per
+// lesson (via lessonKey) so it persists across reloads and revisits.
+function LessonHelper({ lessonKey, lesson }) {
+  const [open, setOpen] = useState(false);
+  const [chat, setChat] = useState(() => LESSON_CHAT.load(lessonKey));
+  const [q, setQ] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  // Reload the saved chat when we move to a different lesson.
+  useEffect(() => { setChat(LESSON_CHAT.load(lessonKey)); setOpen(false); }, [lessonKey]);
+  // Persist whenever the chat changes.
+  useEffect(() => { if (chat.length) LESSON_CHAT.save(lessonKey, chat); }, [chat, lessonKey]);
+
+  const ask = async () => {
+    const question = q.trim(); if (!question) return;
+    const history = chat;
+    const next = [...chat, { role: "you", text: question }];
+    setChat(next); setQ(""); setBusy(true);
+    try {
+      const a = await withRetry(() => askLessonHelper(history, question, lesson));
+      setChat((c) => [...c, { role: "tutor", text: a }]);
+    } catch {
+      setChat((c) => [...c, { role: "tutor", text: "I couldn't answer just now — the helper needs the live AI connection. Try again in a moment." }]);
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="cq-lessonhelp">
+      <button className="cq-lessonhelp-toggle" onClick={() => setOpen((o) => !o)}>
+        {open ? "▾" : "▸"} 🤖 Stuck? Ask the AI for help {chat.length > 0 && !open ? `(${Math.ceil(chat.length / 2)} asked)` : ""}
+      </button>
+      {open && (
+        <div className="cq-lessonhelp-body">
+          {chat.length > 0 && (
+            <div className="cq-teacher-log">
+              {chat.map((m, i) => <div key={i} className={`cq-bubble ${m.role === "you" ? "you" : "teacher"}`}>{m.text}</div>)}
+              {busy && <div className="cq-bubble teacher">…</div>}
+            </div>
+          )}
+          <div className="cq-teacher-inputrow">
+            <input className="cq-search" placeholder="e.g. what does this line mean? why is my code wrong?" value={q}
+              onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") ask(); }} />
+            <button className="cq-run" onClick={ask} disabled={!q.trim() || busy}>{busy ? "…" : "Ask"}</button>
+          </div>
+          <p className="cq-lessonhelp-note">The helper can see this lesson and your code. It gives hints, not the whole answer — so you still learn it.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TutorChat({ classLabel = null, classKind = null }) {
   const [chat, setChat] = useState([]);
   const [q, setQ] = useState("");
@@ -2523,7 +2619,7 @@ function TutorChat({ classLabel = null, classKind = null }) {
   );
 }
 
-function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, generation, onStartGeneration, onCancelGeneration, onClearGenerationError, onBack, onOpenStep, onContinue, onAddAi, onAddCourse, onAddAndOpenSet, onStayOnClass }) {
+function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, generation, onStartGeneration, onCancelGeneration, onClearGenerationError, onBack, onOpenStep, onContinue, onAddAi, onAddCourse, onAddAndOpenSet, onReorderAi, baseStepCount = 0, onStayOnClass }) {
   const chapters = chaptersOf(cls);
   const done = doneSet.size, total = cls.steps.length;
   const pct = total ? Math.round((100 * done) / total) : 0;
@@ -2536,6 +2632,17 @@ function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, ge
   // setBuildErr shim: only used for clearing errors from the UI (Cancel, etc.).
   const setBuildErr = (msg) => { if (!msg && onClearGenerationError) onClearGenerationError(); };
   const [courseBusy, setCourseBusy] = useState(false);
+  // Drag-to-reorder state for generated lessons. dragFrom = global step index
+  // being dragged; dragOver = global index it's hovering over.
+  const [dragFrom, setDragFrom] = useState(null);
+  const [dragOver, setDragOver] = useState(null);
+  const canReorder = (i) => i >= baseStepCount && cls.steps[i] && cls.steps[i].generated;
+  const commitReorder = () => {
+    if (dragFrom != null && dragOver != null && dragFrom !== dragOver && canReorder(dragFrom) && canReorder(dragOver)) {
+      onReorderAi && onReorderAi(cls.id, dragFrom - baseStepCount, dragOver - baseStepCount);
+    }
+    setDragFrom(null); setDragOver(null);
+  };
   const [courseErr, setCourseErr] = useState("");
 
   const isEmpty = total === 0;
@@ -2651,12 +2758,26 @@ function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, ge
                   const s = cls.steps[i];
                   const isDone = doneSet.has(i);
                   const isResume = i === resume && !isDone;
+                  const draggable = canReorder(i);
+                  const isDragging = dragFrom === i;
+                  const isDropTarget = dragOver === i && dragFrom != null && dragFrom !== i;
                   return (
-                    <button key={i} className={`cq-lessonrow ${isDone ? "done" : ""} ${isResume ? "resume" : ""}`} onClick={() => onOpenStep(i)}>
+                    <div
+                      key={i}
+                      className={`cq-lessonrow ${isDone ? "done" : ""} ${isResume ? "resume" : ""} ${isDragging ? "dragging" : ""} ${isDropTarget ? "droptarget" : ""}`}
+                      onClick={() => { if (dragFrom == null) onOpenStep(i); }}
+                      draggable={draggable}
+                      onDragStart={draggable ? (e) => { setDragFrom(i); try { e.dataTransfer.effectAllowed = "move"; } catch {} } : undefined}
+                      onDragOver={draggable ? (e) => { e.preventDefault(); if (dragOver !== i) setDragOver(i); } : undefined}
+                      onDrop={draggable ? (e) => { e.preventDefault(); commitReorder(); } : undefined}
+                      onDragEnd={draggable ? () => { setDragFrom(null); setDragOver(null); } : undefined}
+                      style={draggable ? { cursor: dragFrom != null ? "grabbing" : "pointer" } : undefined}
+                    >
+                      {draggable && <span className="cq-draghandle" title="Drag to reorder">⠿</span>}
                       <span className="cq-lessonrow-icon">{isDone ? "✓" : isResume ? "▶" : "○"}</span>
                       <span className="cq-lessonrow-title">{s.title}{s.generated ? " ✨" : ""}</span>
                       <span className="cq-lessonrow-type">{s.type}</span>
-                    </button>
+                    </div>
                   );
                 })}
               </div>
@@ -2668,7 +2789,7 @@ function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, ge
       {/* AI: make me another lesson */}
       <div className="cq-genbox">
         {canGenerate ? (
-          !showBuilder ? (
+          (!showBuilder && !genBusy) ? (
             <>
               <div className="cq-gentext">
                 <h3>{cls.id === "general" ? "✨ More brain-training" : "✨ Want more practice?"}</h3>
@@ -2716,6 +2837,7 @@ function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, ge
                 <button className="cq-genbtn" onClick={generateAllSets} disabled={genBusy}>{genBusy ? "Generating…" : `Generate ${sets.length} set${sets.length > 1 ? "s" : ""} →`}</button>
                 <button className="cq-clearbtn" onClick={genBusy ? cancelGeneration : () => { setShowBuilder(false); setBuildErr(""); }}>{genBusy ? "Stop" : "Cancel"}</button>
               </div>
+              {genBusy && <p className="cq-gennote">⏳ This can take up to a minute — the AI writes and checks each lesson so they actually work. You can switch tabs; it keeps going.</p>}
               {buildErr && <p className="cq-generr">{buildErr}</p>}
             </div>
           )
@@ -2754,13 +2876,16 @@ function LessonRunner({ cls, idx, doneSet, onDone, onUndone, onBack, goStep }) {
           have harder variants. Generated lessons and lessons with no variant
           shouldn't show "Hardest level" (it's misleading — it doesn't mean the
           difficulty you picked, just that there's no pre-built harder version). */}
+      {/* Difficulty controls — ONLY for hand-built lessons that genuinely have a
+          harder variant to switch to. We never show a standalone "Hardest level"
+          badge (it confused people — it doesn't refer to the difficulty they
+          picked). If you're at the top of a variant chain, the control simply
+          disappears rather than showing a dead "Hardest level" label. */}
       {cls.mode !== "concept" && !activeStep.generated && (hasHarder || depth > 0) && (
         <div className="cq-difficulty">
           {depth > 0 && <button className="cq-difbtn easier" onClick={goEasier}>← Make it easier</button>}
           {depth > 0 && <span className="cq-diflevel">Harder level {depth}</span>}
-          {hasHarder
-            ? <button className="cq-difbtn harder" onClick={goHarder}>This is too easy — give me harder →</button>
-            : <span className="cq-difbtn maxed" title="No harder version of this step">⛰ Hardest level</span>}
+          {hasHarder && <button className="cq-difbtn harder" onClick={goHarder}>This is too easy — give me harder →</button>}
         </div>
       )}
 
@@ -2778,6 +2903,18 @@ function LessonRunner({ cls, idx, doneSet, onDone, onUndone, onBack, goStep }) {
       {activeStep.type === "type" && <TypeStep key={stepKey} step={activeStep} onDone={complete} />}
       {activeStep.type === "aitype" && <AITypeStep key={stepKey} step={activeStep} onDone={complete} />}
       {activeStep.type === "markup" && <MarkupStep key={stepKey} step={activeStep} onDone={complete} />}
+
+      {/* In-lesson AI helper — knows this lesson, saves its chat per lesson */}
+      <LessonHelper
+        lessonKey={stepKey}
+        lesson={{
+          title: activeStep.title,
+          teach: activeStep.teach || activeStep.intro || "",
+          example: activeStep.example || "",
+          lang: activeStep.lang || cls.label,
+          code: activeStep.starter || "",
+        }}
+      />
 
       <div className="cq-nav">
         <button className="cq-navbtn" onClick={prevStep} disabled={idx === 0}>← Back</button>
@@ -2804,33 +2941,42 @@ function LessonRunner({ cls, idx, doneSet, onDone, onUndone, onBack, goStep }) {
 function makeCodeKeyDown(value, setValue) {
   return (e) => {
     const el = e.target;
+    // Read the CURRENT text straight from the DOM element, not the closed-over
+    // `value` — the closure can be one render stale, which made edits land in the
+    // wrong place (or appear to do nothing). el.value is always current.
+    const cur = el.value;
     const s = el.selectionStart, eend = el.selectionEnd;
+    const apply = (newText, caret) => {
+      // Update React state...
+      setValue(newText);
+      // ...and set the DOM value + caret synchronously so Safari doesn't reset the
+      // cursor to the end when React re-commits the controlled value. We set it on
+      // the element now, and again on the next frame as a belt-and-suspenders.
+      el.value = newText;
+      el.selectionStart = el.selectionEnd = caret;
+      requestAnimationFrame(() => { try { el.selectionStart = el.selectionEnd = caret; } catch {} });
+    };
     if (e.key === "Tab") {
       e.preventDefault();
       if (e.shiftKey) {
-        const lineStart = value.lastIndexOf("\n", s - 1) + 1;
-        const lead = value.slice(lineStart, s);
+        const lineStart = cur.lastIndexOf("\n", s - 1) + 1;
+        const lead = cur.slice(lineStart, s);
         const remove = lead.endsWith("  ") ? 2 : lead.endsWith(" ") ? 1 : 0;
-        if (remove) {
-          setValue(value.slice(0, s - remove) + value.slice(s));
-          requestAnimationFrame(() => { el.selectionStart = el.selectionEnd = s - remove; });
-        }
+        if (remove) apply(cur.slice(0, s - remove) + cur.slice(s), s - remove);
       } else {
-        setValue(value.slice(0, s) + "  " + value.slice(eend));
-        requestAnimationFrame(() => { el.selectionStart = el.selectionEnd = s + 2; });
+        apply(cur.slice(0, s) + "  " + cur.slice(eend), s + 2);
       }
       return;
     }
     if (e.key === "Enter") {
       e.preventDefault();
-      const lineStart = value.lastIndexOf("\n", s - 1) + 1;
-      const line = value.slice(lineStart, s);
+      const lineStart = cur.lastIndexOf("\n", s - 1) + 1;
+      const line = cur.slice(lineStart, s);
       const indentMatch = line.match(/^[ \t]*/);
       let indent = indentMatch ? indentMatch[0] : "";
       if (/:\s*$/.test(line)) indent += "  ";
       const insert = "\n" + indent;
-      setValue(value.slice(0, s) + insert + value.slice(eend));
-      requestAnimationFrame(() => { el.selectionStart = el.selectionEnd = s + insert.length; });
+      apply(cur.slice(0, s) + insert + cur.slice(eend), s + insert.length);
       return;
     }
   };
@@ -3434,6 +3580,7 @@ function TypeStep({ step, onDone }) {
       <textarea className="cq-editor" value={code} spellCheck={false} onChange={(e) => { setCode(e.target.value); setResult(null); }} onKeyDown={onKeyDown} />
       <div className="cq-buildrow"><button className="cq-run" onClick={run} disabled={result?.ok || running}>{running ? "Running…" : "▶ Run it"}</button></div>
       {result && !result.ok && <div className="cq-nudge">Almost — {result.why || "the tests didn't all pass yet"}.</div>}
+      {result && !result.ok && result.tip && <div className="cq-iotip">💡 {result.tip}</div>}
       {result?.ok && <div className="cq-takeaway big">{step.why}</div>}
     </div>
   );
@@ -3866,6 +4013,9 @@ const CSS = `
 .cq-chapter-count{font-size:11.5px;color:var(--ink-faint);font-family:var(--mono);background:var(--bg-0);padding:3px 9px;border-radius:99px}
 .cq-lessonrows{display:flex;flex-direction:column;gap:8px}
 .cq-lessonrow{display:flex;align-items:center;gap:13px;background:var(--bg-2);border:1px solid var(--line-soft);border-radius:var(--radius-sm);padding:13px 16px;cursor:pointer;transition:border-color .15s,transform .15s,background .15s;color:inherit;font-family:inherit;text-align:left}
+.cq-lessonrow.dragging{opacity:.5;border-color:var(--violet)}
+.cq-lessonrow.droptarget{border-color:var(--violet);border-style:dashed;background:rgba(139,92,246,.08)}
+.cq-draghandle{color:var(--muted);font-size:16px;cursor:grab;user-select:none;line-height:1}
 .cq-lessonrow:hover{border-color:var(--line);transform:translateX(3px);background:var(--bg-3)}
 .cq-lessonrow.done{border-color:rgba(94,224,192,.32)}
 .cq-lessonrow.resume{border-color:var(--teal);box-shadow:0 0 0 1px var(--teal),0 8px 22px -14px var(--teal-deep)}
@@ -3911,6 +4061,7 @@ const CSS = `
 .cq-genbtn:disabled{opacity:.55;cursor:default}
 .cq-genlocked{margin:0;color:var(--ink-faint);font-size:14px}
 .cq-generr{margin:0;color:var(--rose);font-size:13px}
+.cq-gennote{margin:10px 0 0;color:var(--muted);font-size:13px;line-height:1.5}
 .cq-gen-tag{font-size:10px;background:var(--violet);color:#fff;padding:2px 7px;border-radius:6px;margin-left:8px;font-weight:700}
 
 /* ============ STEP CHROME ============ */
@@ -3958,6 +4109,7 @@ const CSS = `
 .cq-takeaway.big{font-size:16px;text-align:center;padding:22px}
 @keyframes cq-pop{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:none}}
 .cq-nudge{background:var(--amber-ghost);border:1px solid rgba(245,201,123,.4);border-radius:12px;padding:15px;font-size:14px;line-height:1.6;color:#f7dca6}
+.cq-iotip{margin-top:10px;background:rgba(139,92,246,.14);border:1.5px solid var(--violet);border-radius:12px;padding:14px 16px;font-size:15px;font-weight:600;line-height:1.5;color:#d9ccff}
 .cq-notyet{color:var(--amber);font-size:13px;margin-bottom:10px;font-weight:600}
 
 /* ============ PUZZLE / PREDICT / CONCEPT ============ */
@@ -4085,6 +4237,11 @@ const CSS = `
 .cq-proj-dot.active{border-color:var(--violet);color:var(--violet);box-shadow:0 0 0 1px var(--violet)}
 .cq-proj-dot.done{background:var(--teal);border-color:var(--teal);color:var(--bg-0)}
 .cq-teacher{background:linear-gradient(180deg,var(--bg-1),var(--bg-1));border:1px solid var(--violet);border-radius:var(--radius-lg);padding:20px;margin-top:18px;box-shadow:var(--shadow)}
+.cq-lessonhelp{margin-top:16px;border:1px solid var(--violet);border-radius:12px;overflow:hidden;background:rgba(139,92,246,.05)}
+.cq-lessonhelp-toggle{width:100%;text-align:left;background:transparent;border:none;color:var(--text);font-size:14px;font-weight:600;padding:12px 14px;cursor:pointer}
+.cq-lessonhelp-toggle:hover{background:rgba(139,92,246,.08)}
+.cq-lessonhelp-body{padding:0 14px 14px}
+.cq-lessonhelp-note{font-size:11px;color:var(--muted);margin:8px 2px 0;line-height:1.4}
 .cq-teacher-head{font-family:var(--display);font-size:16px;font-weight:600;margin-bottom:14px}
 .cq-teacher-log{display:flex;flex-direction:column;gap:10px;margin-bottom:14px;max-height:340px;overflow-y:auto}
 .cq-bubble{padding:12px 15px;border-radius:14px;font-size:14px;line-height:1.6;max-width:85%;white-space:pre-wrap}
