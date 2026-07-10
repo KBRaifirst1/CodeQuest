@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useSyncExternalStore } from "react"
 // Build marker — check this in the browser console to confirm which version is
 // actually running: type  window.__CQ_VERSION  in DevTools. If it's not the
 // value below, your browser/Vercel is serving an older bundle.
-const CQ_VERSION = "2026-07-09-v17-colors-offline";
+const CQ_VERSION = "2026-07-10-v19-hint-no-answer";
 if (typeof window !== "undefined") {
   window.__CQ_VERSION = CQ_VERSION;
   try { console.log("%cCodeQuest build: " + CQ_VERSION, "color:#6366f1;font-weight:bold"); } catch {}
@@ -3187,28 +3187,58 @@ function makeCodeKeyDown(value, setValue) {
 }
 
 // ---------- Lightweight syntax highlighter ----------
-// Tokenizes code and returns HTML with colored spans. Supports Python and
-// JS/C-family keywords. Kept simple on purpose — good enough to color keywords,
-// strings, comments, numbers, and function-call names without a full parser.
-const HL_KEYWORDS = {
-  py: new Set(["def","return","if","elif","else","for","while","in","not","and","or","import","from","as","class","try","except","finally","with","lambda","pass","break","continue","True","False","None","print","range","len","str","int","float","list","dict","input","self"]),
-  js: new Set(["function","return","if","else","for","while","let","const","var","new","class","extends","try","catch","finally","import","from","export","default","typeof","instanceof","true","false","null","undefined","console","this","async","await"]),
+// Tokenizes code and returns HTML with colored spans. Rather than a keyword set
+// per language (57 of them), languages are grouped into families that share
+// syntax. Every language maps to a family so ALL of them get sensible coloring,
+// not just Python/JS.
+const HL_FAMILY_KEYWORDS = {
+  // C-family / curly-brace languages (share most keywords)
+  c: new Set(["int","char","float","double","void","return","if","else","for","while","do","switch","case","break","continue","struct","class","public","private","protected","static","const","new","delete","true","false","null","nullptr","this","import","from","export","function","let","var","typeof","async","await","func","package","type","interface","enum","fn","let","mut","impl","use","pub","def","end","module","val","object","fun","override","when","match","where","print","println","printf","cout","System"]),
+  // Python-like (indentation, def, colon)
+  py: new Set(["def","return","if","elif","else","for","while","in","not","and","or","import","from","as","class","try","except","finally","with","lambda","pass","break","continue","True","False","None","print","range","len","str","int","float","list","dict","input","self","yield","global","nonlocal","assert","del","raise"]),
+  // Markup (HTML/XML-ish) — tags handled loosely; color common attribute words
+  markup: new Set(["html","head","body","div","span","class","id","style","script","link","href","src","const","let","function","return","import","export","export","default","template","style","script"]),
+  // SQL
+  sql: new Set(["SELECT","FROM","WHERE","INSERT","INTO","VALUES","UPDATE","SET","DELETE","CREATE","TABLE","DROP","ALTER","JOIN","LEFT","RIGHT","INNER","OUTER","ON","GROUP","BY","ORDER","HAVING","LIMIT","AND","OR","NOT","NULL","AS","DISTINCT","COUNT","SUM","AVG","MIN","MAX","select","from","where","insert","into","values","update","set","delete","create","table","join","and","or","not","null","as"]),
+  // Lisp family
+  lisp: new Set(["defn","def","defun","let","lambda","fn","if","cond","when","unless","do","loop","recur","quote","car","cdr","cons","list","map","filter","reduce","define","set!","begin"]),
 };
+// Map each language id to a highlighter family.
+const HL_LANG_FAMILY = (() => {
+  const m = {};
+  const setAll = (ids, fam) => ids.forEach((id) => (m[id] = fam));
+  setAll(["py"], "py");
+  setAll(["html", "css", "jsx", "vue", "svelte"], "markup");
+  setAll(["sql"], "sql");
+  setAll(["clojure", "lisp", "scheme", "elm", "racket"], "lisp");
+  // Everything else uses the broad C-family set (js, ts, java, cpp, c, go, rust, etc.)
+  return m;
+})();
+function familyFor(lang) {
+  return HL_LANG_FAMILY[lang] || "c";
+}
 function escapeHtml(s) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 function highlightCode(code, lang) {
-  const kw = HL_KEYWORDS[lang === "py" ? "py" : "js"] || HL_KEYWORDS.js;
-  const commentChar = lang === "py" ? "#" : "//";
+  const fam = familyFor(lang);
+  const kw = HL_FAMILY_KEYWORDS[fam] || HL_FAMILY_KEYWORDS.c;
+  // Comment style by family: py uses #, lisp uses ;, sql uses --, rest use //
   const out = [];
-  // Token regex: strings, comments, numbers, identifiers, everything else.
-  // We scan char by char to handle strings/comments cleanly.
   let i = 0;
   const n = code.length;
+  const isPy = fam === "py";
+  const isLisp = fam === "lisp";
+  const isSql = fam === "sql";
   while (i < n) {
     const c = code[i];
-    // Comment to end of line
-    if ((lang === "py" && c === "#") || (lang !== "py" && c === "/" && code[i + 1] === "/")) {
+    // Comments
+    const lineComment =
+      (isPy && c === "#") ||
+      (isLisp && c === ";") ||
+      (isSql && c === "-" && code[i + 1] === "-") ||
+      (!isPy && !isLisp && !isSql && c === "/" && code[i + 1] === "/");
+    if (lineComment) {
       let j = i;
       while (j < n && code[j] !== "\n") j++;
       out.push('<span class="hl-com">' + escapeHtml(code.slice(i, j)) + "</span>");
@@ -3238,7 +3268,6 @@ function highlightCode(code, lang) {
       let j = i;
       while (j < n && /[A-Za-z0-9_]/.test(code[j])) j++;
       const word = code.slice(i, j);
-      // function-call name: identifier followed by "("
       let k = j; while (k < n && code[k] === " ") k++;
       if (kw.has(word)) out.push('<span class="hl-kw">' + escapeHtml(word) + "</span>");
       else if (code[k] === "(") out.push('<span class="hl-fn">' + escapeHtml(word) + "</span>");
@@ -3246,7 +3275,6 @@ function highlightCode(code, lang) {
       i = j;
       continue;
     }
-    // Everything else (operators, punctuation, whitespace)
     out.push(escapeHtml(c));
     i++;
   }
@@ -3265,9 +3293,9 @@ function CodeEditor({ code, setCode, onKeyDown, lang, onChange, minHeight = 180 
       preRef.current.scrollLeft = taRef.current.scrollLeft;
     }
   };
-  const langKey = lang === "py" ? "py" : "js";
-  // Trailing newline needs a space so the last line renders in the <pre>.
-  const html = highlightCode(code + (code.endsWith("\n") ? " " : ""), langKey);
+  // Pass the REAL language through so the highlighter picks the right family
+  // (SQL keywords, Lisp, markup, etc.) — not just py-vs-js.
+  const html = highlightCode(code + (code.endsWith("\n") ? " " : ""), lang || "js");
   return (
     <div className="cq-editor-wrap" style={{ minHeight }}>
       <pre className="cq-editor-hl" ref={preRef} aria-hidden="true" dangerouslySetInnerHTML={{ __html: html }} />
@@ -3775,6 +3803,7 @@ function VisualStep({ step, onDone }) {
   const stats = useLessonStats();
 
   const showIt = async () => {
+    if (!code.trim()) return;
     setBusy(true); setErr("");
     try {
       // 1) Check the learner's code actually works BEFORE sending to the AI.
@@ -3892,8 +3921,8 @@ function TypeStep({ step, onDone }) {
       {showHint && (
         <div className="cq-iotip">
           💡 {step.io === "print"
-            ? "This lesson wants you to PRINT the answer using print(…) — you don't return it. Example: print(\"Hi, \" + name + \"!\")"
-            : "This lesson wants you to RETURN the answer using return — the checker reads what you return. Example: return \"Hi, \" + name + \"!\""}
+            ? "This lesson wants you to PRINT the answer with print(…) — you don't return it. (For example, a different task might use print(\"Score:\", points).) Build the text this lesson asks for and print it."
+            : "This lesson wants you to RETURN the answer with return — the checker reads what you return, not what you print. (For example, a different task might use return total * 2.) Return the value this lesson asks for."}
         </div>
       )}
       {result && !result.ok && <div className="cq-nudge">Almost — {result.why || "the tests didn't all pass yet"}.</div>}
@@ -4116,6 +4145,7 @@ function ProjectBuilder({ plan, onBack, onComplete, onHome, reviewMode = false }
   const goToStep = (i) => { setStepIdx(i); setCode(plan.steps[i].starter); setResult(null); };
 
   const run = () => {
+    if (!code.trim()) return;
     setRunning(true);
     const v = verifyRuns(code, step.fnName, step.tests);
     setResult(v); setRunning(false);
