@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useSyncExternalStore } from "react"
 // Build marker — check this in the browser console to confirm which version is
 // actually running: type  window.__CQ_VERSION  in DevTools. If it's not the
 // value below, your browser/Vercel is serving an older bundle.
-const CQ_VERSION = "2026-07-09-v13-fix-inverted-tip";
+const CQ_VERSION = "2026-07-09-v17-colors-offline";
 if (typeof window !== "undefined") {
   window.__CQ_VERSION = CQ_VERSION;
   try { console.log("%cCodeQuest build: " + CQ_VERSION, "color:#6366f1;font-weight:bold"); } catch {}
@@ -1977,16 +1977,33 @@ function AppInner({ initialState, onPersist, onSignOut } = {}) {
     }
     return out;
   };
-  const [progress, setProgress] = useState(() => hydrateProgress(initialState?.progress)); // { classId: Set(doneStepIdx) }
-  const [aiLessons, setAiLessons] = useState(() => initialState?.aiLessons || {}); // { classId: [generatedStep, ...] }
-  const [savedProjects, setSavedProjects] = useState(() => initialState?.savedProjects || []); // finished projects
+  // Pick the best starting state: the account state (initialState) OR a local
+  // save on this device — whichever has more done lessons. This makes offline
+  // reloads restore progress even before the account is reachable. The local
+  // save is written on every change (see autosave effect below).
+  const bootState = (() => {
+    const acct = initialState || {};
+    let local = null;
+    try { const raw = CQ_STORE.get("cq_local_save_v1"); if (raw) local = JSON.parse(raw); } catch {}
+    if (!local) return acct;
+    const countDone = (st) => {
+      if (!st || !st.progress) return 0;
+      return Object.values(st.progress).reduce((n, v) => n + (Array.isArray(v) ? v.length : (v instanceof Set ? v.size : 0)), 0);
+    };
+    // Prefer local only if it's at least as complete (avoids losing offline work
+    // when the account returns a staler snapshot).
+    return countDone(local) >= countDone(acct) ? local : acct;
+  })();
+  const [progress, setProgress] = useState(() => hydrateProgress(bootState?.progress)); // { classId: Set(doneStepIdx) }
+  const [aiLessons, setAiLessons] = useState(() => bootState?.aiLessons || {}); // { classId: [generatedStep, ...] }
+  const [savedProjects, setSavedProjects] = useState(() => bootState?.savedProjects || []); // finished projects
   // Per-lesson stats for auto-difficulty: { classId: { stepIdx: { time, firstTry, retries } } }
   // Old users with no lessonStats seed with an empty object — safe default, nothing crashes.
-  const [lessonStats, setLessonStats] = useState(() => initialState?.lessonStats || {});
+  const [lessonStats, setLessonStats] = useState(() => bootState?.lessonStats || {});
   // A short freeform description the learner can write about themselves — feeds
   // into the Auto difficulty scorer as extra context that lesson-count data can't
   // capture (age, background, "I want a challenge", "go easy", etc.).
-  const [profileDescription, setProfileDescription] = useState(() => initialState?.profileDescription || "");
+  const [profileDescription, setProfileDescription] = useState(() => bootState?.profileDescription || "");
 
   // Background generation: state lives in GEN_STORE (module scope) so it
   // survives App remounts (tab refocus). We subscribe via useSyncExternalStore
@@ -2134,18 +2151,54 @@ function AppInner({ initialState, onPersist, onSignOut } = {}) {
     GEN_STORE.set({ classId: null, sets: null, status: "idle", error: "", lastTopic: "" });
   };
 
-  // Autosave to the cloud whenever saved state changes
+  // Autosave — LOCAL FIRST (works offline), then to the cloud when online.
+  // Everything is written to localStorage immediately so progress is never lost,
+  // even with no connection. When online we also push to the account. When we
+  // come back online, a pending local save is flushed automatically.
+  const LOCAL_SAVE_KEY = "cq_local_save_v1";
+  const [isOnline, setIsOnline] = useState(typeof navigator !== "undefined" ? navigator.onLine !== false : true);
+  const [pendingSync, setPendingSync] = useState(false);
+
+  const buildSnapshot = () => {
+    const progressAsArrays = {};
+    for (const [k, v] of Object.entries(progress)) {
+      progressAsArrays[k] = v instanceof Set ? [...v] : Array.isArray(v) ? v : [];
+    }
+    return { progress: progressAsArrays, aiLessons, savedProjects, lessonStats, profileDescription };
+  };
+
   useEffect(() => {
-    // Convert Sets to arrays before persisting so the parent gets JSON-safe data.
-    // Hydration reverses this on load, so the round-trip is transparent.
+    const snap = buildSnapshot();
+    // 1) Always save locally — instant, offline-safe.
+    try { CQ_STORE.set(LOCAL_SAVE_KEY, JSON.stringify(snap)); } catch {}
+    // 2) If online, push to the account too. If offline, mark pending.
     if (onPersist) {
-      const progressAsArrays = {};
-      for (const [k, v] of Object.entries(progress)) {
-        progressAsArrays[k] = v instanceof Set ? [...v] : Array.isArray(v) ? v : [];
+      if (typeof navigator === "undefined" || navigator.onLine !== false) {
+        onPersist(snap);
+        setPendingSync(false);
+      } else {
+        setPendingSync(true);
       }
-      onPersist({ progress: progressAsArrays, aiLessons, savedProjects, lessonStats, profileDescription });
     }
   }, [progress, aiLessons, savedProjects, lessonStats, profileDescription, onPersist]);
+
+  // Watch connection changes. On reconnect, flush the local save to the account.
+  useEffect(() => {
+    const goOnline = () => {
+      setIsOnline(true);
+      // Flush whatever is saved locally up to the account.
+      try {
+        const raw = CQ_STORE.get(LOCAL_SAVE_KEY);
+        if (raw && onPersist) { onPersist(JSON.parse(raw)); setPendingSync(false); }
+      } catch {}
+    };
+    const goOffline = () => setIsOnline(false);
+    if (typeof window !== "undefined") {
+      window.addEventListener("online", goOnline);
+      window.addEventListener("offline", goOffline);
+      return () => { window.removeEventListener("online", goOnline); window.removeEventListener("offline", goOffline); };
+    }
+  }, [onPersist]);
 
   const classWithAI = (cls) => {
     const extra = aiLessons[cls.id];
@@ -2230,6 +2283,8 @@ function AppInner({ initialState, onPersist, onSignOut } = {}) {
           <span style={{ fontSize: 10, opacity: 0.4, marginLeft: 8, fontWeight: 400 }}>{CQ_VERSION}</span>
         </div>
         <div className="cq-headerright">
+          {!isOnline && <span className="cq-offline-badge" title="You're offline — progress is saved on this device and will sync when you reconnect">📴 Offline · saved here</span>}
+          {isOnline && pendingSync && <span className="cq-offline-badge syncing" title="Syncing your latest progress to your account">🔄 Syncing…</span>}
           <button className="cq-projbtn" onClick={() => setScreen({ name: "projectPick" })}>🛠️ Projects</button>
           {totalDone > 0 && <div className="cq-xp">⭐ {totalDone} lessons done</div>}
           {onSignOut && <button className="cq-projbtn" onClick={onSignOut}>Sign out</button>}
@@ -3131,6 +3186,105 @@ function makeCodeKeyDown(value, setValue) {
   };
 }
 
+// ---------- Lightweight syntax highlighter ----------
+// Tokenizes code and returns HTML with colored spans. Supports Python and
+// JS/C-family keywords. Kept simple on purpose — good enough to color keywords,
+// strings, comments, numbers, and function-call names without a full parser.
+const HL_KEYWORDS = {
+  py: new Set(["def","return","if","elif","else","for","while","in","not","and","or","import","from","as","class","try","except","finally","with","lambda","pass","break","continue","True","False","None","print","range","len","str","int","float","list","dict","input","self"]),
+  js: new Set(["function","return","if","else","for","while","let","const","var","new","class","extends","try","catch","finally","import","from","export","default","typeof","instanceof","true","false","null","undefined","console","this","async","await"]),
+};
+function escapeHtml(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+function highlightCode(code, lang) {
+  const kw = HL_KEYWORDS[lang === "py" ? "py" : "js"] || HL_KEYWORDS.js;
+  const commentChar = lang === "py" ? "#" : "//";
+  const out = [];
+  // Token regex: strings, comments, numbers, identifiers, everything else.
+  // We scan char by char to handle strings/comments cleanly.
+  let i = 0;
+  const n = code.length;
+  while (i < n) {
+    const c = code[i];
+    // Comment to end of line
+    if ((lang === "py" && c === "#") || (lang !== "py" && c === "/" && code[i + 1] === "/")) {
+      let j = i;
+      while (j < n && code[j] !== "\n") j++;
+      out.push('<span class="hl-com">' + escapeHtml(code.slice(i, j)) + "</span>");
+      i = j;
+      continue;
+    }
+    // Strings ' " `
+    if (c === '"' || c === "'" || c === "`") {
+      const quote = c;
+      let j = i + 1;
+      while (j < n && code[j] !== quote) { if (code[j] === "\\") j++; j++; }
+      j = Math.min(j + 1, n);
+      out.push('<span class="hl-str">' + escapeHtml(code.slice(i, j)) + "</span>");
+      i = j;
+      continue;
+    }
+    // Numbers
+    if (/[0-9]/.test(c)) {
+      let j = i;
+      while (j < n && /[0-9.]/.test(code[j])) j++;
+      out.push('<span class="hl-num">' + escapeHtml(code.slice(i, j)) + "</span>");
+      i = j;
+      continue;
+    }
+    // Identifiers / keywords
+    if (/[A-Za-z_]/.test(c)) {
+      let j = i;
+      while (j < n && /[A-Za-z0-9_]/.test(code[j])) j++;
+      const word = code.slice(i, j);
+      // function-call name: identifier followed by "("
+      let k = j; while (k < n && code[k] === " ") k++;
+      if (kw.has(word)) out.push('<span class="hl-kw">' + escapeHtml(word) + "</span>");
+      else if (code[k] === "(") out.push('<span class="hl-fn">' + escapeHtml(word) + "</span>");
+      else out.push(escapeHtml(word));
+      i = j;
+      continue;
+    }
+    // Everything else (operators, punctuation, whitespace)
+    out.push(escapeHtml(c));
+    i++;
+  }
+  return out.join("");
+}
+
+// Shared code editor with syntax-highlight overlay. A colored <pre> sits exactly
+// behind a transparent <textarea>; they share identical font/size/padding so the
+// text lines up. The textarea handles all typing/caret; the <pre> only shows color.
+function CodeEditor({ code, setCode, onKeyDown, lang, onChange, minHeight = 180 }) {
+  const taRef = useRef(null);
+  const preRef = useRef(null);
+  const syncScroll = () => {
+    if (taRef.current && preRef.current) {
+      preRef.current.scrollTop = taRef.current.scrollTop;
+      preRef.current.scrollLeft = taRef.current.scrollLeft;
+    }
+  };
+  const langKey = lang === "py" ? "py" : "js";
+  // Trailing newline needs a space so the last line renders in the <pre>.
+  const html = highlightCode(code + (code.endsWith("\n") ? " " : ""), langKey);
+  return (
+    <div className="cq-editor-wrap" style={{ minHeight }}>
+      <pre className="cq-editor-hl" ref={preRef} aria-hidden="true" dangerouslySetInnerHTML={{ __html: html }} />
+      <textarea
+        ref={taRef}
+        className="cq-editor cq-editor-ta"
+        value={code}
+        spellCheck={false}
+        onChange={(e) => { setCode(e.target.value); if (onChange) onChange(); }}
+        onKeyDown={onKeyDown}
+        onScroll={syncScroll}
+        style={{ minHeight }}
+      />
+    </div>
+  );
+}
+
 function useLessonStats() {
   const startRef = useRef(Date.now());
   const wrongRef = useRef(0);
@@ -3462,6 +3616,7 @@ function RunStep({ step, onDone }) {
   const stats = useLessonStats();
 
   const run = async () => {
+    if (!code.trim()) return;
     setRunning(true); setErr(""); setOut(null);
     try {
       const r = await withRetry(() => runViaPiston(step.lang, code, step.stdin), 2, 600);
@@ -3492,7 +3647,7 @@ function RunStep({ step, onDone }) {
       )}
 
       <div className="cq-editor-bar"><span className="cq-dot" /><span className="cq-dot" /><span className="cq-dot" /><span className="cq-filename">{step.langLabel || step.lang}</span></div>
-      <textarea className="cq-editor" value={code} spellCheck={false} onChange={(e) => { setCode(e.target.value); setOut(null); }} onKeyDown={onKeyDown} style={{ minHeight: 180 }} />
+      <CodeEditor code={code} setCode={setCode} onChange={() => setOut(null)} onKeyDown={onKeyDown} lang={step.lang} minHeight={180} />
       <div className="cq-buildrow"><button className="cq-run" onClick={run} disabled={running || !code.trim()}>{running ? "Running…" : "▶ Run it"}</button></div>
 
       {err && <div className="cq-nudge">{err}</div>}
@@ -3531,6 +3686,7 @@ function AiRunStep({ step, onDone }) {
   }, []);
 
   const run = async () => {
+    if (!code.trim()) return;
     setRunning(true); setErr(""); setOut(null);
     try {
       // 1) Python: run headless check first so obvious errors don't waste an AI call
@@ -3590,7 +3746,7 @@ function AiRunStep({ step, onDone }) {
       )}
 
       <div className="cq-editor-bar"><span className="cq-dot" /><span className="cq-dot" /><span className="cq-dot" /><span className="cq-filename">{step.langLabel || step.lang}</span></div>
-      <textarea className="cq-editor" value={code} spellCheck={false} onChange={(e) => { setCode(e.target.value); setOut(null); }} onKeyDown={onKeyDown} style={{ minHeight: 180 }} />
+      <CodeEditor code={code} setCode={setCode} onChange={() => setOut(null)} onKeyDown={onKeyDown} lang={step.lang} minHeight={180} />
       <div className="cq-buildrow"><button className="cq-run" onClick={run} disabled={running || !code.trim()}>{running ? "Running…" : "▶ Run it"}</button></div>
 
       {err && <div className="cq-nudge">{err}</div>}
@@ -3675,7 +3831,7 @@ function VisualStep({ step, onDone }) {
       ) : (step.intro && <p className="cq-intro">{step.intro}</p>)}
 
       <div className="cq-editor-bar"><span className="cq-dot" /><span className="cq-dot" /><span className="cq-dot" /><span className="cq-filename">{fileName}</span></div>
-      <textarea className="cq-editor" value={code} spellCheck={false} onChange={(e) => setCode(e.target.value)} onKeyDown={onKeyDown} style={{ minHeight: 180 }} />
+      <CodeEditor code={code} setCode={setCode} onKeyDown={onKeyDown} lang={step.lang} minHeight={180} />
       <div className="cq-buildrow"><button className="cq-run" onClick={showIt} disabled={busy || !code.trim()}>{busy ? "Showing…" : "▶ Run visually"}</button></div>
 
       {err && <div className="cq-nudge">{err}</div>}
@@ -3693,8 +3849,10 @@ function TypeStep({ step, onDone }) {
   const [code, setCode] = useState(step.starter);
   const [result, setResult] = useState(null);
   const [running, setRunning] = useState(false);
+  const [showHint, setShowHint] = useState(false);
   const stats = useLessonStats();
   const run = async () => {
+    if (!code.trim()) return;
     setRunning(true);
     // Python lessons verify via Pyodide; JS via native runner
     let v;
@@ -3726,11 +3884,21 @@ function TypeStep({ step, onDone }) {
       )}
       {step.lang === "py" && <p className="cq-tapnote">🐍 Python runs for real via Pyodide — the first run downloads it (~10s), then it's quick.</p>}
       <div className="cq-editor-bar"><span className="cq-dot" /><span className="cq-dot" /><span className="cq-dot" /><span className="cq-filename">{fileName}</span></div>
-      <textarea className="cq-editor" value={code} spellCheck={false} onChange={(e) => { setCode(e.target.value); setResult(null); }} onKeyDown={onKeyDown} />
-      <div className="cq-buildrow"><button className="cq-run" onClick={run} disabled={result?.ok || running}>{running ? "Running…" : "▶ Run it"}</button></div>
+      <CodeEditor code={code} setCode={setCode} onChange={() => setResult(null)} onKeyDown={onKeyDown} lang={(typeof step !== "undefined" && step && step.lang) ? step.lang : "js"} minHeight={180} />
+      <div className="cq-buildrow">
+        <button className="cq-run" onClick={run} disabled={result?.ok || running || !code.trim()}>{running ? "Running…" : "▶ Run it"}</button>
+        <button className="cq-hintbtn" onClick={() => setShowHint((h) => !h)}>{showHint ? "Hide hint" : "💡 Show hint"}</button>
+      </div>
+      {showHint && (
+        <div className="cq-iotip">
+          💡 {step.io === "print"
+            ? "This lesson wants you to PRINT the answer using print(…) — you don't return it. Example: print(\"Hi, \" + name + \"!\")"
+            : "This lesson wants you to RETURN the answer using return — the checker reads what you return. Example: return \"Hi, \" + name + \"!\""}
+        </div>
+      )}
       {result && !result.ok && <div className="cq-nudge">Almost — {result.why || "the tests didn't all pass yet"}.</div>}
       {result && !result.ok && result.tip && <div className="cq-iotip">💡 {result.tip}</div>}
-      {result?.ok && <div className="cq-takeaway big">{step.why}</div>}
+      {result?.ok && code.trim() && <div className="cq-takeaway big">{step.why}</div>}
     </div>
   );
 }
@@ -3741,6 +3909,7 @@ function AITypeStep({ step, onDone }) {
   const [running, setRunning] = useState(false);
   const stats = useLessonStats();
   const submit = async () => {
+    if (!code.trim()) return;
     setRunning(true);
     try {
       const r = await gradeAICode(step, code);
@@ -3769,8 +3938,8 @@ function AITypeStep({ step, onDone }) {
       ) : (step.intro && <p className="cq-intro">{step.intro}</p>)}
       {step.checks && <div className="cq-checks"><p className="cq-task">You'll be judged on:</p><ul>{step.checks.map((c, i) => <li key={i}>{c}</li>)}</ul></div>}
       <div className="cq-editor-bar"><span className="cq-dot" /><span className="cq-dot" /><span className="cq-dot" /><span className="cq-filename">{step.langLabel || step.lang || "code"}</span></div>
-      <textarea className="cq-editor" value={code} spellCheck={false} onChange={(e) => { setCode(e.target.value); setResult(null); }} onKeyDown={onKeyDown} />
-      <div className="cq-buildrow"><button className="cq-run" onClick={submit} disabled={result?.verdict === "pass" || running}>{running ? "Reviewing…" : "✦ Submit for review"}</button></div>
+      <CodeEditor code={code} setCode={setCode} onChange={() => setResult(null)} onKeyDown={onKeyDown} lang={(typeof step !== "undefined" && step && step.lang) ? step.lang : "js"} minHeight={180} />
+      <div className="cq-buildrow"><button className="cq-run" onClick={submit} disabled={result?.verdict === "pass" || running || !code.trim()}>{running ? "Reviewing…" : "✦ Submit for review"}</button></div>
       {result && (
         <div className="cq-results" style={{ padding: "12px 0 0" }}>
           <div className={`cq-verdict-badge ${result.verdict}`}>{result.verdict === "pass" ? "✓ AI says: looks good" : "✗ AI says: not yet"}<span className="cq-verdict-note">AI-judged · not a real test run</span></div>
@@ -3804,6 +3973,7 @@ function MarkupStep({ step, onDone }) {
   }, [code, step.kind, step.lang]);
 
   const submit = async () => {
+    if (!code.trim()) return;
     setRunning(true);
     try {
       // Reuse the AI code reviewer, framed for markup.
@@ -3834,7 +4004,7 @@ function MarkupStep({ step, onDone }) {
       {step.checks && <div className="cq-checks"><p className="cq-task">You'll be judged on:</p><ul>{step.checks.map((c, i) => <li key={i}>{c}</li>)}</ul></div>}
 
       <div className="cq-editor-bar"><span className="cq-dot" /><span className="cq-dot" /><span className="cq-dot" /><span className="cq-filename">{fileName}</span></div>
-      <textarea className="cq-editor" value={code} spellCheck={false} onChange={(e) => { setCode(e.target.value); setResult(null); }} onKeyDown={onKeyDown} style={{ minHeight: 180 }} />
+      <CodeEditor code={code} setCode={setCode} onChange={() => setResult(null)} onKeyDown={onKeyDown} lang={step.lang || "js"} minHeight={180} />
 
       {srcDoc && (
         <div className="cq-canvaswrap" style={{ background: "#fff" }}>
@@ -4006,10 +4176,10 @@ function ProjectBuilder({ plan, onBack, onComplete, onHome, reviewMode = false }
             <p className="cq-teach-now">Now you try 👇</p>
           </div>
           <div className="cq-editor-bar"><span className="cq-dot" /><span className="cq-dot" /><span className="cq-dot" /><span className="cq-filename">project.js</span></div>
-          <textarea className="cq-editor" value={code} spellCheck={false} onChange={(e) => { setCode(e.target.value); setResult(null); }} onKeyDown={onKeyDown} />
-          <div className="cq-buildrow"><button className="cq-run" onClick={run} disabled={running}>{running ? "Running…" : "▶ Run it"}</button></div>
+          <CodeEditor code={code} setCode={setCode} onChange={() => setResult(null)} onKeyDown={onKeyDown} lang={(typeof step !== "undefined" && step && step.lang) ? step.lang : "js"} minHeight={180} />
+          <div className="cq-buildrow"><button className="cq-run" onClick={run} disabled={running || !code.trim()}>{running ? "Running…" : "▶ Run it"}</button></div>
           {result && !result.ok && <div className="cq-nudge">Almost — {result.why || "the tests didn't all pass yet"}. Ask the teacher below if you're stuck.</div>}
-          {result?.ok && <div className="cq-takeaway big">✓ That works! {stepIdx < plan.steps.length - 1 ? "On to the next step…" : "Last step done!"}</div>}
+          {result?.ok && code.trim() && <div className="cq-takeaway big">✓ That works! {stepIdx < plan.steps.length - 1 ? "On to the next step…" : "Last step done!"}</div>}
         </div>
       )}
 
@@ -4309,6 +4479,15 @@ const CSS = `
 .cq-dot:nth-child(1){background:#ff5f57}.cq-dot:nth-child(2){background:#febc2e}.cq-dot:nth-child(3){background:#28c840}
 .cq-filename{margin-left:8px;font-family:var(--mono);font-size:12px;color:var(--ink-faint)}
 .cq-editor{width:100%;min-height:140px;resize:vertical;background:var(--bg-0);color:var(--ink);border:1px solid var(--line);border-radius:0 0 12px 12px;padding:18px;font-family:var(--mono);font-size:15px;line-height:1.7;tab-size:2}
+.cq-editor-wrap{position:relative;width:100%}
+.cq-editor-hl{position:absolute;inset:0;margin:0;overflow:auto;pointer-events:none;background:var(--bg-0);border:1px solid transparent;border-radius:0 0 12px 12px;padding:18px;font-family:var(--mono);font-size:15px;line-height:1.7;tab-size:2;white-space:pre-wrap;word-break:break-word;color:var(--ink)}
+.cq-editor-ta{position:relative;background:transparent!important;color:transparent!important;caret-color:var(--ink);white-space:pre-wrap;word-break:break-word}
+.cq-editor-ta::selection{background:rgba(139,92,246,.35)}
+.hl-kw{color:#c792ea}
+.hl-str{color:#7ee787}
+.hl-com{color:#6a7a8c;font-style:italic}
+.hl-num{color:#f78c6c}
+.hl-fn{color:#82aaff}
 .cq-editor:focus{outline:none;border-color:var(--teal)}
 
 /* ============ BUILD / FILL / ORDER ============ */
@@ -4325,6 +4504,8 @@ const CSS = `
 .cq-banktok.right{border-color:var(--teal);background:var(--teal-ghost)}
 .cq-banktok.wrong{border-color:var(--rose);background:rgba(255,138,163,.12)}
 .cq-buildrow{display:flex;gap:10px;align-items:center;margin-top:8px}
+.cq-hintbtn{background:transparent;border:1px solid var(--violet);color:#c9b8ff;border-radius:10px;padding:10px 16px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit}
+.cq-hintbtn:hover{background:rgba(139,92,246,.12)}
 .cq-run{background:linear-gradient(135deg,var(--teal),var(--teal-deep));color:var(--bg-0);border:none;padding:13px 26px;border-radius:var(--radius-sm);font-weight:700;cursor:pointer;font-family:inherit;font-size:15px;transition:transform .15s,filter .15s}
 .cq-run:hover:not(:disabled){transform:translateY(-1px);filter:brightness(1.06)}
 .cq-run:disabled{opacity:.5;cursor:default}
@@ -4376,6 +4557,8 @@ const CSS = `
 
 /* ============ PROJECT MODE ============ */
 .cq-headerright{display:flex;align-items:center;gap:10px}
+.cq-offline-badge{font-size:12px;font-weight:600;padding:6px 11px;border-radius:999px;background:rgba(245,158,11,.14);color:#fbbf24;border:1px solid rgba(245,158,11,.35);white-space:nowrap}
+.cq-offline-badge.syncing{background:rgba(139,92,246,.14);color:#c4b5fd;border-color:rgba(139,92,246,.35)}
 .cq-projbtn{background:var(--violet-ghost);border:1px solid rgba(155,140,255,.3);color:var(--violet);padding:7px 14px;border-radius:99px;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;transition:.15s}
 .cq-projbtn:hover{filter:brightness(1.12)}
 .cq-projhero{width:100%;display:flex;align-items:center;justify-content:space-between;gap:16px;background:linear-gradient(120deg,var(--violet-ghost),var(--bg-1));border:1px solid var(--violet);border-radius:var(--radius-lg);padding:20px 24px;margin-bottom:22px;cursor:pointer;font-family:inherit;color:inherit;box-shadow:0 14px 34px -22px #6f5cff;transition:transform .18s,filter .18s;text-align:left}
