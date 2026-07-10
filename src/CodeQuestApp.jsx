@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useSyncExternalStore } from "react"
 // Build marker — check this in the browser console to confirm which version is
 // actually running: type  window.__CQ_VERSION  in DevTools. If it's not the
 // value below, your browser/Vercel is serving an older bundle.
-const CQ_VERSION = "2026-07-08-v12-print-lesson";
+const CQ_VERSION = "2026-07-09-v13-fix-inverted-tip";
 if (typeof window !== "undefined") {
   window.__CQ_VERSION = CQ_VERSION;
   try { console.log("%cCodeQuest build: " + CQ_VERSION, "color:#6366f1;font-weight:bold"); } catch {}
@@ -1218,11 +1218,17 @@ for __t in __tests:
                 __shown = "printed " + repr(__printed.strip()) + " and returned " + repr(__g)
             __first_fail = "with " + ", ".join(repr(a) for a in __t["args"]) + " it gave " + __shown + ", but should give " + repr(__exp)
             # Style-aware tip, returned as its OWN field so the UI can show it as a
-            # prominent callout (not buried in the failure text).
-            if __io_mode == "print" and __printed.strip() == "" and __g is not None:
-                __tip = "This lesson wants you to PRINT the answer with print(…), not return it."
-            elif __printed.strip() != "" and __g is None and __exp is not None:
-                __tip = "Use return to give back the value — not print(). The checker reads what you RETURN."
+            # prominent callout. Only nudge about STYLE when the learner used the
+            # WRONG style for this lesson — never when they used the right style but
+            # got the content wrong (the "it gave X, should give Y" line covers that).
+            if __io_mode == "print":
+                # Print lesson: only nudge if they returned a value and printed NOTHING.
+                if __printed.strip() == "" and __g is not None:
+                    __tip = "This lesson wants you to PRINT the answer with print(…), not return it."
+            elif __io_mode == "return":
+                # Return lesson: only nudge if they printed but returned None.
+                if __printed.strip() != "" and __g is None and __exp is not None:
+                    __tip = "Use return to give back the value — not print(). The checker reads what you RETURN."
     except Exception as __e:
         __res.append(False)
         if __first_fail is None:
