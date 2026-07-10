@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useSyncExternalStore } from "react"
 // Build marker — check this in the browser console to confirm which version is
 // actually running: type  window.__CQ_VERSION  in DevTools. If it's not the
 // value below, your browser/Vercel is serving an older bundle.
-const CQ_VERSION = "2026-07-08-v10-header-version";
+const CQ_VERSION = "2026-07-08-v11-4space-indent";
 if (typeof window !== "undefined") {
   window.__CQ_VERSION = CQ_VERSION;
   try { console.log("%cCodeQuest build: " + CQ_VERSION, "color:#6366f1;font-weight:bold"); } catch {}
@@ -3090,12 +3090,15 @@ function makeCodeKeyDown(value, setValue) {
     if (e.key === "Tab") {
       e.preventDefault();
       if (e.shiftKey) {
+        // Dedent: remove up to 4 leading spaces (one Python indent level).
         const lineStart = cur.lastIndexOf("\n", s - 1) + 1;
         const lead = cur.slice(lineStart, s);
-        const remove = lead.endsWith("  ") ? 2 : lead.endsWith(" ") ? 1 : 0;
+        let remove = 0;
+        while (remove < 4 && lead.endsWith(" ".repeat(remove + 1))) remove++;
         if (remove) apply(cur.slice(0, s - remove) + cur.slice(s), s - remove);
       } else {
-        apply(cur.slice(0, s) + "  " + cur.slice(eend), s + 2);
+        // Indent by 4 spaces (Python standard, matches the AI's starter code).
+        apply(cur.slice(0, s) + "    " + cur.slice(eend), s + 4);
       }
       return;
     }
@@ -3105,7 +3108,8 @@ function makeCodeKeyDown(value, setValue) {
       const line = cur.slice(lineStart, s);
       const indentMatch = line.match(/^[ \t]*/);
       let indent = indentMatch ? indentMatch[0] : "";
-      if (/:\s*$/.test(line)) indent += "  ";
+      // One extra level (4 spaces) after a block opener ending in ":".
+      if (/:\s*$/.test(line)) indent += "    ";
       const insert = "\n" + indent;
       apply(cur.slice(0, s) + insert + cur.slice(eend), s + insert.length);
       return;
