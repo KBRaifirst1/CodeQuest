@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useSyncExternalStore } from "react"
 // Build marker — check this in the browser console to confirm which version is
 // actually running: type  window.__CQ_VERSION  in DevTools. If it's not the
 // value below, your browser/Vercel is serving an older bundle.
-const CQ_VERSION = "2026-07-08-v11-4space-indent";
+const CQ_VERSION = "2026-07-08-v12-print-lesson";
 if (typeof window !== "undefined") {
   window.__CQ_VERSION = CQ_VERSION;
   try { console.log("%cCodeQuest build: " + CQ_VERSION, "color:#6366f1;font-weight:bold"); } catch {}
@@ -270,6 +270,14 @@ const PY_STEPS = [
     example: "for i in range(4):\n    t.forward(100)\n    t.right(90)   # draws a square",
     starter: "import turtle\nt = turtle.Turtle()\n\n# draw a square: go forward, turn right, 4 times\nfor i in range(4):\n    t.forward(120)\n    t.right(90)\n",
     why: "🎉 Same language, a totally different way to draw — and it showed your square!" },
+  { type: "type", chapter: "5 · Printing", lang: "py", title: "Print a greeting",
+    teach: "Some functions RETURN a value; others PRINT it to the screen with print(). This one is about printing. Use print() to show the text — you don't return it.",
+    example: 'print("Hello!")   # shows: Hello!',
+    intro: "Write a function that PRINTS a greeting (don't return it).",
+    starter: 'def greet(name):\n    # Use print() to print: Hi, <name>!\n    # For example greet("Sam") should print: Hi, Sam!\n    pass',
+    fnName: "greet", io: "print",
+    tests: [{ args: ["Sam"], expected: "Hi, Sam!" }, { args: ["Alex"], expected: "Hi, Alex!" }],
+    why: "🎉 You printed it! Notice you used print(), not return — that's the difference this lesson teaches." },
 ];
 
 // ---------- AI lesson generation (typing-style, validated) ----------
@@ -852,7 +860,7 @@ const topicSystemFor = (langLabel, runnable, count = null) =>
   "\"teach\":string (2-3 plain sentences that EXPLAIN the new concept clearly, as if to a beginner who has never seen it; may use `inline code`), " +
   "\"example\":string (a short worked example line or two showing the idea in " + langLabel + ", e.g. an input and what it produces), " +
   "\"fnName\":string (camelCase), " +
-  "\"io\":string — either \"return\" or \"print\". Use \"return\" for lessons where the function RETURNS a value (most lessons), and \"print\" for lessons that TEACH printing, where the function PRINTS its output. Mix both styles across a set so learners practice each. " +
+  "\"io\":string — either \"return\" or \"print\". Use \"return\" for lessons where the function RETURNS a value, and \"print\" for lessons that TEACH printing, where the function PRINTS its output. IMPORTANT: if this set has 3 or more lessons, AT LEAST ONE must be a \"print\" lesson (and at least one \"return\"), so learners practice both. For a 2-lesson set, make one of each. Never make them all the same io style. " +
   "\"starter\":string (a " + langLabel + " skeleton with the right name, empty body, a comment — NOT a solution), " +
   "\"solution\":string (complete correct " + langLabel + " code), " +
   "\"tests\":array of >=2 {\"args\":array,\"expected\":any}} ] }. " +
