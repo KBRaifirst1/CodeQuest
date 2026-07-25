@@ -3,10 +3,10 @@ import React, { useState, useEffect, useRef, useMemo, useSyncExternalStore } fro
 // Build marker — check this in the browser console to confirm which version is
 // actually running: type  window.__CQ_VERSION  in DevTools. If it's not the
 // value below, your browser/Vercel is serving an older bundle.
-const CQ_VERSION = "2026-07-12-v44-java-lessons";
+const CQ_VERSION = "2026-07-12-v63-palette-consistency";
 if (typeof window !== "undefined") {
   window.__CQ_VERSION = CQ_VERSION;
-  try { console.log("%cCodeQuest build: " + CQ_VERSION, "color:#6366f1;font-weight:bold"); } catch {}
+  try { console.log("%cCodeQuest build: " + CQ_VERSION, "color:#3ac9e0;font-weight:bold"); } catch {}
 }
 
 // CODEQUEST_VERSION_MARKER: TABS_AND_HERO_V1
@@ -94,6 +94,58 @@ async function verifySQL(code, seed, expected) {
     }
     return { ok: true };
   } finally { try { db.close(); } catch {} }
+}
+// Real lesson checker for C/C++ via Wasmer's in-browser clang. Wraps the learner's
+// function in a harness with a main() that calls it for each test and prints
+// "CQ<i>:<result>", compiles+runs, parses output. Harness + parsing proven correct
+// against real gcc/g++; only the clang execution layer is browser-only.
+// Real lesson checker for PHP via php-wasm. Same harness pattern (proven vs real php).
+async function verifyPHP(code, fnName, tests) {
+  if (typeof window === "undefined") return { ok: false, why: "PHP needs a browser", engineError: true };
+  if (!code.trim()) return { ok: false, why: "write some code first" };
+  const argLit = (a) => (typeof a === "string" ? '"' + String(a).replace(/"/g, '\\"') + '"' : String(a));
+  const src = /^<\?php/.test(code.trim()) ? code : "<?php\n" + code;
+  const calls = tests.map((t, i) => `echo "CQ${i}:" . ${fnName}(${t.args.map(argLit).join(", ")}) . "\\n";`).join("\n");
+  const harness = src + "\n" + calls;
+  let r;
+  try { r = await runProjectPHP(harness); }
+  catch (e) { return { ok: false, why: "PHP error: " + (e && e.message ? e.message.slice(0, 60) : e), engineError: true }; }
+  if (!r.ok) return { ok: false, why: "it hit an error: " + (r.error || "").slice(0, 100) };
+  const lines = (r.output || "").split("\n");
+  for (let i = 0; i < tests.length; i++) {
+    const line = lines.find((l) => l.startsWith("CQ" + i + ":"));
+    const got = line ? line.slice(("CQ" + i + ":").length).trim() : "";
+    if (String(got) !== String(tests[i].expected))
+      return { ok: false, why: `with ${tests[i].args.join(", ")} it gave ${got || "(nothing)"}, but should give ${tests[i].expected}` };
+  }
+  return { ok: true };
+}
+async function verifyCFamily(code, fnName, tests, isCpp) {
+  if (typeof window === "undefined") return { ok: false, why: "C/C++ needs a browser", engineError: true };
+  if (!code.trim()) return { ok: false, why: "write some code first" };
+  const argLit = (a) => (typeof a === "string" ? '"' + String(a).replace(/"/g, '\\"') + '"' : String(a));
+  const calls = tests.map((t, i) => {
+    const args = t.args.map(argLit).join(", ");
+    const isStr = typeof t.expected === "string";
+    if (isCpp) return `std::cout << "CQ${i}:" << ${fnName}(${args}) << std::endl;`;
+    return isStr ? `printf("CQ${i}:%s\\n", ${fnName}(${args}));` : `printf("CQ${i}:%d\\n", ${fnName}(${args}));`;
+  }).join("\n  ");
+  const harness = isCpp
+    ? `#include <iostream>\n#include <string>\nusing namespace std;\n${code}\nint main(){\n  ${calls}\n  return 0;\n}`
+    : `#include <stdio.h>\n#include <string.h>\n${code}\nint main(){\n  ${calls}\n  return 0;\n}`;
+  let r;
+  try { r = await runProjectCFamily(harness, isCpp); }
+  catch (e) { return { ok: false, why: "C/C++ error: " + (e && e.message ? e.message.slice(0, 60) : e), engineError: true }; }
+  if (r.setupNeeded) return { ok: false, why: r.error, engineError: true };
+  if (!r.ok) return { ok: false, why: "it didn't compile or run: " + (r.error || "").slice(0, 100) };
+  const lines = (r.output || "").split("\n");
+  for (let i = 0; i < tests.length; i++) {
+    const line = lines.find((l) => l.startsWith("CQ" + i + ":"));
+    const got = line ? line.slice(("CQ" + i + ":").length).trim() : "";
+    if (String(got) !== String(tests[i].expected))
+      return { ok: false, why: `with ${tests[i].args.join(", ")} it gave ${got || "(nothing)"}, but should give ${tests[i].expected}` };
+  }
+  return { ok: true };
 }
 async function verifyJava(code, fnName, tests, consoleEl, displayEl) {
   if (typeof window === "undefined") return { ok: false, why: "Java needs a browser", engineError: true };
@@ -255,7 +307,7 @@ const JS_STEPS = [
     teach: "JavaScript can draw right in the page using a canvas. You grab the canvas, get its “drawing tool” (context), pick a color, and draw a shape. Write it, then tap Run visually.",
     example: "ctx.fillStyle = 'red';\nctx.fillRect(50, 50, 100, 100); // a red square",
     starter: "const canvas = document.getElementById('c');\nconst ctx = canvas.getContext('2d');\n\n// draw a blue circle in the middle:\nctx.fillStyle = 'deepskyblue';\nctx.beginPath();\nctx.arc(200, 200, 60, 0, Math.PI * 2);\nctx.fill();\n",
-    why: "🎉 You drew with real JavaScript — that's exactly how web games and animations start!" },
+    why: "You drew with real JavaScript — that's exactly how web games and animations start!" },
   { type: "read", chapter: "1 · Just looking", title: "What a line of code looks like", concept: "a coding concept",
     intro: "Before writing anything, let's just LOOK. Tap each colored piece to see what it means in plain English.",
     line: [
@@ -280,7 +332,7 @@ const JS_STEPS = [
   { type: "pick", chapter: "2 · Choosing", title: "Which line says hello?", concept: "showing text output",
     intro: "Now YOU choose — no writing, just pick the line that shows the word Hello.",
     goal: "Show the word: Hello", choices: ['add(2, 3)', 'say("Hello")', 'price * 2'], correctIndex: 1,
-    why: "Right! `say(\"Hello\")` shows the message. The quotes mark it as words.",
+    why: "Correct. `say(\"Hello\")` shows the message. The quotes mark it as words.",
     harder: { type: "pick", chapter: "2 · Choosing (harder)", title: "Which shows Hello three times?", concept: "showing text output",
       intro: "Read each carefully. Which one shows Hello three times?",
       goal: "Show: Hello Hello Hello", choices: ['say("Hello") * 3', 'say("Hello Hello Hello")', 'add("Hello", 3)'], correctIndex: 1,
@@ -288,7 +340,7 @@ const JS_STEPS = [
   { type: "pick", chapter: "2 · Choosing", title: "Which line adds 5 and 4?", concept: "adding numbers",
     intro: "Pick the line that adds the numbers 5 and 4.",
     goal: "Add the numbers 5 and 4", choices: ['say("5 and 4")', 'add(5, 4)', 'add("5", "4")'], correctIndex: 1,
-    why: "Yes! Real numbers, no quotes — so the computer adds them." },
+    why: "Correct. Real numbers, no quotes — so the computer adds them." },
 
   { type: "build", chapter: "3 · Building (no typing!)", title: "Build a line that shows a name", concept: "showing text output",
     intro: "Tap the pieces in the right order to show the word Mia. Tap a placed piece to remove it.",
@@ -325,11 +377,11 @@ const JS_STEPS = [
   { type: "type", chapter: "5 · Now you type", title: "Type it yourself", concept: "a coding concept",
     intro: "You've read it, picked it, built it, filled it. You KNOW this. Type the number that doubles n.",
     starter: "function double(n) {\n  return n * \n}", fnName: "double", tests: [{ args: [5], expected: 10 }, { args: [3], expected: 6 }],
-    why: "🎉 You TYPED working code and it ran. Read it, understand it, write it — you're coding.",
+    why: "You TYPED working code and it ran. Read it, understand it, write it — you're coding.",
     harder: { type: "type", chapter: "5 · Now you type (harder)", title: "Type a tripler from scratch", concept: "tripling a number",
       intro: "Type the whole return line to TRIPLE the number. You've seen the shape: `return n * 3`.",
       starter: "function triple(n) {\n  \n}", fnName: "triple", tests: [{ args: [5], expected: 15 }, { args: [3], expected: 9 }],
-      why: "🚀 You wrote a whole line on your own. That's writing code." } },
+      why: "You wrote a whole line on your own. That's writing code." } },
 ];
 
 // ---------- Python course (mirrors the arc, Python syntax) ----------
@@ -346,7 +398,7 @@ const PY_STEPS = [
   { type: "pick", chapter: "2 · Choosing", title: "Which Python line shows Hi?",
     intro: "Pick the line that shows the word Hi in Python.",
     goal: "Show the word: Hi", choices: ['say("Hi")', 'print("Hi")', 'print(Hi)'], correctIndex: 1,
-    why: "Yes! Python uses `print`, and `\"Hi\"` needs quotes since it's words." },
+    why: "Correct. Python uses `print`, and `\"Hi\"` needs quotes since it's words." },
   { type: "fill", chapter: "3 · One piece missing", title: "Finish the Python doubler",
     intro: "Python functions use `def`. Tap the piece that doubles n.",
     preface: "def double(n):", lineBefore: "    return n *", blankChoices: ["1", "2", "n"], answer: "2", suffix: "",
@@ -356,12 +408,12 @@ const PY_STEPS = [
     teach: "Pygame is how Python draws graphics. You make a window, then draw shapes on it. Here you'll draw a red circle — write it, then tap Run visually and watch it appear.",
     example: "pygame.draw.circle(screen, (255,0,0), (200,200), 40)\n# draws a red circle at the middle",
     starter: "import pygame\npygame.init()\nscreen = pygame.display.set_mode((400, 400))\nscreen.fill((14, 19, 32))\n\n# draw a red circle in the middle:\npygame.draw.circle(screen, (255, 0, 0), (200, 200), 40)\n\npygame.display.flip()\n",
-    why: "🎉 You wrote Pygame and it drew your circle! That's real graphics code." },
+    why: "You wrote Pygame and it drew your circle! That's real graphics code." },
   { type: "visual", chapter: "4 · Make something move", lang: "py", title: "Draw a square with turtle",
     teach: "Turtle is another Python way to draw — you steer a little 'turtle' that leaves a trail. Move forward, turn, repeat. It's a fun way to make shapes. Write it, then tap Run visually.",
     example: "for i in range(4):\n    t.forward(100)\n    t.right(90)   # draws a square",
     starter: "import turtle\nt = turtle.Turtle()\n\n# draw a square: go forward, turn right, 4 times\nfor i in range(4):\n    t.forward(120)\n    t.right(90)\n",
-    why: "🎉 Same language, a totally different way to draw — and it showed your square!" },
+    why: "Same language, a totally different way to draw — and it showed your square!" },
   { type: "type", chapter: "5 · Printing", lang: "py", title: "Print a greeting",
     teach: "Some functions RETURN a value; others PRINT it to the screen with print(). This one is about printing. Use print() to show the text — you don't return it.",
     example: 'print("Hello!")   # shows: Hello!',
@@ -369,7 +421,7 @@ const PY_STEPS = [
     starter: 'def greet(name):\n    # Use print() to print: Hi, <name>!\n    # For example greet("Sam") should print: Hi, Sam!\n    pass',
     fnName: "greet", io: "print",
     tests: [{ args: ["Sam"], expected: "Hi, Sam!" }, { args: ["Alex"], expected: "Hi, Alex!" }],
-    why: "🎉 You printed it! Notice you used print(), not return — that's the difference this lesson teaches." },
+    why: "You printed it! Notice you used print(), not return — that's the difference this lesson teaches." },
 ];
 
 // ---------- AI lesson generation (typing-style, validated) ----------
@@ -752,7 +804,7 @@ function canvasSandboxHTML(jsCode) {
   // fills the screen, etc.) paint over the white on their first draw, so they're
   // unaffected. We also pre-fill white before running, so code that draws
   // nothing (or errors early) shows a blank white canvas, never a black void.
-  return `<!doctype html><html><head><style>html,body{margin:0;height:100%;background:#0e1320;display:flex;align-items:center;justify-content:center}canvas{background:#fff;border-radius:8px;max-width:100%}</style></head>
+  return `<!doctype html><html><head><style>html,body{margin:0;height:100%;background:#070a12;display:flex;align-items:center;justify-content:center}canvas{background:#fff;border-radius:8px;max-width:100%}</style></head>
 <body><canvas id="c" width="400" height="400"></canvas>
 <script>
 (function(){ var _c = document.getElementById('c').getContext('2d'); _c.fillStyle = '#ffffff'; _c.fillRect(0,0,400,400); })();
@@ -760,7 +812,7 @@ try {
 ${safe}
 } catch (e) {
   var ctx = document.getElementById('c').getContext('2d');
-  ctx.fillStyle = '#0e1320'; ctx.fillRect(0,0,400,400);
+  ctx.fillStyle = '#070a12'; ctx.fillRect(0,0,400,400);
   ctx.fillStyle = '#ff8aa3'; ctx.font = '13px monospace';
   ctx.fillText('Could not run this visual:', 12, 28);
   ctx.fillText(String(e.message).slice(0,44), 12, 50);
@@ -799,10 +851,10 @@ ${head}</head><body>${body}</body></html>`;
       `<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>`,
       `<div id="err"></div>
 <script>
-window.onerror = function(m){ document.getElementById('err').innerHTML = '<pre style="color:#c0392b;white-space:pre-wrap">'+String(m)+'</pre>'; };
+window.onerror = function(m){ document.getElementById('err').innerHTML = '<pre style="color:#ff6ba8;white-space:pre-wrap">'+String(m)+'</pre>'; };
 try {
 ${escScript(raw)}
-} catch(e){ document.getElementById('err').innerHTML = '<pre style="color:#c0392b;white-space:pre-wrap">'+String(e && e.message || e)+'</pre>'; }
+} catch(e){ document.getElementById('err').innerHTML = '<pre style="color:#ff6ba8;white-space:pre-wrap">'+String(e && e.message || e)+'</pre>'; }
 </` + `script>`);
   }
   if (kind === "jsx") {
@@ -814,7 +866,7 @@ ${escScript(raw)}
 <script type="text/babel" data-presets="react">
 try {
 ${escScript(raw)}
-} catch(e){ document.getElementById('root').innerHTML = '<pre style="color:#c0392b;white-space:pre-wrap">'+String(e && e.message || e)+'</pre>'; }
+} catch(e){ document.getElementById('root').innerHTML = '<pre style="color:#ff6ba8;white-space:pre-wrap">'+String(e && e.message || e)+'</pre>'; }
 </` + `script>`);
   }
   if (kind === "vue") {
@@ -824,7 +876,7 @@ ${escScript(raw)}
 <script>
 try {
 ${escScript(raw)}
-} catch(e){ document.getElementById('app').innerHTML = '<pre style="color:#c0392b;white-space:pre-wrap">'+String(e && e.message || e)+'</pre>'; }
+} catch(e){ document.getElementById('app').innerHTML = '<pre style="color:#ff6ba8;white-space:pre-wrap">'+String(e && e.message || e)+'</pre>'; }
 </` + `script>`);
   }
   if (kind === "svelte") {
@@ -837,7 +889,7 @@ try {
   var __c = svelte.compile(__src, { format: 'iife', name: 'App' });
   var __App = new Function(__c.js.code + '; return App;')();
   new __App({ target: document.getElementById('app') });
-} catch(e){ document.getElementById('app').innerHTML = '<pre style="color:#c0392b;white-space:pre-wrap">'+String(e && e.message || e)+'</pre>'; }
+} catch(e){ document.getElementById('app').innerHTML = '<pre style="color:#ff6ba8;white-space:pre-wrap">'+String(e && e.message || e)+'</pre>'; }
 </` + `script>`);
   }
   return shell("", raw);
@@ -863,15 +915,15 @@ function markupProjectHTML(files) {
   let script = "";
   if (p5File) {
     head += `\n<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>`;
-    script = `<script>\ntry {\n${escScript(p5File.code)}\n} catch(e){ document.body.insertAdjacentHTML('beforeend','<pre style=\\"color:#c0392b\\">'+String(e&&e.message||e)+'</pre>'); }\n</` + `script>`;
+    script = `<script>\ntry {\n${escScript(p5File.code)}\n} catch(e){ document.body.insertAdjacentHTML('beforeend','<pre style=\\"color:#ff6ba8\\">'+String(e&&e.message||e)+'</pre>'); }\n</` + `script>`;
   } else if (jsFile && /\.jsx$/i.test(jsFile.name)) {
     head += `\n<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>\n<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>\n<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>`;
-    script = `<script type="text/babel" data-presets="react">\ntry {\n${escScript(jsFile.code)}\n} catch(e){ document.body.insertAdjacentHTML('beforeend','<pre style=\\"color:#c0392b\\">'+String(e&&e.message||e)+'</pre>'); }\n</` + `script>`;
+    script = `<script type="text/babel" data-presets="react">\ntry {\n${escScript(jsFile.code)}\n} catch(e){ document.body.insertAdjacentHTML('beforeend','<pre style=\\"color:#ff6ba8\\">'+String(e&&e.message||e)+'</pre>'); }\n</` + `script>`;
   } else if (jsFile && /\.ts$/i.test(jsFile.name)) {
     head += `\n<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>`;
-    script = `<script>\ntry {\n  var __js = Babel.transform(${JSON.stringify(jsFile.code || "")}, { presets: ['typescript'], filename: 'main.ts' }).code;\n  (new Function(__js))();\n} catch(e){ document.body.insertAdjacentHTML('beforeend','<pre style=\\"color:#c0392b\\">'+String(e&&e.message||e)+'</pre>'); }\n</` + `script>`;
+    script = `<script>\ntry {\n  var __js = Babel.transform(${JSON.stringify(jsFile.code || "")}, { presets: ['typescript'], filename: 'main.ts' }).code;\n  (new Function(__js))();\n} catch(e){ document.body.insertAdjacentHTML('beforeend','<pre style=\\"color:#ff6ba8\\">'+String(e&&e.message||e)+'</pre>'); }\n</` + `script>`;
   } else if (jsFile) {
-    script = `<script>\ntry {\n${escScript(jsFile.code)}\n} catch(e){ document.body.insertAdjacentHTML('beforeend','<pre style=\\"color:#c0392b\\">'+String(e&&e.message||e)+'</pre>'); }\n</` + `script>`;
+    script = `<script>\ntry {\n${escScript(jsFile.code)}\n} catch(e){ document.body.insertAdjacentHTML('beforeend','<pre style=\\"color:#ff6ba8\\">'+String(e&&e.message||e)+'</pre>'); }\n</` + `script>`;
   }
   return `<!doctype html><html><head><meta charset="utf-8">
 <style>html,body{margin:0;padding:16px;font-family:system-ui,-apple-system,sans-serif;background:#fff;color:#111;line-height:1.5}</style>
@@ -1244,7 +1296,7 @@ async function generateTopicBatch({ classId, langLabel, priorTopics, customTopic
   catch (e) { throw new Error("ai-failed: " + (e?.message || "unknown")); }
   let parsed; try { parsed = extractJSON(raw); } catch (e) { throw new Error("bad-json: " + (e?.message || "parse failed")); }
   const topic = fixedTopic || (parsed.topic || "More practice").toString().slice(0, 40);
-  const chapter = `✨ ${topic}`;
+  const chapter = `${topic}`;
   const rawLessons = Array.isArray(parsed.lessons) ? parsed.lessons.slice(0, 12) : [];
   const out = [];
   // Normalize a concept tag so synonyms and formatting variants match the same
@@ -1310,7 +1362,7 @@ async function generateTopicBatch({ classId, langLabel, priorTopics, customTopic
       title: L.title || "Lesson", teach: L.teach || "", example: L.example || "", concept: thisConcept,
       intro: L.teach || "Type the function so the tests pass.",
       starter: L.starter || `function ${L.fnName}() {\n  \n}`, fnName: L.fnName, tests: L.tests, io: L.io === "print" ? "print" : "return",
-      why: "🎉 You solved it — and it ran for real.",
+      why: "You solved it — and it ran for real.",
     });
   }
   return { topic, chapter, lessons: out };
@@ -1428,6 +1480,12 @@ async function validateLesson(L, classId) {
     // solution offline during generation — accept it; the harness + runtime
     // check happens live when the learner runs it.
     return { ok: true };
+  } else if (classId === "c" || classId === "cpp") {
+    // C/C++ compile only in the browser (Wasmer clang), so accept during
+    // generation — the harness + runtime check happens live when the learner runs.
+    return { ok: true };
+  } else if (classId === "php") {
+    return { ok: true }; // php-wasm runs in-browser only; live check when learner runs
   } else if (classId === "py") {
     const v = await verifyPython(L.solution, L.fnName, L.tests, L.io);
     if (!v.ok) return { ok: false, reason: "author solution fails its own tests" };
@@ -2298,15 +2356,15 @@ const LANGUAGE_CATALOG = [
   { id: "vue", label: "Vue", emoji: "💚", mode: "markup", blurb: "A friendly framework for building web interfaces." },
   { id: "svelte", label: "Svelte", emoji: "🧡", mode: "markup", blurb: "Write less code — a fresh take on building web UIs." },
   { id: "java", label: "Java", emoji: "☕", mode: "real", blurb: "Powers big apps and Android." },
-  { id: "cpp", label: "C++", emoji: "⚙️", mode: "ai", blurb: "Fast and powerful, used in games and systems." },
-  { id: "c", label: "C", emoji: "🔧", mode: "ai", blurb: "The classic low-level language behind everything." },
+  { id: "cpp", label: "C++", emoji: "⚙️", mode: "real", blurb: "Fast and powerful, used in games and systems." },
+  { id: "c", label: "C", emoji: "🔧", mode: "real", blurb: "The classic low-level language behind everything." },
   { id: "csharp", label: "C#", emoji: "🎯", mode: "ai", blurb: "Microsoft's language for apps and Unity games." },
   { id: "go", label: "Go", emoji: "🐹", mode: "ai", blurb: "Simple and fast, built by Google for servers." },
   { id: "rust", label: "Rust", emoji: "🦀", mode: "ai", blurb: "Memory-safe and fast — loved by developers." },
   { id: "ruby", label: "Ruby", emoji: "💎", mode: "ai", blurb: "Elegant and friendly, famous for web apps." },
   { id: "swift", label: "Swift", emoji: "🕊️", mode: "ai", blurb: "Apple's language for iPhone and Mac apps." },
   { id: "kotlin", label: "Kotlin", emoji: "🟣", mode: "ai", blurb: "A modern, cleaner way to build Android apps." },
-  { id: "php", label: "PHP", emoji: "🐘", mode: "ai", blurb: "Runs a huge share of the web's back-ends." },
+  { id: "php", label: "PHP", emoji: "🐘", mode: "real", blurb: "Runs a huge share of the web's back-ends." },
   { id: "sql", label: "SQL", emoji: "🗃️", mode: "sql", blurb: "How you ask questions of databases." },
   { id: "r", label: "R", emoji: "📊", mode: "ai", blurb: "Built for statistics and data analysis." },
   { id: "dart", label: "Dart", emoji: "🎯", mode: "ai", blurb: "Powers Flutter apps for phones and web." },
@@ -2391,7 +2449,7 @@ async function generateGeneralLessons(progressMap, signal, { customTopic = null,
       const valid = L.correct.length === L.items.length && [...L.correct].sort((a, b) => a - b).every((v, i) => v === i);
       if (!valid) continue;
     }
-    out.push({ ...L, id: "gg_" + Math.random().toString(36).slice(2, 7), chapter: "✨ More brain-training", generated: true });
+    out.push({ ...L, id: "gg_" + Math.random().toString(36).slice(2, 7), chapter: "More brain-training", generated: true });
   }
   if (out.length === 0) throw new Error("none-valid");
   return out;
@@ -2437,7 +2495,7 @@ async function generateConceptLessons(section, { customTopic = null, count = nul
   let parsed; try { parsed = extractJSON(raw); } catch (e) { throw new Error("bad-json: " + (e?.message || "parse failed")); }
   const lessons = Array.isArray(parsed.lessons) ? parsed.lessons : [];
   const out = [];
-  const chapter = customTopic ? `✨ ${customTopic}` : "✨ More to explore";
+  const chapter = customTopic ? `${customTopic}` : "More to explore";
   for (const L of lessons) {
     if (!L || !L.title || !L.intro || !L.q || !L.why) continue;
     if (!Array.isArray(L.choices) || L.choices.length < 2) continue;
@@ -2471,23 +2529,23 @@ async function generateCourse(classId, progressMap, signal) {
       if (!L.title || !L.seed || !L.solution || !Array.isArray(L.expected)) continue;
       const check = await verifySQL(L.solution, L.seed, L.expected);
       if (!check.engineError && !check.ok) continue; // skip lessons whose own solution fails
-      out.push({ id: "g_" + Math.random().toString(36).slice(2, 7), type: "sqlquery", chapter: `✨ ${cfg.label} course`, generated: true,
+      out.push({ id: "g_" + Math.random().toString(36).slice(2, 7), type: "sqlquery", chapter: `${cfg.label} course`, generated: true,
         title: L.title, teach: L.teach || "", example: L.example || "", concept: L.concept || L.title,
         schema: L.schema || "", seed: L.seed, starter: L.starter || "SELECT ", expected: L.expected, lang: "sql",
-        why: "🎉 That query ran on a real database — correct!" });
+        why: "That query ran on a real database — correct!" });
       continue;
     }
     if (cfg.mode === "real") {
       const check = await validateLesson(L, classId);
       if (!check.ok) continue;
-      out.push({ id: "g_" + Math.random().toString(36).slice(2, 7), type: "type", chapter: `✨ ${cfg.label} course`, generated: true,
+      out.push({ id: "g_" + Math.random().toString(36).slice(2, 7), type: "type", chapter: `${cfg.label} course`, generated: true,
         title: L.title || "Lesson", intro: L.teach || "Solve it so the tests pass.", concept: L.concept || L.title,
         teach: L.teach || "", example: L.example || "",
         starter: L.starter || `// write ${L.fnName}\n`, fnName: L.fnName, tests: L.tests, lang: classId, io: L.io === "print" ? "print" : "return",
-        why: "🎉 Solved — and it ran for real." });
+        why: "Solved — and it ran for real." });
     } else {
       if (!L.title || !Array.isArray(L.checks) || L.checks.length < 2) continue;
-      out.push({ id: "g_" + Math.random().toString(36).slice(2, 7), type: "aitype", chapter: `✨ ${cfg.label} course`, generated: true, aiJudged: true,
+      out.push({ id: "g_" + Math.random().toString(36).slice(2, 7), type: "aitype", chapter: `${cfg.label} course`, generated: true, aiJudged: true,
         title: L.title, intro: L.teach || "", concept: L.concept || L.title, teach: L.teach || "", example: L.example || "",
         starter: L.starter || "", checks: L.checks, lang: classId, langLabel: cfg.label,
         why: "✓ Nice work on this one." });
@@ -2725,7 +2783,7 @@ async function generateConceptPack({ concept, project, learnedConcepts = [], sig
         type: "type", lang: project.lang, title: L.title, teach: L.teach, example: L.example || "",
         intro: "Try it 👇", starter: L.starter || "", fnName: L.fnName, tests: L.tests,
         io: L.io === "print" ? "print" : "return", concept,
-        why: "🎉 Nice — that's " + concept + " working for real.",
+        why: "Nice — that's " + concept + " working for real.",
       });
     } else {
       out.push({ type: "read", lang: project.lang, title: L.title, teach: L.teach, example: L.example || "", task: L.task || "", starter: L.starter || "", concept });
@@ -2797,13 +2855,13 @@ const JAVA_STEPS = [
     example: 'System.out.println("Hi"); // prints Hi',
     starter: 'public class Main {\n  public static void main(String[] args) {\n    // print Hello, CodeQuest!\n    \n  }\n}',
     expectedOutput: "Hello, CodeQuest!",
-    why: "🎉 That's what your Java code would print — the shape is real Java syntax." },
+    why: "That's what your Java code would print — the shape is real Java syntax." },
   { type: "airun", lang: "java", langLabel: "Java", chapter: "1 · Write Java", title: "Add two numbers",
     teach: "You can print the result of math. Print the sum of 7 and 5 (it should show 12).",
     example: "System.out.println(2 + 3); // prints 5",
     starter: 'public class Main {\n  public static void main(String[] args) {\n    // print 7 + 5\n    \n  }\n}',
     expectedOutput: "12",
-    why: "🎉 Java math printed out — nicely done." },
+    why: "Java math printed out — nicely done." },
 ];
 const CPP_STEPS = [
   { type: "airun", lang: "cpp", langLabel: "C++", chapter: "1 · Write C++", title: "Print a greeting",
@@ -2811,7 +2869,7 @@ const CPP_STEPS = [
     example: 'std::cout << "Hi" << std::endl;',
     starter: '#include <iostream>\nint main() {\n  // print Hello, CodeQuest!\n  \n  return 0;\n}',
     expectedOutput: "Hello, CodeQuest!",
-    why: "🎉 That's what your C++ code would print — real C++ syntax." },
+    why: "That's what your C++ code would print — real C++ syntax." },
 ];
 const HAND_BUILT = { general: GENERAL_STEPS, js: JS_STEPS, py: PY_STEPS, java: JAVA_STEPS, cpp: CPP_STEPS };
 
@@ -2822,49 +2880,49 @@ const HAND_BUILT = { general: GENERAL_STEPS, js: JS_STEPS, py: PY_STEPS, java: J
 // without real graphics (SQL, Bash, Assembly, COBOL, Prolog, Solidity) are
 // intentionally absent — a "draw a shape" lesson there would be fake.
 const VISUAL_STARTERS = {
-  js: {"lib":"HTML5 canvas","title":"Draw with canvas","teach":"In the browser, JavaScript draws on a <canvas>. You grab its 2D context and call drawing commands. Draw a blue square — write it, then Run visually.","example":"ctx.fillStyle = \"blue\";\nctx.fillRect(120, 120, 160, 160);","starter":"const ctx = document.getElementById(\"c\").getContext(\"2d\");\nctx.fillStyle = \"blue\";\nctx.fillRect(120, 120, 160, 160);\n","why":"🎉 That's real canvas drawing — the same API real web games use!"},
-  ts: {"lib":"HTML5 canvas","title":"Draw with canvas","teach":"TypeScript draws on a browser <canvas> just like JavaScript, with types added. Grab the 2D context and draw. Make a blue square, then Run visually.","example":"ctx.fillStyle = \"blue\";\nctx.fillRect(120, 120, 160, 160);","starter":"const ctx = (document.getElementById(\"c\") as HTMLCanvasElement).getContext(\"2d\")!;\nctx.fillStyle = \"blue\";\nctx.fillRect(120, 120, 160, 160);\n","why":"🎉 Typed canvas drawing — real graphics with type safety!"},
-  py: {"lib":"turtle","title":"Draw a square with turtle","teach":"Turtle lets you steer a little pen that leaves a trail. Move forward, turn, repeat. Draw a square, then Run visually.","example":"for i in range(4):\n    t.forward(100)\n    t.right(90)","starter":"import turtle\nt = turtle.Turtle()\n\nfor i in range(4):\n    t.forward(120)\n    t.right(90)\n","why":"🎉 Your turtle drew a square!"},
-  java: {"lib":"Swing/Graphics2D","title":"Draw with Java graphics","teach":"Java draws with Graphics2D inside a JPanel. You get a graphics object g and call fill/draw methods. Draw a blue square, then Run visually.","example":"g.setColor(Color.BLUE);\ng.fillRect(120, 120, 160, 160);","starter":"import java.awt.*;\nimport javax.swing.*;\n\npublic class Draw extends JPanel {\n    public void paintComponent(Graphics g) {\n        g.setColor(Color.BLUE);\n        g.fillRect(120, 120, 160, 160);\n    }\n}\n","why":"🎉 Real Java graphics — that's how Swing apps draw!"},
-  cpp: {"lib":"SFML","title":"Draw with SFML","teach":"C++ often uses SFML for graphics. You create a shape, set its color and position, then draw it to a window. Draw a blue square, then Run visually.","example":"sf::RectangleShape sq({160, 160});\nsq.setFillColor(sf::Color::Blue);","starter":"#include <SFML/Graphics.hpp>\n\nint main() {\n    sf::RenderWindow window(sf::VideoMode(400, 400), \"Draw\");\n    sf::RectangleShape square({160.f, 160.f});\n    square.setPosition(120.f, 120.f);\n    square.setFillColor(sf::Color::Blue);\n    window.draw(square);\n    return 0;\n}\n","why":"🎉 That's SFML — real C++ game graphics!"},
-  c: {"lib":"raylib","title":"Draw with raylib","teach":"C uses raylib for simple graphics. You open a window and call draw functions between BeginDrawing and EndDrawing. Draw a blue square, then Run visually.","example":"DrawRectangle(120, 120, 160, 160, BLUE);","starter":"#include \"raylib.h\"\n\nint main() {\n    InitWindow(400, 400, \"Draw\");\n    BeginDrawing();\n    ClearBackground(RAYWHITE);\n    DrawRectangle(120, 120, 160, 160, BLUE);\n    EndDrawing();\n    return 0;\n}\n","why":"🎉 raylib graphics in C — clean and real!"},
-  csharp: {"lib":"System.Drawing","title":"Draw with C# graphics","teach":"C# draws with System.Drawing. You get a Graphics object and call Fill methods with a brush. Draw a blue square, then Run visually.","example":"g.FillRectangle(Brushes.Blue, 120, 120, 160, 160);","starter":"using System.Drawing;\n\nvoid Paint(Graphics g) {\n    g.FillRectangle(Brushes.Blue, 120, 120, 160, 160);\n}\n","why":"🎉 Real C# drawing with System.Drawing!"},
-  go: {"lib":"image package","title":"Draw with Go's image package","teach":"Go draws with its image package: you make an image and set pixel colors, or fill a rectangle. Draw a blue square, then Run visually.","example":"draw.Draw(img, square, &image.Uniform{blue}, image.Point{}, draw.Src)","starter":"package main\n\nimport (\n    \"image\"\n    \"image/color\"\n    \"image/draw\"\n)\n\nfunc main() {\n    img := image.NewRGBA(image.Rect(0, 0, 400, 400))\n    blue := color.RGBA{0, 0, 255, 255}\n    square := image.Rect(120, 120, 280, 280)\n    draw.Draw(img, square, &image.Uniform{blue}, image.Point{}, draw.Src)\n}\n","why":"🎉 That's Go drawing a square with the image package!"},
-  rust: {"lib":"macroquad","title":"Draw with macroquad","teach":"Rust uses macroquad for easy graphics. You draw shapes each frame. Draw a blue square, then Run visually.","example":"draw_rectangle(120.0, 120.0, 160.0, 160.0, BLUE);","starter":"use macroquad::prelude::*;\n\n#[macroquad::main(\"Draw\")]\nasync fn main() {\n    clear_background(WHITE);\n    draw_rectangle(120.0, 120.0, 160.0, 160.0, BLUE);\n    next_frame().await;\n}\n","why":"🎉 macroquad graphics in Rust — real and fast!"},
-  ruby: {"lib":"Ruby2D","title":"Draw with Ruby2D","teach":"Ruby draws with Ruby2D. You create a Square with a position, size, and color. Draw a blue square, then Run visually.","example":"Square.new(x: 120, y: 120, size: 160, color: \"blue\")","starter":"require \"ruby2d\"\n\nSquare.new(x: 120, y: 120, size: 160, color: \"blue\")\n\nshow\n","why":"🎉 Ruby2D drawing — clean and simple!"},
-  swift: {"lib":"SwiftUI Canvas","title":"Draw with SwiftUI","teach":"Swift draws with SwiftUI's Canvas. You fill a path with a color. Draw a blue square, then Run visually.","example":"context.fill(Path(CGRect(x: 120, y: 120, width: 160, height: 160)), with: .color(.blue))","starter":"import SwiftUI\n\nCanvas { context, size in\n    let square = Path(CGRect(x: 120, y: 120, width: 160, height: 160))\n    context.fill(square, with: .color(.blue))\n}\n","why":"🎉 SwiftUI Canvas drawing — real iOS graphics!"},
-  kotlin: {"lib":"Compose Canvas","title":"Draw with Compose","teach":"Kotlin draws with Jetpack Compose's Canvas. You call drawRect with a color and position. Draw a blue square, then Run visually.","example":"drawRect(Color.Blue, topLeft = Offset(120f, 120f), size = Size(160f, 160f))","starter":"import androidx.compose.foundation.Canvas\nimport androidx.compose.ui.graphics.Color\nimport androidx.compose.ui.geometry.*\n\nCanvas(modifier = Modifier.size(400.dp)) {\n    drawRect(Color.Blue, topLeft = Offset(120f, 120f), size = Size(160f, 160f))\n}\n","why":"🎉 Compose Canvas — real Android graphics!"},
-  php: {"lib":"GD library","title":"Draw with PHP GD","teach":"PHP draws images with the GD library. You make an image, allocate a color, and fill a rectangle. Draw a blue square, then Run visually.","example":"imagefilledrectangle($img, 120, 120, 280, 280, $blue);","starter":"<?php\n$img = imagecreatetruecolor(400, 400);\n$white = imagecolorallocate($img, 255, 255, 255);\nimagefill($img, 0, 0, $white);\n$blue = imagecolorallocate($img, 0, 0, 255);\nimagefilledrectangle($img, 120, 120, 280, 280, $blue);\n","why":"🎉 GD library drawing — real PHP image generation!"},
-  lua: {"lib":"LÖVE","title":"Draw with LÖVE","teach":"Lua draws games with LÖVE. In love.draw you set a color and draw shapes. Draw a blue square, then Run visually.","example":"love.graphics.rectangle(\"fill\", 120, 120, 160, 160)","starter":"function love.draw()\n    love.graphics.setColor(0, 0, 1)\n    love.graphics.rectangle(\"fill\", 120, 120, 160, 160)\nend\n","why":"🎉 LÖVE graphics in Lua — real game drawing!"},
-  r: {"lib":"base plotting","title":"Draw with R plotting","teach":"R draws shapes with its base plotting. You make a plot then add a rectangle. Draw a blue square, then Run visually.","example":"rect(120, 120, 280, 280, col = \"blue\")","starter":"plot(c(0, 400), c(0, 400), type = \"n\", xlab = \"\", ylab = \"\")\nrect(120, 120, 280, 280, col = \"blue\")\n","why":"🎉 R drawing a square — graphics beyond just charts!"},
-  dart: {"lib":"Flutter CustomPainter","title":"Draw with Flutter","teach":"Dart draws with Flutter's CustomPainter. In paint you draw a rect with a paint color. Draw a blue square, then Run visually.","example":"canvas.drawRect(Rect.fromLTWH(120, 120, 160, 160), paint);","starter":"import \"package:flutter/material.dart\";\n\nvoid paint(Canvas canvas, Size size) {\n  final paint = Paint()..color = Colors.blue;\n  canvas.drawRect(Rect.fromLTWH(120, 120, 160, 160), paint);\n}\n","why":"🎉 Flutter Canvas — real cross-platform graphics!"},
-  scala: {"lib":"Java2D","title":"Draw with Scala graphics","teach":"Scala can use Java's Graphics2D. You get a graphics object and fill a rectangle. Draw a blue square, then Run visually.","example":"g.setColor(Color.BLUE)\ng.fillRect(120, 120, 160, 160)","starter":"import java.awt.{Color, Graphics}\n\ndef paint(g: Graphics): Unit = {\n  g.setColor(Color.BLUE)\n  g.fillRect(120, 120, 160, 160)\n}\n","why":"🎉 Scala drawing with Java2D — real graphics!"},
-  perl: {"lib":"GD","title":"Draw with Perl GD","teach":"Perl draws images with the GD module. You make an image, allocate a color, and fill a rectangle. Draw a blue square, then Run visually.","example":"$img->filledRectangle(120, 120, 280, 280, $blue);","starter":"use GD;\nmy $img = GD::Image->new(400, 400);\nmy $white = $img->colorAllocate(255, 255, 255);\nmy $blue = $img->colorAllocate(0, 0, 255);\n$img->filledRectangle(120, 120, 280, 280, $blue);\n","why":"🎉 GD drawing in Perl — real image code!"},
-  haskell: {"lib":"Gloss","title":"Draw with Gloss","teach":"Haskell draws with Gloss. You describe a picture — a colored square — declaratively. Draw a blue square, then Run visually.","example":"color blue (rectangleSolid 160 160)","starter":"import Graphics.Gloss\n\nmain :: IO ()\nmain = display (InWindow \"Draw\" (400, 400) (0, 0)) white picture\n  where picture = color blue (rectangleSolid 160 160)\n","why":"🎉 Gloss graphics in Haskell — functional drawing!"},
-  objc: {"lib":"Core Graphics","title":"Draw with Core Graphics","teach":"Objective-C draws with Core Graphics. You set a fill color and fill a rectangle in the context. Draw a blue square, then Run visually.","example":"CGContextFillRect(ctx, CGRectMake(120, 120, 160, 160));","starter":"#import <CoreGraphics/CoreGraphics.h>\n\nvoid draw(CGContextRef ctx) {\n    CGContextSetRGBFillColor(ctx, 0, 0, 1, 1);\n    CGContextFillRect(ctx, CGRectMake(120, 120, 160, 160));\n}\n","why":"🎉 Core Graphics — real Apple drawing!"},
-  vb: {"lib":"System.Drawing","title":"Draw with VB graphics","teach":"Visual Basic draws with System.Drawing. You get a Graphics object and fill a rectangle with a brush. Draw a blue square, then Run visually.","example":"g.FillRectangle(Brushes.Blue, 120, 120, 160, 160)","starter":"Imports System.Drawing\n\nSub Paint(g As Graphics)\n    g.FillRectangle(Brushes.Blue, 120, 120, 160, 160)\nEnd Sub\n","why":"🎉 VB drawing with System.Drawing!"},
-  matlab: {"lib":"plotting","title":"Draw with MATLAB","teach":"MATLAB draws shapes with rectangle(). You set position and color. Draw a blue square, then Run visually.","example":"rectangle('Position', [120 120 160 160], 'FaceColor', 'blue')","starter":"figure;\naxis([0 400 0 400]);\nrectangle('Position', [120 120 160 160], 'FaceColor', 'b');\n","why":"🎉 MATLAB drawing a square — graphics beyond plots!"},
-  groovy: {"lib":"Java2D","title":"Draw with Groovy graphics","teach":"Groovy uses Java's Graphics2D. You get a graphics object and fill a rectangle. Draw a blue square, then Run visually.","example":"g.color = Color.BLUE\ng.fillRect(120, 120, 160, 160)","starter":"import java.awt.*\n\ndef paint(Graphics g) {\n    g.color = Color.BLUE\n    g.fillRect(120, 120, 160, 160)\n}\n","why":"🎉 Groovy drawing with Java2D!"},
-  powershell: {"lib":"System.Drawing","title":"Draw with PowerShell","teach":"PowerShell can use .NET's System.Drawing. You make a bitmap, get graphics, and fill a rectangle. Draw a blue square, then Run visually.","example":"$g.FillRectangle($blue, 120, 120, 160, 160)","starter":"Add-Type -AssemblyName System.Drawing\n$bmp = New-Object System.Drawing.Bitmap 400, 400\n$g = [System.Drawing.Graphics]::FromImage($bmp)\n$blue = [System.Drawing.Brushes]::Blue\n$g.FillRectangle($blue, 120, 120, 160, 160)\n","why":"🎉 PowerShell drawing with .NET graphics!"},
-  vba: {"lib":"Shapes","title":"Draw with VBA shapes","teach":"VBA draws shapes on a sheet or slide. You add a rectangle shape and set its fill color. Draw a blue square, then Run visually.","example":"Shapes.AddShape(msoShapeRectangle, 120, 120, 160, 160)","starter":"Sub DrawSquare()\n    Dim s As Shape\n    Set s = ActiveSheet.Shapes.AddShape(msoShapeRectangle, 120, 120, 160, 160)\n    s.Fill.ForeColor.RGB = RGB(0, 0, 255)\nEnd Sub\n","why":"🎉 VBA drawing a shape — real Office automation!"},
-  julia: {"lib":"Luxor","title":"Draw with Luxor","teach":"Julia draws with Luxor. You set a color and draw a box at a point. Draw a blue square, then Run visually.","example":"box(Point(200, 200), 160, 160, :fill)","starter":"using Luxor\n\n@draw begin\n    sethue(\"blue\")\n    box(Point(200, 200), 160, 160, :fill)\nend 400 400\n","why":"🎉 Luxor graphics in Julia — real drawing!"},
-  elixir: {"lib":"Scenic","title":"Draw with Elixir","teach":"Elixir draws UIs with Scenic. You add a rectangle primitive with a fill color to the graph. Draw a blue square, then Run visually.","example":"rect({160, 160}, fill: :blue, translate: {120, 120})","starter":"import Scenic.Primitives\n\ngraph =\n  Scenic.Graph.build()\n  |> rect({160, 160}, fill: :blue, translate: {120, 120})\n","why":"🎉 Scenic graphics in Elixir!"},
-  clojure: {"lib":"Quil","title":"Draw with Quil","teach":"Clojure draws with Quil. You set a fill color and draw a rect. Draw a blue square, then Run visually.","example":"(rect 120 120 160 160)","starter":"(ns draw (:require [quil.core :as q]))\n\n(defn draw []\n  (q/fill 0 0 255)\n  (q/rect 120 120 160 160))\n","why":"🎉 Quil graphics in Clojure!"},
-  fsharp: {"lib":"System.Drawing","title":"Draw with F# graphics","teach":"F# uses .NET's System.Drawing. You get a graphics object and fill a rectangle. Draw a blue square, then Run visually.","example":"g.FillRectangle(Brushes.Blue, 120, 120, 160, 160)","starter":"open System.Drawing\n\nlet paint (g: Graphics) =\n    g.FillRectangle(Brushes.Blue, 120, 120, 160, 160)\n","why":"🎉 F# drawing with System.Drawing!"},
-  erlang: {"lib":"wxWidgets","title":"Draw with Erlang","teach":"Erlang draws with the wx module. You get a device context and draw a rectangle. Draw a blue square, then Run visually.","example":"wxDC:drawRectangle(DC, {120, 120}, {160, 160})","starter":"draw(DC) ->\n    Blue = wxBrush:new({0, 0, 255}),\n    wxDC:setBrush(DC, Blue),\n    wxDC:drawRectangle(DC, {120, 120}, {160, 160}).\n","why":"🎉 Erlang drawing with wx!"},
-  ocaml: {"lib":"Graphics","title":"Draw with OCaml Graphics","teach":"OCaml has a built-in Graphics module. You set a color and fill a rectangle. Draw a blue square, then Run visually.","example":"fill_rect 120 120 160 160","starter":"open Graphics\n\nlet () =\n  open_graph \" 400x400\";\n  set_color blue;\n  fill_rect 120 120 160 160\n","why":"🎉 OCaml's Graphics module — real built-in drawing!"},
-  elm: {"lib":"elm/svg","title":"Draw with Elm","teach":"Elm draws with SVG. You describe a rect with position, size, and fill. Draw a blue square, then Run visually.","example":"rect [ x \"120\", y \"120\", width \"160\", height \"160\", fill \"blue\" ] []","starter":"import Svg exposing (svg, rect)\nimport Svg.Attributes exposing (..)\n\nview =\n    svg [ width \"400\", height \"400\" ]\n        [ rect [ x \"120\", y \"120\", width \"160\", height \"160\", fill \"blue\" ] [] ]\n","why":"🎉 Elm drawing with SVG — declarative graphics!"},
-  scheme: {"lib":"racket/draw","title":"Draw with Scheme","teach":"Scheme (Racket) draws with racket/draw. You get a drawing context, set a brush, and draw a rectangle. Draw a blue square, then Run visually.","example":"(send dc draw-rectangle 120 120 160 160)","starter":"(require racket/draw)\n\n(define (draw dc)\n  (send dc set-brush \"blue\" 'solid)\n  (send dc draw-rectangle 120 120 160 160))\n","why":"🎉 Racket drawing in Scheme!"},
-  fortran: {"lib":"PLplot","title":"Draw with Fortran","teach":"Fortran draws with PLplot. You set a color and fill a rectangle from vertices. Draw a blue square, then Run visually.","example":"call plfill(x, y)  ! fills the square","starter":"program draw\n  use plplot\n  call plinit()\n  call plcol0(9)  ! blue\n  call plfill([120.0, 280.0, 280.0, 120.0], [120.0, 120.0, 280.0, 280.0])\n  call plend()\nend program draw\n","why":"🎉 Fortran graphics with PLplot!"},
-  pascal: {"lib":"Graph unit","title":"Draw with Pascal","teach":"Pascal draws with the Graph unit. You set a color and fill a bar (rectangle). Draw a blue square, then Run visually.","example":"Bar(120, 120, 280, 280);","starter":"uses Graph;\nbegin\n  SetFillStyle(SolidFill, Blue);\n  Bar(120, 120, 280, 280);\nend.\n","why":"🎉 Pascal drawing with the Graph unit!"},
-  lisp: {"lib":"CLIM","title":"Draw with Lisp","teach":"Common Lisp draws with CLIM. You draw a rectangle with a color on a stream. Draw a blue square, then Run visually.","example":"(draw-rectangle* stream 120 120 280 280 :ink +blue+)","starter":"(draw-rectangle* stream 120 120 280 280 :ink +blue+)\n","why":"🎉 Lisp drawing with CLIM!"},
-  ada: {"lib":"GtkAda","title":"Draw with Ada","teach":"Ada draws with GtkAda's Cairo. You set a source color and fill a rectangle. Draw a blue square, then Run visually.","example":"Rectangle (Cr, 120.0, 120.0, 160.0, 160.0);","starter":"with Cairo; use Cairo;\n\nprocedure Draw (Cr : Cairo_Context) is\nbegin\n   Set_Source_Rgb (Cr, 0.0, 0.0, 1.0);\n   Rectangle (Cr, 120.0, 120.0, 160.0, 160.0);\n   Fill (Cr);\nend Draw;\n","why":"🎉 Ada drawing with Cairo!"},
-  smalltalk: {"lib":"Morphic","title":"Draw with Smalltalk","teach":"Smalltalk draws with Morphic. You make a rectangle morph, color it, and add it. Draw a blue square, then Run visually.","example":"morph color: Color blue.","starter":"| morph |\nmorph := Morph new.\nmorph bounds: (120@120 corner: 280@280).\nmorph color: Color blue.\nmorph openInWorld.\n","why":"🎉 Smalltalk drawing with Morphic!"},
-  processing: {"lib":"Processing","title":"Draw with Processing","teach":"Processing is built for visual art. You set the canvas size, pick a fill color, and draw shapes like rect() and ellipse(). Draw a blue square, then Run visually.","example":"size(400, 400);\nfill(0, 0, 255);\nrect(120, 120, 160, 160);","starter":"size(400, 400);\nbackground(255);\nfill(0, 0, 255);\nrect(120, 120, 160, 160);\n","why":"🎉 Processing is made for creative coding — that's real generative art!"},
-  p5: {"lib":"p5.js","title":"Draw with p5.js","teach":"p5.js is Processing for the web. In setup you make the canvas; in draw you paint. Use fill() and rect() to draw. Draw a blue square, then Run visually.","example":"function setup(){ createCanvas(400,400); }\nfunction draw(){ fill(0,0,255); rect(120,120,160,160); }","starter":"function setup() {\n  createCanvas(400, 400);\n  background(255);\n}\nfunction draw() {\n  fill(0, 0, 255);\n  rect(120, 120, 160, 160);\n}\n","why":"🎉 p5.js powers interactive art all over the web — you just made some!"},
-  gdscript: {"lib":"Godot","title":"Draw with GDScript","teach":"GDScript is the language of the Godot game engine. In _draw() you call draw_rect() with a color and rectangle. Draw a blue square, then Run visually.","example":"func _draw():\n    draw_rect(Rect2(120, 120, 160, 160), Color.BLUE)","starter":"extends Node2D\n\nfunc _draw():\n    draw_rect(Rect2(120, 120, 160, 160), Color(0, 0, 1))\n","why":"🎉 That's how Godot games draw — you're doing real game dev!"},
-  nim: {"lib":"raylib (naylib)","title":"Draw with Nim","teach":"Nim reads like Python but compiles to fast code. With the raylib binding you draw shapes between beginning and ending a frame. Draw a blue square, then Run visually.","example":"drawRectangle(120, 120, 160, 160, Blue)","starter":"import raylib\n\ninitWindow(400, 400, \"Draw\")\nbeginDrawing()\nclearBackground(RayWhite)\ndrawRectangle(120, 120, 160, 160, Blue)\nendDrawing()\n","why":"🎉 Nim graphics — Python-like syntax, real speed!"},
-  zig: {"lib":"raylib","title":"Draw with Zig","teach":"Zig is a modern systems language. With raylib you draw shapes each frame. Draw a blue square, then Run visually.","example":"rl.drawRectangle(120, 120, 160, 160, rl.Color.blue);","starter":"const rl = @import(\"raylib\");\n\npub fn main() void {\n    rl.initWindow(400, 400, \"Draw\");\n    rl.beginDrawing();\n    rl.clearBackground(rl.Color.white);\n    rl.drawRectangle(120, 120, 160, 160, rl.Color.blue);\n    rl.endDrawing();\n}\n","why":"🎉 Zig with raylib — modern systems graphics!"},
+  js: {"lib":"HTML5 canvas","title":"Draw with canvas","teach":"In the browser, JavaScript draws on a <canvas>. You grab its 2D context and call drawing commands. Draw a blue square — write it, then Run visually.","example":"ctx.fillStyle = \"blue\";\nctx.fillRect(120, 120, 160, 160);","starter":"const ctx = document.getElementById(\"c\").getContext(\"2d\");\nctx.fillStyle = \"blue\";\nctx.fillRect(120, 120, 160, 160);\n","why":"That's real canvas drawing — the same API real web games use!"},
+  ts: {"lib":"HTML5 canvas","title":"Draw with canvas","teach":"TypeScript draws on a browser <canvas> just like JavaScript, with types added. Grab the 2D context and draw. Make a blue square, then Run visually.","example":"ctx.fillStyle = \"blue\";\nctx.fillRect(120, 120, 160, 160);","starter":"const ctx = (document.getElementById(\"c\") as HTMLCanvasElement).getContext(\"2d\")!;\nctx.fillStyle = \"blue\";\nctx.fillRect(120, 120, 160, 160);\n","why":"Typed canvas drawing — real graphics with type safety!"},
+  py: {"lib":"turtle","title":"Draw a square with turtle","teach":"Turtle lets you steer a little pen that leaves a trail. Move forward, turn, repeat. Draw a square, then Run visually.","example":"for i in range(4):\n    t.forward(100)\n    t.right(90)","starter":"import turtle\nt = turtle.Turtle()\n\nfor i in range(4):\n    t.forward(120)\n    t.right(90)\n","why":"Your turtle drew a square!"},
+  java: {"lib":"Swing/Graphics2D","title":"Draw with Java graphics","teach":"Java draws with Graphics2D inside a JPanel. You get a graphics object g and call fill/draw methods. Draw a blue square, then Run visually.","example":"g.setColor(Color.BLUE);\ng.fillRect(120, 120, 160, 160);","starter":"import java.awt.*;\nimport javax.swing.*;\n\npublic class Draw extends JPanel {\n    public void paintComponent(Graphics g) {\n        g.setColor(Color.BLUE);\n        g.fillRect(120, 120, 160, 160);\n    }\n}\n","why":"Real Java graphics — that's how Swing apps draw!"},
+  cpp: {"lib":"SFML","title":"Draw with SFML","teach":"C++ often uses SFML for graphics. You create a shape, set its color and position, then draw it to a window. Draw a blue square, then Run visually.","example":"sf::RectangleShape sq({160, 160});\nsq.setFillColor(sf::Color::Blue);","starter":"#include <SFML/Graphics.hpp>\n\nint main() {\n    sf::RenderWindow window(sf::VideoMode(400, 400), \"Draw\");\n    sf::RectangleShape square({160.f, 160.f});\n    square.setPosition(120.f, 120.f);\n    square.setFillColor(sf::Color::Blue);\n    window.draw(square);\n    return 0;\n}\n","why":"That's SFML — real C++ game graphics!"},
+  c: {"lib":"raylib","title":"Draw with raylib","teach":"C uses raylib for simple graphics. You open a window and call draw functions between BeginDrawing and EndDrawing. Draw a blue square, then Run visually.","example":"DrawRectangle(120, 120, 160, 160, BLUE);","starter":"#include \"raylib.h\"\n\nint main() {\n    InitWindow(400, 400, \"Draw\");\n    BeginDrawing();\n    ClearBackground(RAYWHITE);\n    DrawRectangle(120, 120, 160, 160, BLUE);\n    EndDrawing();\n    return 0;\n}\n","why":"raylib graphics in C — clean and real!"},
+  csharp: {"lib":"System.Drawing","title":"Draw with C# graphics","teach":"C# draws with System.Drawing. You get a Graphics object and call Fill methods with a brush. Draw a blue square, then Run visually.","example":"g.FillRectangle(Brushes.Blue, 120, 120, 160, 160);","starter":"using System.Drawing;\n\nvoid Paint(Graphics g) {\n    g.FillRectangle(Brushes.Blue, 120, 120, 160, 160);\n}\n","why":"Real C# drawing with System.Drawing!"},
+  go: {"lib":"image package","title":"Draw with Go's image package","teach":"Go draws with its image package: you make an image and set pixel colors, or fill a rectangle. Draw a blue square, then Run visually.","example":"draw.Draw(img, square, &image.Uniform{blue}, image.Point{}, draw.Src)","starter":"package main\n\nimport (\n    \"image\"\n    \"image/color\"\n    \"image/draw\"\n)\n\nfunc main() {\n    img := image.NewRGBA(image.Rect(0, 0, 400, 400))\n    blue := color.RGBA{0, 0, 255, 255}\n    square := image.Rect(120, 120, 280, 280)\n    draw.Draw(img, square, &image.Uniform{blue}, image.Point{}, draw.Src)\n}\n","why":"That's Go drawing a square with the image package!"},
+  rust: {"lib":"macroquad","title":"Draw with macroquad","teach":"Rust uses macroquad for easy graphics. You draw shapes each frame. Draw a blue square, then Run visually.","example":"draw_rectangle(120.0, 120.0, 160.0, 160.0, BLUE);","starter":"use macroquad::prelude::*;\n\n#[macroquad::main(\"Draw\")]\nasync fn main() {\n    clear_background(WHITE);\n    draw_rectangle(120.0, 120.0, 160.0, 160.0, BLUE);\n    next_frame().await;\n}\n","why":"macroquad graphics in Rust — real and fast!"},
+  ruby: {"lib":"Ruby2D","title":"Draw with Ruby2D","teach":"Ruby draws with Ruby2D. You create a Square with a position, size, and color. Draw a blue square, then Run visually.","example":"Square.new(x: 120, y: 120, size: 160, color: \"blue\")","starter":"require \"ruby2d\"\n\nSquare.new(x: 120, y: 120, size: 160, color: \"blue\")\n\nshow\n","why":"Ruby2D drawing — clean and simple!"},
+  swift: {"lib":"SwiftUI Canvas","title":"Draw with SwiftUI","teach":"Swift draws with SwiftUI's Canvas. You fill a path with a color. Draw a blue square, then Run visually.","example":"context.fill(Path(CGRect(x: 120, y: 120, width: 160, height: 160)), with: .color(.blue))","starter":"import SwiftUI\n\nCanvas { context, size in\n    let square = Path(CGRect(x: 120, y: 120, width: 160, height: 160))\n    context.fill(square, with: .color(.blue))\n}\n","why":"SwiftUI Canvas drawing — real iOS graphics!"},
+  kotlin: {"lib":"Compose Canvas","title":"Draw with Compose","teach":"Kotlin draws with Jetpack Compose's Canvas. You call drawRect with a color and position. Draw a blue square, then Run visually.","example":"drawRect(Color.Blue, topLeft = Offset(120f, 120f), size = Size(160f, 160f))","starter":"import androidx.compose.foundation.Canvas\nimport androidx.compose.ui.graphics.Color\nimport androidx.compose.ui.geometry.*\n\nCanvas(modifier = Modifier.size(400.dp)) {\n    drawRect(Color.Blue, topLeft = Offset(120f, 120f), size = Size(160f, 160f))\n}\n","why":"Compose Canvas — real Android graphics!"},
+  php: {"lib":"GD library","title":"Draw with PHP GD","teach":"PHP draws images with the GD library. You make an image, allocate a color, and fill a rectangle. Draw a blue square, then Run visually.","example":"imagefilledrectangle($img, 120, 120, 280, 280, $blue);","starter":"<?php\n$img = imagecreatetruecolor(400, 400);\n$white = imagecolorallocate($img, 255, 255, 255);\nimagefill($img, 0, 0, $white);\n$blue = imagecolorallocate($img, 0, 0, 255);\nimagefilledrectangle($img, 120, 120, 280, 280, $blue);\n","why":"GD library drawing — real PHP image generation!"},
+  lua: {"lib":"LÖVE","title":"Draw with LÖVE","teach":"Lua draws games with LÖVE. In love.draw you set a color and draw shapes. Draw a blue square, then Run visually.","example":"love.graphics.rectangle(\"fill\", 120, 120, 160, 160)","starter":"function love.draw()\n    love.graphics.setColor(0, 0, 1)\n    love.graphics.rectangle(\"fill\", 120, 120, 160, 160)\nend\n","why":"LÖVE graphics in Lua — real game drawing!"},
+  r: {"lib":"base plotting","title":"Draw with R plotting","teach":"R draws shapes with its base plotting. You make a plot then add a rectangle. Draw a blue square, then Run visually.","example":"rect(120, 120, 280, 280, col = \"blue\")","starter":"plot(c(0, 400), c(0, 400), type = \"n\", xlab = \"\", ylab = \"\")\nrect(120, 120, 280, 280, col = \"blue\")\n","why":"R drawing a square — graphics beyond just charts!"},
+  dart: {"lib":"Flutter CustomPainter","title":"Draw with Flutter","teach":"Dart draws with Flutter's CustomPainter. In paint you draw a rect with a paint color. Draw a blue square, then Run visually.","example":"canvas.drawRect(Rect.fromLTWH(120, 120, 160, 160), paint);","starter":"import \"package:flutter/material.dart\";\n\nvoid paint(Canvas canvas, Size size) {\n  final paint = Paint()..color = Colors.blue;\n  canvas.drawRect(Rect.fromLTWH(120, 120, 160, 160), paint);\n}\n","why":"Flutter Canvas — real cross-platform graphics!"},
+  scala: {"lib":"Java2D","title":"Draw with Scala graphics","teach":"Scala can use Java's Graphics2D. You get a graphics object and fill a rectangle. Draw a blue square, then Run visually.","example":"g.setColor(Color.BLUE)\ng.fillRect(120, 120, 160, 160)","starter":"import java.awt.{Color, Graphics}\n\ndef paint(g: Graphics): Unit = {\n  g.setColor(Color.BLUE)\n  g.fillRect(120, 120, 160, 160)\n}\n","why":"Scala drawing with Java2D — real graphics!"},
+  perl: {"lib":"GD","title":"Draw with Perl GD","teach":"Perl draws images with the GD module. You make an image, allocate a color, and fill a rectangle. Draw a blue square, then Run visually.","example":"$img->filledRectangle(120, 120, 280, 280, $blue);","starter":"use GD;\nmy $img = GD::Image->new(400, 400);\nmy $white = $img->colorAllocate(255, 255, 255);\nmy $blue = $img->colorAllocate(0, 0, 255);\n$img->filledRectangle(120, 120, 280, 280, $blue);\n","why":"GD drawing in Perl — real image code!"},
+  haskell: {"lib":"Gloss","title":"Draw with Gloss","teach":"Haskell draws with Gloss. You describe a picture — a colored square — declaratively. Draw a blue square, then Run visually.","example":"color blue (rectangleSolid 160 160)","starter":"import Graphics.Gloss\n\nmain :: IO ()\nmain = display (InWindow \"Draw\" (400, 400) (0, 0)) white picture\n  where picture = color blue (rectangleSolid 160 160)\n","why":"Gloss graphics in Haskell — functional drawing!"},
+  objc: {"lib":"Core Graphics","title":"Draw with Core Graphics","teach":"Objective-C draws with Core Graphics. You set a fill color and fill a rectangle in the context. Draw a blue square, then Run visually.","example":"CGContextFillRect(ctx, CGRectMake(120, 120, 160, 160));","starter":"#import <CoreGraphics/CoreGraphics.h>\n\nvoid draw(CGContextRef ctx) {\n    CGContextSetRGBFillColor(ctx, 0, 0, 1, 1);\n    CGContextFillRect(ctx, CGRectMake(120, 120, 160, 160));\n}\n","why":"Core Graphics — real Apple drawing!"},
+  vb: {"lib":"System.Drawing","title":"Draw with VB graphics","teach":"Visual Basic draws with System.Drawing. You get a Graphics object and fill a rectangle with a brush. Draw a blue square, then Run visually.","example":"g.FillRectangle(Brushes.Blue, 120, 120, 160, 160)","starter":"Imports System.Drawing\n\nSub Paint(g As Graphics)\n    g.FillRectangle(Brushes.Blue, 120, 120, 160, 160)\nEnd Sub\n","why":"VB drawing with System.Drawing!"},
+  matlab: {"lib":"plotting","title":"Draw with MATLAB","teach":"MATLAB draws shapes with rectangle(). You set position and color. Draw a blue square, then Run visually.","example":"rectangle('Position', [120 120 160 160], 'FaceColor', 'blue')","starter":"figure;\naxis([0 400 0 400]);\nrectangle('Position', [120 120 160 160], 'FaceColor', 'b');\n","why":"MATLAB drawing a square — graphics beyond plots!"},
+  groovy: {"lib":"Java2D","title":"Draw with Groovy graphics","teach":"Groovy uses Java's Graphics2D. You get a graphics object and fill a rectangle. Draw a blue square, then Run visually.","example":"g.color = Color.BLUE\ng.fillRect(120, 120, 160, 160)","starter":"import java.awt.*\n\ndef paint(Graphics g) {\n    g.color = Color.BLUE\n    g.fillRect(120, 120, 160, 160)\n}\n","why":"Groovy drawing with Java2D!"},
+  powershell: {"lib":"System.Drawing","title":"Draw with PowerShell","teach":"PowerShell can use .NET's System.Drawing. You make a bitmap, get graphics, and fill a rectangle. Draw a blue square, then Run visually.","example":"$g.FillRectangle($blue, 120, 120, 160, 160)","starter":"Add-Type -AssemblyName System.Drawing\n$bmp = New-Object System.Drawing.Bitmap 400, 400\n$g = [System.Drawing.Graphics]::FromImage($bmp)\n$blue = [System.Drawing.Brushes]::Blue\n$g.FillRectangle($blue, 120, 120, 160, 160)\n","why":"PowerShell drawing with .NET graphics!"},
+  vba: {"lib":"Shapes","title":"Draw with VBA shapes","teach":"VBA draws shapes on a sheet or slide. You add a rectangle shape and set its fill color. Draw a blue square, then Run visually.","example":"Shapes.AddShape(msoShapeRectangle, 120, 120, 160, 160)","starter":"Sub DrawSquare()\n    Dim s As Shape\n    Set s = ActiveSheet.Shapes.AddShape(msoShapeRectangle, 120, 120, 160, 160)\n    s.Fill.ForeColor.RGB = RGB(0, 0, 255)\nEnd Sub\n","why":"VBA drawing a shape — real Office automation!"},
+  julia: {"lib":"Luxor","title":"Draw with Luxor","teach":"Julia draws with Luxor. You set a color and draw a box at a point. Draw a blue square, then Run visually.","example":"box(Point(200, 200), 160, 160, :fill)","starter":"using Luxor\n\n@draw begin\n    sethue(\"blue\")\n    box(Point(200, 200), 160, 160, :fill)\nend 400 400\n","why":"Luxor graphics in Julia — real drawing!"},
+  elixir: {"lib":"Scenic","title":"Draw with Elixir","teach":"Elixir draws UIs with Scenic. You add a rectangle primitive with a fill color to the graph. Draw a blue square, then Run visually.","example":"rect({160, 160}, fill: :blue, translate: {120, 120})","starter":"import Scenic.Primitives\n\ngraph =\n  Scenic.Graph.build()\n  |> rect({160, 160}, fill: :blue, translate: {120, 120})\n","why":"Scenic graphics in Elixir!"},
+  clojure: {"lib":"Quil","title":"Draw with Quil","teach":"Clojure draws with Quil. You set a fill color and draw a rect. Draw a blue square, then Run visually.","example":"(rect 120 120 160 160)","starter":"(ns draw (:require [quil.core :as q]))\n\n(defn draw []\n  (q/fill 0 0 255)\n  (q/rect 120 120 160 160))\n","why":"Quil graphics in Clojure!"},
+  fsharp: {"lib":"System.Drawing","title":"Draw with F# graphics","teach":"F# uses .NET's System.Drawing. You get a graphics object and fill a rectangle. Draw a blue square, then Run visually.","example":"g.FillRectangle(Brushes.Blue, 120, 120, 160, 160)","starter":"open System.Drawing\n\nlet paint (g: Graphics) =\n    g.FillRectangle(Brushes.Blue, 120, 120, 160, 160)\n","why":"F# drawing with System.Drawing!"},
+  erlang: {"lib":"wxWidgets","title":"Draw with Erlang","teach":"Erlang draws with the wx module. You get a device context and draw a rectangle. Draw a blue square, then Run visually.","example":"wxDC:drawRectangle(DC, {120, 120}, {160, 160})","starter":"draw(DC) ->\n    Blue = wxBrush:new({0, 0, 255}),\n    wxDC:setBrush(DC, Blue),\n    wxDC:drawRectangle(DC, {120, 120}, {160, 160}).\n","why":"Erlang drawing with wx!"},
+  ocaml: {"lib":"Graphics","title":"Draw with OCaml Graphics","teach":"OCaml has a built-in Graphics module. You set a color and fill a rectangle. Draw a blue square, then Run visually.","example":"fill_rect 120 120 160 160","starter":"open Graphics\n\nlet () =\n  open_graph \" 400x400\";\n  set_color blue;\n  fill_rect 120 120 160 160\n","why":"OCaml's Graphics module — real built-in drawing!"},
+  elm: {"lib":"elm/svg","title":"Draw with Elm","teach":"Elm draws with SVG. You describe a rect with position, size, and fill. Draw a blue square, then Run visually.","example":"rect [ x \"120\", y \"120\", width \"160\", height \"160\", fill \"blue\" ] []","starter":"import Svg exposing (svg, rect)\nimport Svg.Attributes exposing (..)\n\nview =\n    svg [ width \"400\", height \"400\" ]\n        [ rect [ x \"120\", y \"120\", width \"160\", height \"160\", fill \"blue\" ] [] ]\n","why":"Elm drawing with SVG — declarative graphics!"},
+  scheme: {"lib":"racket/draw","title":"Draw with Scheme","teach":"Scheme (Racket) draws with racket/draw. You get a drawing context, set a brush, and draw a rectangle. Draw a blue square, then Run visually.","example":"(send dc draw-rectangle 120 120 160 160)","starter":"(require racket/draw)\n\n(define (draw dc)\n  (send dc set-brush \"blue\" 'solid)\n  (send dc draw-rectangle 120 120 160 160))\n","why":"Racket drawing in Scheme!"},
+  fortran: {"lib":"PLplot","title":"Draw with Fortran","teach":"Fortran draws with PLplot. You set a color and fill a rectangle from vertices. Draw a blue square, then Run visually.","example":"call plfill(x, y)  ! fills the square","starter":"program draw\n  use plplot\n  call plinit()\n  call plcol0(9)  ! blue\n  call plfill([120.0, 280.0, 280.0, 120.0], [120.0, 120.0, 280.0, 280.0])\n  call plend()\nend program draw\n","why":"Fortran graphics with PLplot!"},
+  pascal: {"lib":"Graph unit","title":"Draw with Pascal","teach":"Pascal draws with the Graph unit. You set a color and fill a bar (rectangle). Draw a blue square, then Run visually.","example":"Bar(120, 120, 280, 280);","starter":"uses Graph;\nbegin\n  SetFillStyle(SolidFill, Blue);\n  Bar(120, 120, 280, 280);\nend.\n","why":"Pascal drawing with the Graph unit!"},
+  lisp: {"lib":"CLIM","title":"Draw with Lisp","teach":"Common Lisp draws with CLIM. You draw a rectangle with a color on a stream. Draw a blue square, then Run visually.","example":"(draw-rectangle* stream 120 120 280 280 :ink +blue+)","starter":"(draw-rectangle* stream 120 120 280 280 :ink +blue+)\n","why":"Lisp drawing with CLIM!"},
+  ada: {"lib":"GtkAda","title":"Draw with Ada","teach":"Ada draws with GtkAda's Cairo. You set a source color and fill a rectangle. Draw a blue square, then Run visually.","example":"Rectangle (Cr, 120.0, 120.0, 160.0, 160.0);","starter":"with Cairo; use Cairo;\n\nprocedure Draw (Cr : Cairo_Context) is\nbegin\n   Set_Source_Rgb (Cr, 0.0, 0.0, 1.0);\n   Rectangle (Cr, 120.0, 120.0, 160.0, 160.0);\n   Fill (Cr);\nend Draw;\n","why":"Ada drawing with Cairo!"},
+  smalltalk: {"lib":"Morphic","title":"Draw with Smalltalk","teach":"Smalltalk draws with Morphic. You make a rectangle morph, color it, and add it. Draw a blue square, then Run visually.","example":"morph color: Color blue.","starter":"| morph |\nmorph := Morph new.\nmorph bounds: (120@120 corner: 280@280).\nmorph color: Color blue.\nmorph openInWorld.\n","why":"Smalltalk drawing with Morphic!"},
+  processing: {"lib":"Processing","title":"Draw with Processing","teach":"Processing is built for visual art. You set the canvas size, pick a fill color, and draw shapes like rect() and ellipse(). Draw a blue square, then Run visually.","example":"size(400, 400);\nfill(0, 0, 255);\nrect(120, 120, 160, 160);","starter":"size(400, 400);\nbackground(255);\nfill(0, 0, 255);\nrect(120, 120, 160, 160);\n","why":"Processing is made for creative coding — that's real generative art!"},
+  p5: {"lib":"p5.js","title":"Draw with p5.js","teach":"p5.js is Processing for the web. In setup you make the canvas; in draw you paint. Use fill() and rect() to draw. Draw a blue square, then Run visually.","example":"function setup(){ createCanvas(400,400); }\nfunction draw(){ fill(0,0,255); rect(120,120,160,160); }","starter":"function setup() {\n  createCanvas(400, 400);\n  background(255);\n}\nfunction draw() {\n  fill(0, 0, 255);\n  rect(120, 120, 160, 160);\n}\n","why":"p5.js powers interactive art all over the web — you just made some!"},
+  gdscript: {"lib":"Godot","title":"Draw with GDScript","teach":"GDScript is the language of the Godot game engine. In _draw() you call draw_rect() with a color and rectangle. Draw a blue square, then Run visually.","example":"func _draw():\n    draw_rect(Rect2(120, 120, 160, 160), Color.BLUE)","starter":"extends Node2D\n\nfunc _draw():\n    draw_rect(Rect2(120, 120, 160, 160), Color(0, 0, 1))\n","why":"That's how Godot games draw — you're doing real game dev!"},
+  nim: {"lib":"raylib (naylib)","title":"Draw with Nim","teach":"Nim reads like Python but compiles to fast code. With the raylib binding you draw shapes between beginning and ending a frame. Draw a blue square, then Run visually.","example":"drawRectangle(120, 120, 160, 160, Blue)","starter":"import raylib\n\ninitWindow(400, 400, \"Draw\")\nbeginDrawing()\nclearBackground(RayWhite)\ndrawRectangle(120, 120, 160, 160, Blue)\nendDrawing()\n","why":"Nim graphics — Python-like syntax, real speed!"},
+  zig: {"lib":"raylib","title":"Draw with Zig","teach":"Zig is a modern systems language. With raylib you draw shapes each frame. Draw a blue square, then Run visually.","example":"rl.drawRectangle(120, 120, 160, 160, rl.Color.blue);","starter":"const rl = @import(\"raylib\");\n\npub fn main() void {\n    rl.initWindow(400, 400, \"Draw\");\n    rl.beginDrawing();\n    rl.clearBackground(rl.Color.white);\n    rl.drawRectangle(120, 120, 160, 160, rl.Color.blue);\n    rl.endDrawing();\n}\n","why":"Zig with raylib — modern systems graphics!"},
 };
 // Build a visual lesson step for a language, or null if it has no graphics.
 
@@ -2875,70 +2933,70 @@ const MARKUP_LESSONS = {
       example: "<h1>Title</h1>\n<p>A paragraph of text.</p>",
       starter: "<h1>My Page</h1>\n<p>Write a sentence about yourself here.</p>\n",
       checks: ["Has an <h1> heading", "Has a <p> paragraph with text"],
-      why: "🎉 That's a real web page structure — headings and paragraphs are the backbone of HTML!" },
+      why: "That's a real web page structure — headings and paragraphs are the backbone of HTML!" },
     { title: "Lists and links", teach: "A <ul> makes a bulleted list, with each item in <li> tags. An <a href=\"...\"> makes a clickable link.",
       example: '<ul>\n  <li>First</li>\n  <li>Second</li>\n</ul>\n<a href="https://example.com">A link</a>',
       starter: '<ul>\n  <li>Add three</li>\n  <li>list items</li>\n</ul>\n<a href="https://example.com">Click me</a>\n',
       checks: ["Has a <ul> with at least 2 <li> items", "Has an <a> link with href"],
-      why: "🎉 Lists and links — now your pages can organize info and connect to others!" },
+      why: "Lists and links — now your pages can organize info and connect to others!" },
     { title: "Images and structure", teach: "An <img src=\"...\"> shows an image. A <div> groups content into a block you can style later.",
       example: '<div>\n  <h2>A section</h2>\n  <img src="https://picsum.photos/200" alt="random">\n</div>',
       starter: '<div>\n  <h2>My favorite thing</h2>\n  <img src="https://picsum.photos/200" alt="a picture">\n</div>\n',
       checks: ["Has a <div> wrapping content", "Has an <img> with src and alt"],
-      why: "🎉 Images and divs — the building blocks of real layouts!" },
+      why: "Images and divs — the building blocks of real layouts!" },
   ],
   css: [
     { title: "Colors and text", teach: "CSS styles HTML. You select an element (like .box) and set properties. `background` sets the color behind it, `color` sets the text color.",
       example: ".box {\n  background: skyblue;\n  color: white;\n}",
       starter: ".box {\n  background: coral;\n  color: white;\n  padding: 20px;\n}\n",
       checks: ["Styles .box with a background color", "Sets a text color"],
-      why: "🎉 You styled an element — color is the first step to beautiful pages!" },
+      why: "You styled an element — color is the first step to beautiful pages!" },
     { title: "Size and spacing", teach: "`width` and `height` set an element's size. `padding` adds space inside it, `margin` adds space outside. `border` draws a line around it.",
       example: ".box {\n  width: 150px;\n  height: 150px;\n  border: 3px solid navy;\n}",
       starter: ".box {\n  width: 150px;\n  height: 150px;\n  background: gold;\n  border: 4px solid darkorange;\n}\n",
       checks: ["Sets a width and height on .box", "Adds a border"],
-      why: "🎉 Sizing and borders — you're controlling the box model, the heart of CSS layout!" },
+      why: "Sizing and borders — you're controlling the box model, the heart of CSS layout!" },
     { title: "Make a button pretty", teach: "You can style any element. Round corners with `border-radius`, and remove the default look. `cursor: pointer` makes it feel clickable.",
       example: ".btn {\n  background: purple;\n  color: white;\n  border-radius: 8px;\n}",
       starter: ".btn {\n  background: mediumseagreen;\n  color: white;\n  border: none;\n  border-radius: 10px;\n  padding: 12px 24px;\n  cursor: pointer;\n}\n",
       checks: ["Styles .btn with background and color", "Uses border-radius for rounded corners"],
-      why: "🎉 A custom button — real UI styling right there!" },
+      why: "A custom button — real UI styling right there!" },
   ],
   jsx: [
     { title: "Your first component", teach: "React builds UIs from components — functions that return JSX (HTML-like markup). You render one into the page with ReactDOM.",
       example: 'const App = () => <h1>Hello!</h1>;\nReactDOM.createRoot(document.getElementById("root")).render(<App />);',
       starter: 'const App = () => <h1>Hello from React!</h1>;\n\nReactDOM.createRoot(document.getElementById("root")).render(<App />);\n',
       checks: ["Defines a component returning JSX", "Renders it with ReactDOM into #root"],
-      why: "🎉 Your first React component rendered live — this is how modern web apps are built!" },
+      why: "Your first React component rendered live — this is how modern web apps are built!" },
     { title: "Props and multiple elements", teach: "Components can take props (inputs). Wrap multiple elements in a fragment <>...</> or a <div>. Use {curly braces} to insert values.",
       example: 'const Greet = ({name}) => <p>Hi, {name}!</p>;\nconst App = () => <div><h1>Welcome</h1><Greet name="Sam" /></div>;',
       starter: 'const Greet = ({ name }) => <p>Hi, {name}!</p>;\n\nconst App = () => (\n  <div>\n    <h1>Welcome</h1>\n    <Greet name="Sam" />\n  </div>\n);\n\nReactDOM.createRoot(document.getElementById("root")).render(<App />);\n',
       checks: ["A component accepts and uses a prop", "Renders multiple elements together"],
-      why: "🎉 Props let components reuse and compose — the superpower of React!" },
+      why: "Props let components reuse and compose — the superpower of React!" },
   ],
   vue: [
     { title: "Your first Vue app", teach: "Vue mounts an app onto an element. The `template` describes the HTML, and `data` holds values you can show with {{ curly braces }}.",
       example: 'Vue.createApp({\n  data() { return { msg: "Hello!" }; },\n  template: "<h1>{{ msg }}</h1>"\n}).mount("#app");',
       starter: 'Vue.createApp({\n  data() {\n    return { message: "Hello from Vue!" };\n  },\n  template: "<h1>{{ message }}</h1>"\n}).mount("#app");\n',
       checks: ["Creates a Vue app with data", "Shows a data value in the template with {{ }}"],
-      why: "🎉 A reactive Vue app — change the data and the page updates automatically!" },
+      why: "A reactive Vue app — change the data and the page updates automatically!" },
     { title: "Vue with a list", teach: "Vue's v-for repeats an element for each item in an array. You bind it in the template to render lists from data.",
       example: 'template: "<ul><li v-for=\'item in items\'>{{ item }}</li></ul>"',
       starter: 'Vue.createApp({\n  data() {\n    return { items: ["Apple", "Banana", "Cherry"] };\n  },\n  template: "<ul><li v-for=\'item in items\'>{{ item }}</li></ul>"\n}).mount("#app");\n',
       checks: ["Has an array in data", "Uses v-for to render the list"],
-      why: "🎉 v-for renders lists from data — a core Vue pattern!" },
+      why: "v-for renders lists from data — a core Vue pattern!" },
   ],
   svelte: [
     { title: "Your first Svelte component", teach: "Svelte components are HTML with a <script> block for logic. Variables in the script show up in the markup with {curly braces}.",
       example: '<script>\n  let name = "world";\n</script>\n\n<h1>Hello {name}!</h1>',
       starter: '<script>\n  let name = "Svelte";\n</script>\n\n<h1>Hello {name}!</h1>\n<p>This is a Svelte component.</p>\n',
       checks: ["Has a <script> with a variable", "Shows the variable in the markup with { }"],
-      why: "🎉 A live Svelte component — clean and simple, no boilerplate!" },
+      why: "A live Svelte component — clean and simple, no boilerplate!" },
     { title: "Svelte with a list", teach: "Svelte's {#each} block loops over an array to render repeated markup. It's Svelte's way of building lists.",
       example: '{#each items as item}\n  <li>{item}</li>\n{/each}',
       starter: '<script>\n  let items = ["One", "Two", "Three"];\n</script>\n\n<ul>\n  {#each items as item}\n    <li>{item}</li>\n  {/each}\n</ul>\n',
       checks: ["Has an array in the script", "Uses {#each} to render the list"],
-      why: "🎉 The {#each} block — Svelte's elegant way to render lists!" },
+      why: "The {#each} block — Svelte's elegant way to render lists!" },
   ],
 };
 
@@ -2981,7 +3039,7 @@ const CLASSES = [
   { id: "ai_general", tab: "ai", label: "AI Basics", emoji: "🤖", mode: "concept", blurb: "Start here. What AI actually is, in plain words — and what it isn't.", steps: [
     { type: "puzzle", chapter: "1 · What AI really is", title: "AI is pattern-spotting", intro: "Here's the core idea behind all AI: instead of a person writing exact rules, the computer looks at MANY examples and figures out the pattern itself. Imagine showing a friend 500 photos of cats and 500 of dogs without ever explaining the difference — after enough photos, they'd just 'get' which is which. AI learns the same way: from examples, not from being told the rules.", q: "What's the main way AI figures things out?", why: "Exactly — AI learns patterns from examples. Nobody wrote a rule like 'cats have pointy ears'; the AI noticed it across thousands of pictures.", choices: ["By spotting patterns in lots of examples", "By being told every exact rule by a person", "By guessing randomly each time"], correctIndex: 0 },
     { type: "puzzle", chapter: "1 · What AI really is", title: "Why 'intelligence' is a tricky word", intro: "We call it 'artificial intelligence,' but AI doesn't think or understand like you do. When a chatbot answers you, it isn't 'reasoning' about the world — it's predicting what words most likely come next, based on patterns from huge amounts of text. It's incredibly good at that, which can LOOK like understanding. Knowing the difference helps you use AI wisely.", q: "When a chatbot replies, what's it really doing?", why: "Right — it predicts likely words. That's why it can sound confident even when it's wrong; it's pattern-matching, not understanding.", choices: ["Predicting likely next words from patterns", "Thinking and understanding like a human", "Looking up the answer in a fact-book"], correctIndex: 0 },
-    { type: "puzzle", chapter: "2 · AI in everyday life", title: "You already use AI", intro: "AI isn't just chatbots. When your phone suggests the next word while texting, when a video app recommends what to watch, when your email filters spam — that's all AI spotting patterns. Recognizing it around you makes it less mysterious: it's a tool doing pattern-work, everywhere.", q: "Which of these uses AI?", why: "Yes! AI is already woven into everyday apps — mostly quiet pattern-spotting you don't even notice.", choices: ["All of them — texting suggestions, recommendations, spam filters", "Only robots that look human", "Only supercomputers in labs"], correctIndex: 0 },
+    { type: "puzzle", chapter: "2 · AI in everyday life", title: "You already use AI", intro: "AI isn't just chatbots. When your phone suggests the next word while texting, when a video app recommends what to watch, when your email filters spam — that's all AI spotting patterns. Recognizing it around you makes it less mysterious: it's a tool doing pattern-work, everywhere.", q: "Which of these uses AI?", why: "Correct. AI is already woven into everyday apps — mostly quiet pattern-spotting you don't even notice.", choices: ["All of them — texting suggestions, recommendations, spam filters", "Only robots that look human", "Only supercomputers in labs"], correctIndex: 0 },
     { type: "puzzle", chapter: "2 · AI in everyday life", title: "Why AI gets things wrong", intro: "Because AI learns from examples, it can only be as good as what it saw — and it can confidently make mistakes. If it never saw something, or saw misleading examples, it guesses based on patterns and can be flat wrong. This is why you should always double-check AI on anything important. It's a helpful assistant, not an all-knowing oracle.", q: "Why should you double-check important AI answers?", why: "Correct — AI predicts from patterns, so it can be confidently mistaken. Trust, but verify.", choices: ["It can sound sure but still be wrong", "It's always wrong", "It only works on weekends"], correctIndex: 0 }
   ] },
   { id: "ai_ml", tab: "ai", label: "Machine Learning", emoji: "📊", mode: "concept", blurb: "How machines actually 'learn' from data — the engine under most AI.", steps: [
@@ -3101,7 +3159,7 @@ function AppInner({ initialState, onPersist, onSignOut } = {}) {
       if (!raw) return { name: "home" };
       const p = JSON.parse(raw);
       if (!p || typeof p !== "object" || typeof p.name !== "string") return { name: "home" };
-      const VALID_SCREENS = ["home", "class", "lesson", "projectPick", "project", "circuits", "circuitLab", "ailab", "aiLab", "breadboard"];
+      const VALID_SCREENS = ["home", "class", "lesson", "projectPick", "project", "labs", "circuits", "circuitLab", "circuitLessons", "ailab", "aiLab", "aiLessons", "breadboard"];
       if (!VALID_SCREENS.includes(p.name)) return { name: "home" };
       return p;
     } catch { return { name: "home" }; }
@@ -3460,7 +3518,7 @@ function AppInner({ initialState, onPersist, onSignOut } = {}) {
     let clean = (newName || "").trim();
     if (!clean || clean === oldName) return;
     // Keep the ✨ marker so renamed AI topics still read as generated sets.
-    if (!clean.startsWith("✨")) clean = "✨ " + clean;
+    if (!clean.startsWith("")) clean = "" + clean;
     if (clean === oldName) return;
     setAiLessons((a) => {
       const list = a[classId] || [];
@@ -3476,17 +3534,27 @@ function AppInner({ initialState, onPersist, onSignOut } = {}) {
       <style>{CSS}</style>
       <header className="cq-header">
         <div className="cq-brand" onClick={() => setScreen({ name: "home" })} style={{ cursor: "pointer" }}>
-          <span className="cq-logo">{"</>"}</span><span className="cq-name">CodeQuest</span>
-          <span style={{ fontSize: 10, opacity: 0.4, marginLeft: 8, fontWeight: 400 }}>{CQ_VERSION}</span>
+          <span className="cq-logo" aria-label="CodeQuest logo">
+            <svg viewBox="0 0 32 32" width="26" height="26" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <linearGradient id="cqg" x1="4" y1="4" x2="28" y2="28" gradientUnits="userSpaceOnUse">
+                  <stop stopColor="var(--neon-bright)" />
+                  <stop offset="1" stopColor="var(--magenta)" />
+                </linearGradient>
+              </defs>
+              {/* quest node: a hex waypoint with a forward chevron carved out — code + journey */}
+              <path d="M16 3.2l10.4 6v11.6l-10.4 6-10.4-6V9.2z" stroke="url(#cqg)" strokeWidth="2" strokeLinejoin="round" />
+              <path d="M12.5 11.5L17 16l-4.5 4.5" stroke="var(--neon-bright)" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+              <circle cx="20.5" cy="16" r="1.6" fill="var(--magenta)" />
+            </svg>
+          </span><span className="cq-name">CodeQuest</span>
         </div>
         <div className="cq-headerright">
           {!isOnline && <span className="cq-offline-badge" title="You're offline — progress is saved on this device and will sync when you reconnect">📴 Offline · saved here</span>}
           {isOnline && pendingSync && <span className="cq-offline-badge syncing" title="Syncing your latest progress to your account">🔄 Syncing…</span>}
           <button className="cq-projbtn" onClick={() => setScreen({ name: "projectPick" })}>🛠️ Projects</button>
-          <button className="cq-projbtn" onClick={() => setScreen({ name: "circuits" })}>🔌 Circuits</button>
-          <button className="cq-projbtn" onClick={() => setScreen({ name: "ailab" })}>🧠 AI Lab</button>
-          <button className="cq-projbtn" onClick={() => setScreen({ name: "breadboard" })}>🔋 Breadboard</button>
-          {totalDone > 0 && <div className="cq-xp">⭐ {totalDone} lessons done</div>}
+          <button className="cq-projbtn" onClick={() => setScreen({ name: "labs" })}>🔬 Labs</button>
+          {totalDone > 0 && <div className="cq-xp">{totalDone} lessons complete</div>}
           {onSignOut && <button className="cq-projbtn" onClick={onSignOut}>Sign out</button>}
         </div>
       </header>
@@ -3503,18 +3571,38 @@ function AppInner({ initialState, onPersist, onSignOut } = {}) {
         <ProjectPicker onBack={() => setScreen({ name: "home" })} onStart={(plan) => setScreen({ name: "project", plan })} />
       )}
 
+      {screen.name === "labs" && (
+        <LabsHub
+          onBack={() => setScreen({ name: "home" })}
+          onOpen={(which) => setScreen({ name: which })}
+          circuitDone={circuitDone}
+          aiDone={aiDone} />
+      )}
+
+      {/* Creative Labs — open canvases, no challenges. Teacher helps toward YOUR goal. */}
       {screen.name === "circuits" && (
+        <CircuitLab
+          onBack={() => setScreen({ name: "labs" })}
+          onHome={() => setScreen({ name: "home" })} />
+      )}
+
+      {screen.name === "breadboard" && (
+        <Breadboard onBack={() => setScreen({ name: "labs" })} />
+      )}
+
+      {screen.name === "ailab" && (
+        <AILab onBack={() => setScreen({ name: "labs" })} />
+      )}
+
+      {/* Structured challenges now live as LESSONS, reached from the lessons flow. */}
+      {screen.name === "circuitLessons" && (
         <CircuitLessons
           onBack={() => setScreen({ name: "home" })}
           doneIds={circuitDone}
           onOpenChallenge={(ch) => setScreen({ name: "circuitLab", challenge: ch })} />
       )}
 
-      {screen.name === "breadboard" && (
-        <Breadboard onBack={() => setScreen({ name: "home" })} />
-      )}
-
-      {screen.name === "ailab" && (
+      {screen.name === "aiLessons" && (
         <AILessons
           onBack={() => setScreen({ name: "home" })}
           doneIds={aiDone}
@@ -3524,14 +3612,14 @@ function AppInner({ initialState, onPersist, onSignOut } = {}) {
       {screen.name === "aiLab" && (
         <AILab
           challenge={screen.challenge}
-          onBack={() => setScreen({ name: screen.challenge ? "ailab" : "home" })}
+          onBack={() => setScreen({ name: screen.challenge ? "aiLessons" : "labs" })}
           onChallengeComplete={(id) => setAiDone((prev) => (prev.includes(id) ? prev : [...prev, id]))} />
       )}
 
       {screen.name === "circuitLab" && (
         <CircuitLab
           challenge={screen.challenge}
-          onBack={() => setScreen({ name: screen.challenge ? "circuits" : "home" })}
+          onBack={() => setScreen({ name: screen.challenge ? "circuitLessons" : "labs" })}
           onHome={() => setScreen({ name: "home" })}
           onChallengeComplete={(id) => setCircuitDone((prev) => (prev.includes(id) ? prev : [...prev, id]))} />
       )}
@@ -3616,7 +3704,7 @@ class AppErrorBoundary extends React.Component {
   render() {
     if (this.state.crashed) {
       return (
-        <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#0e1320", color: "#e8ecf5", fontFamily: "system-ui, sans-serif", padding: 24 }}>
+        <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#070a12", color: "#dae2f0", fontFamily: "system-ui, sans-serif", padding: 24 }}>
           <div style={{ maxWidth: 460, textAlign: "center", background: "#141a2b", border: "1px solid #263049", borderRadius: 16, padding: 32, boxShadow: "0 8px 40px rgba(0,0,0,.4)" }}>
             <div style={{ fontSize: 40, marginBottom: 12 }}>🔧</div>
             <h1 style={{ fontSize: 20, margin: "0 0 10px" }}>Something hiccupped</h1>
@@ -3624,7 +3712,7 @@ class AppErrorBoundary extends React.Component {
               The app hit a snag and needs a quick reload. Your progress is saved — reloading picks up right where you were.
             </p>
             <button onClick={() => { try { window.location.reload(); } catch {} }}
-              style={{ background: "#6366f1", color: "#fff", border: "none", borderRadius: 10, padding: "12px 28px", fontSize: 15, fontWeight: 600, cursor: "pointer" }}>
+              style={{ background: "var(--neon)", color: "#04121a", border: "none", borderRadius: 10, padding: "12px 28px", fontSize: 15, fontWeight: 600, cursor: "pointer" }}>
               Reload
             </button>
             <p style={{ fontSize: 11, color: "#5a6280", marginTop: 18, fontFamily: "monospace", wordBreak: "break-word" }}>{this.state.msg}</p>
@@ -3832,7 +3920,7 @@ function Home({ progress, aiLessons, savedProjects = [], profileDescription = ""
               </div>
               <p className="cq-classblurb">{cls.blurb}</p>
               {total > 0 && <div className="cq-classbar"><div className="cq-classbar-fill" style={{ width: `${pct}%` }} /></div>}
-              <span className="cq-classcta">{total === 0 ? "✨ Build this class →" : started ? (pct === 100 ? "✓ Review class" : "Continue →") : "Start class →"}</span>
+              <span className="cq-classcta">{total === 0 ? "Build this class →" : started ? (pct === 100 ? "✓ Review class" : "Continue →") : "Start class →"}</span>
             </button>
           );
         };
@@ -4226,7 +4314,7 @@ function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, ge
           (!showBuilder && !genBusy) ? (
             <>
               <div className="cq-gentext">
-                <h3>{cls.id === "general" ? "✨ More brain-training" : "✨ Want more practice?"}</h3>
+                <h3>{cls.id === "general" ? "More brain-training" : "Want more practice?"}</h3>
                 <p>Build your own topic sets — let the AI pick topics, or choose exactly what you want to learn, and how many mini-lessons each set has.</p>
               </div>
               <button className="cq-genbtn" onClick={() => { setShowBuilder(true); setBuildErr(""); }}>Make a topic set</button>
@@ -4926,7 +5014,7 @@ function RunStep({ step, onDone }) {
           {step.expectedOutput != null && !out.passed && out.ok && <div className="cq-nudge">Close — the output doesn't match what's expected yet. Compare carefully!</div>}
         </div>
       )}
-      {out?.passed && <div className="cq-takeaway big">{step.why || "🎉 It compiled, ran, and printed exactly the right thing — for real."}</div>}
+      {out?.passed && <div className="cq-takeaway big">{step.why || "It compiled, ran, and printed exactly the right thing — for real."}</div>}
     </div>
   );
 }
@@ -5024,7 +5112,7 @@ function AiRunStep({ step, onDone }) {
           {step.expectedOutput != null && !out.passed && !out.error && <div className="cq-nudge">Close — the output doesn't match what's expected yet. Compare carefully!</div>}
         </div>
       )}
-      {out?.passed && <div className="cq-takeaway big">{step.why || "🎉 That's what your code would print — nicely done."}</div>}
+      {out?.passed && <div className="cq-takeaway big">{step.why || "That's what your code would print — nicely done."}</div>}
       {/* Hidden iframe that runs the translated JS and posts stdout back */}
       <iframe ref={iframeRef} title="stdout capture" sandbox="allow-scripts" style={{ display: "none" }} />
     </div>
@@ -5108,7 +5196,7 @@ function VisualStep({ step, onDone }) {
           <iframe title="visual output" className="cq-canvas" sandbox="allow-scripts" srcDoc={srcDoc} />
         </div>
       )}
-      {hasRun && !err && <div className="cq-takeaway big">{step.why || "🎉 Your code drew that — nice!"}</div>}
+      {hasRun && !err && <div className="cq-takeaway big">{step.why || "Your code drew that — nice!"}</div>}
     </div>
   );
 }
@@ -5131,6 +5219,9 @@ function TypeStep({ step, onDone }) {
     else if (step.lang === "ts") v = await verifyTypeScript(code, step.fnName, step.tests);
     else if (step.lang === "lua") v = await verifyLua(code, step.fnName, step.tests);
     else if (step.lang === "java") v = await verifyJava(code, step.fnName, step.tests, javaConsoleRef.current, javaDisplayRef.current);
+    else if (step.lang === "c") v = await verifyCFamily(code, step.fnName, step.tests, false);
+    else if (step.lang === "cpp") v = await verifyCFamily(code, step.fnName, step.tests, true);
+    else if (step.lang === "php") v = await verifyPHP(code, step.fnName, step.tests);
     else v = verifyRuns(code, step.fnName, step.tests);
     setResult(v); setRunning(false);
     if (v.ok) onDone(stats.buildStats());
@@ -5213,7 +5304,7 @@ function SQLStep({ step, onDone }) {
       <CodeEditor code={code} setCode={setCode} onChange={() => setResult(null)} onKeyDown={onKeyDown} lang="sql" minHeight={140} />
       <div className="cq-buildrow"><button className="cq-run" onClick={run} disabled={running || !code.trim()}>{running ? "Running…" : "▶ Run query"}</button></div>
       {result && !result.ok && <div className="cq-nudge">Almost — {result.why || "that's not the expected result yet"}.</div>}
-      {result?.ok && <div className="cq-takeaway big">{step.why || "🎉 Correct — that query ran on a real database!"}</div>}
+      {result?.ok && <div className="cq-takeaway big">{step.why || "Correct — that query ran on a real database!"}</div>}
     </div>
   );
 }
@@ -5871,10 +5962,103 @@ const AI_PATTERNS = {
   OR:   { label: "OR",  data: [[[0,0],0],[[0,1],1],[[1,0],1],[[1,1],1]], hint: "One neuron can learn this." },
   XOR:  { label: "XOR (tricky!)", data: [[[0,0],0],[[0,1],1],[[1,0],1],[[1,1],0]], hint: "This one NEEDS hidden neurons — a single neuron can't do it!" },
 };
+
+// Build the 8 combinations of 3 binary inputs.
+const _combos3 = [];
+for (let a = 0; a < 2; a++) for (let b = 0; b < 2; b++) for (let c = 0; c < 2; c++) _combos3.push([a, b, c]);
+
+// Different KINDS of problems the network can learn. Bounded on purpose (≤3 inputs,
+// small fixed datasets) so the tiny in-browser net always converges and nothing breaks.
+const AI_TASKS = {
+  gates: {
+    label: "Logic gates (2 inputs)", nIn: 2, kind: "logic",
+    hint: "Classic AND / OR / XOR. Great for seeing why XOR needs hidden neurons.",
+    patterns: AI_PATTERNS, defaultPattern: "AND",
+  },
+  logic3: {
+    label: "3-input puzzles", nIn: 3, kind: "logic",
+    hint: "Harder patterns with three inputs — majority vote and parity really stretch the network.",
+    patterns: {
+      MAJORITY: { label: "Majority (2 of 3)", data: _combos3.map((c) => [c, (c[0] + c[1] + c[2]) >= 2 ? 1 : 0]), hint: "Output 1 when at least two inputs are on." },
+      ALLON:    { label: "All three on", data: _combos3.map((c) => [c, (c[0] && c[1] && c[2]) ? 1 : 0]), hint: "A 3-input AND — only fires when all are on." },
+      PARITY:   { label: "Parity (odd count)", data: _combos3.map((c) => [c, (c[0] ^ c[1] ^ c[2])]), hint: "Fires when an odd number of inputs are on — the hardest one, needs several hidden neurons." },
+    },
+    defaultPattern: "MAJORITY",
+  },
+  classify: {
+    label: "Classify dots", nIn: 2, kind: "classify",
+    hint: "Two groups of dots on a grid — watch the network learn the boundary that separates them.",
+    shapes: {
+      CLUSTERS: { label: "Two blobs" },
+      DIAGONAL: { label: "Split by a line" },
+      CIRCLE:   { label: "Inside vs outside (hard)" },
+    },
+    defaultShape: "CLUSTERS",
+  },
+};
+
+// Generate 2D classification points for a chosen shape (bounded count).
+function aiMakePoints(shape) {
+  const pts = []; const r = () => Math.random();
+  const N = 24;
+  if (shape === "DIAGONAL") {
+    for (let i = 0; i < N; i++) { const x = r(), y = r(); pts.push([[x, y], x + y > 1 ? 1 : 0]); }
+  } else if (shape === "CIRCLE") {
+    for (let i = 0; i < N; i++) { const x = r(), y = r(); const d = Math.hypot(x - 0.5, y - 0.5); pts.push([[x, y], d < 0.28 ? 1 : 0]); }
+  } else { // CLUSTERS
+    for (let i = 0; i < N / 2; i++) {
+      pts.push([[0.28 + (r() - 0.5) * 0.28, 0.28 + (r() - 0.5) * 0.28], 0]);
+      pts.push([[0.72 + (r() - 0.5) * 0.28, 0.72 + (r() - 0.5) * 0.28], 1]);
+    }
+  }
+  return pts;
+}
+// Visualizes 2D classification: a background grid colored by the network's
+// prediction (the decision boundary you can watch form), with training dots on top.
+function AIClassifyView({ points, net }) {
+  const SIZE = 240, CELLS = 24, cell = SIZE / CELLS;
+  const cells = [];
+  for (let gy = 0; gy < CELLS; gy++) {
+    for (let gx = 0; gx < CELLS; gx++) {
+      const x = (gx + 0.5) / CELLS, y = (gy + 0.5) / CELLS;
+      const pred = nnPredict(net, [x, y]); // 0..1
+      cells.push({ gx, gy, pred });
+    }
+  }
+  const col = (p) => {
+    // blue (class 0) → magenta (class 1)
+    const t = Math.max(0, Math.min(1, p));
+    const r = Math.round(60 + t * 130), g = Math.round(90 - t * 30), b = Math.round(190 - t * 40);
+    return `rgb(${r},${g},${b})`;
+  };
+  return (
+    <div className="cq-ai-classify">
+      <svg viewBox={`0 0 ${SIZE} ${SIZE}`} width={SIZE} height={SIZE} className="cq-ai-classsvg">
+        {cells.map((c, i) => (
+          <rect key={i} x={c.gx * cell} y={c.gy * cell} width={cell + 0.5} height={cell + 0.5} fill={col(c.pred)} opacity="0.55" />
+        ))}
+        {points.map(([inp, label], i) => (
+          <circle key={i} cx={inp[0] * SIZE} cy={inp[1] * SIZE} r="5"
+            fill={label === 1 ? "#e05a9c" : "#4f9de0"} stroke="#fff" strokeWidth="1.5" />
+        ))}
+      </svg>
+      <p className="cq-ai-classhint">The background shows what the network predicts everywhere — watch the boundary between the two colors sharpen as it learns to separate the dots.</p>
+    </div>
+  );
+}
 function AILab({ onBack, challenge = null, onChallengeComplete = null }) {
+  const [task, setTask] = useState("gates"); // gates | logic3 | classify
+  const taskDef = AI_TASKS[task];
   const [pattern, setPattern] = useState(challenge ? challenge.pattern : "AND");
+  const [shape, setShape] = useState("CLUSTERS");
+  const [points, setPoints] = useState(() => aiMakePoints("CLUSTERS"));
+  // Creative mode: the learner can define their OWN pattern — the target output
+  // for each of the 4 input combinations. Starts as a copy of the current preset.
+  const [customTargets, setCustomTargets] = useState([0, 0, 0, 1]); // for [00],[01],[10],[11]
+  const [useCustom, setUseCustom] = useState(false);
+  const [goal, setGoal] = useState(""); // creative mode: what the learner wants
   const [hidden, setHidden] = useState(2);
-  const [net, setNet] = useState(() => nnNewNetwork(2));
+  const [net, setNet] = useState(() => nnNewNetwork(2, 2));
   const [epoch, setEpoch] = useState(0);
   const [error, setError] = useState(null);
   const [training, setTraining] = useState(false);
@@ -5882,12 +6066,38 @@ function AILab({ onBack, challenge = null, onChallengeComplete = null }) {
   const [chat, setChat] = useState([]);
   const [question, setQuestion] = useState("");
   const [asking, setAsking] = useState(false);
+  const [tuneMode, setTuneMode] = useState(false); // manual weight adjustment
 
-  const data = AI_PATTERNS[pattern].data;
+  // Set a single weight/bias by hand and re-render live.
+  const setW1 = (j, i, v) => setNet((n) => { const w1 = n.w1.map((r) => [...r]); w1[j][i] = v; return { ...n, w1 }; });
+  const setB1 = (j, v) => setNet((n) => { const b1 = [...n.b1]; b1[j] = v; return { ...n, b1 }; });
+  const setW2 = (j, v) => setNet((n) => { const w2 = [...n.w2]; w2[j] = v; return { ...n, w2 }; });
+  const setB2 = (v) => setNet((n) => ({ ...n, b2: v }));
 
-  const reset = (h = hidden) => {
+  const inputCombos = [[0, 0], [0, 1], [1, 0], [1, 1]];
+  // The training data depends on the task.
+  const data = task === "classify"
+    ? points
+    : task === "logic3"
+    ? taskDef.patterns[pattern] ? taskDef.patterns[pattern].data : taskDef.patterns[taskDef.defaultPattern].data
+    : useCustom
+    ? inputCombos.map((inp, i) => [inp, customTargets[i]])
+    : AI_PATTERNS[pattern] ? AI_PATTERNS[pattern].data : AI_PATTERNS.AND.data;
+
+  const reset = (h = hidden, nIn = taskDef.nIn) => {
     if (trainRef.current) { clearInterval(trainRef.current); trainRef.current = null; }
-    setNet(nnNewNetwork(h)); setEpoch(0); setError(null); setTraining(false);
+    setNet(nnNewNetwork(h, nIn)); setEpoch(0); setError(null); setTraining(false);
+  };
+
+  // Switch task: pick a valid default pattern/shape and rebuild the net for its input count.
+  const switchTask = (tk) => {
+    setTask(tk); setUseCustom(false);
+    const def = AI_TASKS[tk];
+    if (tk === "gates") setPattern("AND");
+    else if (tk === "logic3") setPattern(def.defaultPattern);
+    else if (tk === "classify") { setShape(def.defaultShape); setPoints(aiMakePoints(def.defaultShape)); }
+    if (trainRef.current) { clearInterval(trainRef.current); trainRef.current = null; }
+    setNet(nnNewNetwork(hidden, def.nIn)); setEpoch(0); setError(null); setTraining(false);
   };
 
   const train = () => {
@@ -5922,11 +6132,14 @@ function AILab({ onBack, challenge = null, onChallengeComplete = null }) {
     const q = question.trim(); if (!q) return;
     setChat((c) => [...c, { role: "you", text: q }]); setQuestion(""); setAsking(true);
     try {
-      const state = `The learner is training a neural network to learn the ${pattern} pattern, with ${hidden} hidden neuron(s). ` +
+      const patternDesc = useCustom
+        ? `their OWN custom pattern (they set the target outputs themselves)`
+        : `the ${pattern} pattern`;
+      const state = `The learner is training a neural network to learn ${patternDesc}, with ${hidden} hidden neuron(s). ` +
         `After ${epoch} training rounds, the network's answers are: ` +
         rows.map((r) => `input (${r.inp.join(",")}) → ${r.p.toFixed(2)} (should be ${r.target})`).join("; ") + ". " +
         (allCorrect ? "It has learned the pattern correctly." : "It hasn't fully learned it yet.");
-      const a = await askAITeacher({ state, question: q });
+      const a = await askAITeacher({ state, question: q, goal: challenge ? challenge.brief : goal });
       setChat((c) => [...c, { role: "teacher", text: a }]);
     } catch {
       setChat((c) => [...c, { role: "teacher", text: "I couldn't answer just now — the teacher needs the live AI connection." }]);
@@ -5945,19 +6158,55 @@ function AILab({ onBack, challenge = null, onChallengeComplete = null }) {
       ) : (
         <>
           <h1 className="cq-home-title">Watch a network learn.</h1>
-          <p className="cq-home-sub">A neural network isn't magic — it's neurons (weighted sums) that adjust themselves from examples. Pick a pattern, hit Train, and watch it figure it out.</p>
+          <p className="cq-home-sub">A neural network isn't magic — it's neurons (weighted sums) that adjust themselves from examples. Pick a pattern (or make your own!), hit Train, and watch it figure it out — or set the weights yourself.</p>
+          <div className="cq-lab-goalrow">
+            <span className="cq-lab-goallbl">🎯 Building toward something?</span>
+            <input className="cq-search" placeholder="e.g. teach it to fire only when inputs differ" value={goal} onChange={(e) => setGoal(e.target.value)} />
+          </div>
+          {goal.trim() && <p className="cq-lab-goalnote">The teacher will help you get there — ask it anything about your network.</p>}
         </>
       )}
 
-      <div className="cq-ai-controls">
-        <div className="cq-ai-ctrl">
-          <span className="cq-ai-lbl">Pattern to learn</span>
+      {!challenge && (
+        <div className="cq-ai-tasks">
+          <span className="cq-ai-lbl">What should it learn?</span>
           <div className="cq-ai-chips">
-            {Object.keys(AI_PATTERNS).map((p) => (
-              <button key={p} className={`cq-ai-chip ${pattern === p ? "active" : ""}`} onClick={() => { setPattern(p); reset(); }}>{AI_PATTERNS[p].label}</button>
+            {Object.keys(AI_TASKS).map((tk) => (
+              <button key={tk} className={`cq-ai-chip ${task === tk ? "active" : ""}`} onClick={() => switchTask(tk)}>{AI_TASKS[tk].label}</button>
             ))}
           </div>
+          <p className="cq-ai-hint" style={{ marginTop: 8 }}>💡 {taskDef.hint}</p>
         </div>
+      )}
+
+      <div className="cq-ai-controls">
+        {task !== "classify" && (
+        <div className="cq-ai-ctrl">
+          <span className="cq-ai-lbl">{task === "logic3" ? "Puzzle" : "Pattern"} to learn</span>
+          <div className="cq-ai-chips">
+            {task === "gates" && Object.keys(AI_PATTERNS).map((p) => (
+              <button key={p} className={`cq-ai-chip ${!useCustom && pattern === p ? "active" : ""}`} onClick={() => { setPattern(p); setUseCustom(false); reset(); }}>{AI_PATTERNS[p].label}</button>
+            ))}
+            {task === "logic3" && Object.keys(taskDef.patterns).map((p) => (
+              <button key={p} className={`cq-ai-chip ${pattern === p ? "active" : ""}`} onClick={() => { setPattern(p); reset(); }}>{taskDef.patterns[p].label}</button>
+            ))}
+            {task === "gates" && !challenge && (
+              <button className={`cq-ai-chip ${useCustom ? "active" : ""}`} onClick={() => { setUseCustom(true); reset(); }}>✏️ Make your own</button>
+            )}
+          </div>
+        </div>
+        )}
+        {task === "classify" && (
+        <div className="cq-ai-ctrl">
+          <span className="cq-ai-lbl">Dot arrangement</span>
+          <div className="cq-ai-chips">
+            {Object.keys(taskDef.shapes).map((sh) => (
+              <button key={sh} className={`cq-ai-chip ${shape === sh ? "active" : ""}`} onClick={() => { setShape(sh); setPoints(aiMakePoints(sh)); reset(); }}>{taskDef.shapes[sh].label}</button>
+            ))}
+            <button className="cq-ai-chip" onClick={() => { setPoints(aiMakePoints(shape)); reset(); }}>🎲 New dots</button>
+          </div>
+        </div>
+        )}
         <div className="cq-ai-ctrl">
           <span className="cq-ai-lbl">Hidden neurons: {hidden}</span>
           <div className="cq-ai-chips">
@@ -5967,7 +6216,25 @@ function AILab({ onBack, challenge = null, onChallengeComplete = null }) {
           </div>
         </div>
       </div>
-      <p className="cq-ai-hint">💡 {AI_PATTERNS[pattern].hint}</p>
+
+      {useCustom && !challenge && (
+        <div className="cq-ai-custom">
+          <p className="cq-ai-customhint">✏️ Your pattern: tap each output to set what the network should learn. For each pair of inputs, decide if the answer is 0 or 1 — then train it (or tune the weights) to match!</p>
+          <div className="cq-ai-customgrid">
+            <div className="cq-ai-customhead"><span>input 1</span><span>input 2</span><span>→ output</span></div>
+            {inputCombos.map((inp, i) => (
+              <div key={i} className="cq-ai-customrow">
+                <span className="cq-ai-cellin">{inp[0]}</span>
+                <span className="cq-ai-cellin">{inp[1]}</span>
+                <button className={`cq-ai-celltgt ${customTargets[i] ? "on" : ""}`} onClick={() => setCustomTargets((t) => t.map((v, j) => (j === i ? (v ? 0 : 1) : v)))}>{customTargets[i]}</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {task === "gates" && !useCustom && <p className="cq-ai-hint">💡 {AI_PATTERNS[pattern] ? AI_PATTERNS[pattern].hint : ""}</p>}
+      {task === "gates" && useCustom && <p className="cq-ai-hint">💡 Some patterns are easy (one neuron); tricky ones like "fire when inputs differ" (XOR) need hidden neurons. Experiment!</p>}
+      {task === "logic3" && <p className="cq-ai-hint">💡 {taskDef.patterns[pattern] ? taskDef.patterns[pattern].hint : ""}</p>}
 
       {/* Network diagram */}
       <div className="cq-ai-diagram">
@@ -5988,13 +6255,13 @@ function AILab({ onBack, challenge = null, onChallengeComplete = null }) {
           {[0,1].map((i) => Array.from({length:hidden}).map((_,j) => {
             const y = 90 + (j-(hidden-1)/2)*45;
             const wt = net.w1[j] ? net.w1[j][i] : 0;
-            return <line key={'iw'+i+j} x1="56" y1={60+i*60} x2="146" y2={y} className="cq-ai-wire" strokeWidth={Math.min(4,Math.abs(wt)*1.2+0.3)} stroke={wt>=0?'#4fd1c5':'#f6836b'} />;
+            return <line key={'iw'+i+j} x1="56" y1={60+i*60} x2="146" y2={y} className="cq-ai-wire" strokeWidth={Math.min(4,Math.abs(wt)*1.2+0.3)} stroke={wt>=0?'#3ac9e0':'#bd54dd'} />;
           }))}
           {/* hidden→output */}
           {Array.from({length:hidden}).map((_,j) => {
             const y = 90 + (j-(hidden-1)/2)*45;
             const wt = net.w2[j]||0;
-            return <line key={'ow'+j} x1="174" y1={y} x2="264" y2="90" className="cq-ai-wire" strokeWidth={Math.min(4,Math.abs(wt)*1.2+0.3)} stroke={wt>=0?'#4fd1c5':'#f6836b'} />;
+            return <line key={'ow'+j} x1="174" y1={y} x2="264" y2="90" className="cq-ai-wire" strokeWidth={Math.min(4,Math.abs(wt)*1.2+0.3)} stroke={wt>=0?'#3ac9e0':'#bd54dd'} />;
           })}
         </svg>
       </div>
@@ -6002,10 +6269,50 @@ function AILab({ onBack, challenge = null, onChallengeComplete = null }) {
       <div className="cq-ai-trainrow">
         <button className="cq-run" onClick={train}>{training ? "⏸ Pause" : epoch > 0 ? "▶ Keep training" : "▶ Train it"}</button>
         <button className="cq-clearbtn" onClick={() => reset()}>↺ Reset</button>
+        <button className={`cq-clearbtn ${tuneMode ? "active" : ""}`} onClick={() => setTuneMode((t) => !t)}>🎛️ {tuneMode ? "Hide" : "Tune"} weights</button>
         <span className="cq-ai-stat">Rounds: {epoch}{error !== null && ` · error: ${error.toFixed(3)}`}</span>
       </div>
 
+      {tuneMode && (
+        <div className="cq-ai-tune">
+          <p className="cq-ai-tunehint">🎛️ Set the weights yourself and watch the output change instantly. A weight is how strongly one neuron pushes the next. Try making a neuron fire only when both inputs are on — that's an AND gate, built from weights!</p>
+          {net.w1.map((wj, j) => (
+            <div key={j} className="cq-ai-tunegroup">
+              <span className="cq-ai-tunelbl">Hidden neuron {j + 1}</span>
+              {wj.map((w, i) => (
+                <div key={i} className="cq-ai-tunerow">
+                  <span className="cq-ai-tunename">input {i + 1} → n{j + 1}</span>
+                  <input type="range" min="-10" max="10" step="0.1" value={w} onChange={(e) => setW1(j, i, parseFloat(e.target.value))} className="cq-bb-slider" />
+                  <span className="cq-ai-tuneval">{w.toFixed(1)}</span>
+                </div>
+              ))}
+              <div className="cq-ai-tunerow">
+                <span className="cq-ai-tunename">bias n{j + 1}</span>
+                <input type="range" min="-10" max="10" step="0.1" value={net.b1[j]} onChange={(e) => setB1(j, parseFloat(e.target.value))} className="cq-bb-slider" />
+                <span className="cq-ai-tuneval">{net.b1[j].toFixed(1)}</span>
+              </div>
+            </div>
+          ))}
+          <div className="cq-ai-tunegroup">
+            <span className="cq-ai-tunelbl">Output neuron</span>
+            {net.w2.map((w, j) => (
+              <div key={j} className="cq-ai-tunerow">
+                <span className="cq-ai-tunename">n{j + 1} → output</span>
+                <input type="range" min="-10" max="10" step="0.1" value={w} onChange={(e) => setW2(j, parseFloat(e.target.value))} className="cq-bb-slider" />
+                <span className="cq-ai-tuneval">{w.toFixed(1)}</span>
+              </div>
+            ))}
+            <div className="cq-ai-tunerow">
+              <span className="cq-ai-tunename">bias output</span>
+              <input type="range" min="-10" max="10" step="0.1" value={net.b2} onChange={(e) => setB2(parseFloat(e.target.value))} className="cq-bb-slider" />
+              <span className="cq-ai-tuneval">{net.b2.toFixed(1)}</span>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Predictions table */}
+      {task !== "classify" && (
       <div className="cq-ai-table">
         <div className="cq-ai-throw cq-ai-thead"><span>Input</span><span>Network says</span><span>Should be</span><span></span></div>
         {rows.map((r, i) => (
@@ -6017,7 +6324,11 @@ function AILab({ onBack, challenge = null, onChallengeComplete = null }) {
           </div>
         ))}
       </div>
-      {allCorrect && epoch > 0 && <p className="cq-ai-success">🎉 The network learned {pattern}! Every answer is right.</p>}
+      )}
+      {task === "classify" && (
+        <AIClassifyView points={points} net={net} />
+      )}
+      {allCorrect && epoch > 0 && <p className="cq-ai-success">The network learned it — every answer is right.</p>}
       {pattern === "XOR" && hidden === 1 && epoch > 200 && !allCorrect && (
         <p className="cq-ai-hint">See how it's stuck? XOR can't be learned with just one hidden neuron — try 2 or more. This is a famous result in AI history!</p>
       )}
@@ -6040,13 +6351,54 @@ function AILab({ onBack, challenge = null, onChallengeComplete = null }) {
     </main>
   );
 }
-async function askAITeacher({ state, question, signal }) {
+async function askAITeacher({ state, question, goal, signal }) {
   const sys =
     "You are a warm teacher helping a beginner understand neural networks using a hands-on lab where they train a tiny network and watch it learn. " +
     "You can see the exact state of their network (below) — this is real, computed by an actual neural network, so trust it. " +
+    (goal && goal.trim()
+      ? "This is a CREATIVE build and the learner has told you their OWN goal: \"" + goal.trim() + "\". Help them get THERE — look at what their network currently does versus their goal and give a specific next step (train more? add hidden neurons? adjust weights?). Their goal is the target, not one you pick. "
+      : "This is a free creative exploration. Help with whatever they're trying, or ask what they'd like to build. ") +
     "Explain simply and concretely, grounded in what their network is actually doing. Keep it brief and encouraging. Never imply AI is magic — it's weighted sums adjusting from examples.\n\n" +
     "THEIR NETWORK RIGHT NOW:\n" + state;
   return await callClaude([{ role: "user", content: question }], { system: sys, maxTokens: 600, signal });
+}
+
+// A single hub for all the hands-on labs — keeps the home screen tidy and gives
+// the labs one consistent place, parallel to Projects.
+function LabsHub({ onBack, onOpen, circuitDone = [], aiDone = [] }) {
+  const labs = [
+    { id: "circuits", emoji: "🔌", title: "Circuit Lab", blurb: "Build logic gates and wire them into real circuits — how computers think, from switches up to a working adder.", progress: circuitDone.length ? `${circuitDone.length} done` : null },
+    { id: "ailab", emoji: "🧠", title: "AI Lab", blurb: "Train real neural networks and watch them learn from examples — see how AI actually works, no magic.", progress: aiDone.length ? `${aiDone.length} done` : null },
+    { id: "breadboard", emoji: "🔋", title: "Breadboard", blurb: "Wire real electronic components — battery, resistor, LED — with real physics. Light it up or watch it burn out.", progress: null },
+  ];
+  return (
+    <main className="cq-main">
+      <button className="cq-back" onClick={onBack}>← Home</button>
+      <p className="cq-eyebrow">Labs</p>
+      <h1 className="cq-home-title">Hands-on labs.</h1>
+      <p className="cq-home-sub">Learn by building the real thing. Each lab lets you construct, run, and understand how computers and AI actually work under the hood.</p>
+      <div className="cq-classlist" style={{ marginTop: 10 }}>
+        {labs.map((lab) => (
+          <button key={lab.id} className="cq-classcard" onClick={() => onOpen(lab.id)}>
+            <div className="cq-classtop">
+              <span className="cq-classemoji">{lab.emoji}</span>
+              <div className="cq-classnames">
+                <span className="cq-classlabel">{lab.title}</span>
+                {lab.progress && <span className="cq-classsub">{lab.progress}</span>}
+              </div>
+            </div>
+            <p className="cq-classblurb">{lab.blurb}</p>
+            <span className="cq-classcta">Open →</span>
+          </button>
+        ))}
+      </div>
+      <div className="cq-circ-freelink">
+        <span className="cq-lab-lessonhint">Want guided, step-by-step challenges instead of free building?</span>
+        <button className="cq-genbtn" onClick={() => onOpen("circuitLessons")}>🔌 Circuit challenges →</button>
+        <button className="cq-genbtn" onClick={() => onOpen("aiLessons")}>🧠 AI challenges →</button>
+      </div>
+    </main>
+  );
 }
 
 function CircuitLessons({ onBack, onOpenChallenge, doneIds = [] }) {
@@ -6079,6 +6431,48 @@ function CircuitLessons({ onBack, onOpenChallenge, doneIds = [] }) {
   );
 }
 
+// Standard IEEE/ANSI logic-gate symbols (the universal textbook shapes — public
+// standard, not any product's design). Drawn as SVG so they look professional and
+// scale cleanly. Body lights up when the gate's output is high.
+function GateSymbol({ type, on, w = 64, h = 44 }) {
+  const stroke = on ? "var(--neon)" : "#9fb0cc";
+  const fill = on ? "rgba(58,201,224,.14)" : "var(--bg-3)";
+  const sw = 2;
+  // viewBox space 0..100 x, 0..70 y; leave room for input stubs (left) and output (right).
+  const bubble = (cx) => <circle cx={cx} cy="35" r="5" fill={fill} stroke={stroke} strokeWidth={sw} />;
+  let body = null, hasBubble = false, outX = 78;
+  const base = type === "NAND" ? "AND" : type === "NOR" ? "OR" : type === "XNOR" ? "XOR" : type;
+  if (type === "NAND" || type === "NOR" || type === "XNOR" || type === "NOT") hasBubble = true;
+  if (base === "AND" || type === "NOT") {
+    // NOT reuses a triangle instead — handle separately
+  }
+  if (type === "NOT") {
+    body = <polygon points="26,12 26,58 66,35" fill={fill} stroke={stroke} strokeWidth={sw} strokeLinejoin="round" />;
+    outX = 66;
+  } else if (base === "AND") {
+    body = <path d="M26 12 L50 12 A23 23 0 0 1 50 58 L26 58 Z" fill={fill} stroke={stroke} strokeWidth={sw} strokeLinejoin="round" />;
+    outX = 73;
+  } else if (base === "OR") {
+    body = <path d="M24 12 Q46 12 68 35 Q46 58 24 58 Q34 35 24 12 Z" fill={fill} stroke={stroke} strokeWidth={sw} strokeLinejoin="round" />;
+    outX = 68;
+  } else if (base === "XOR") {
+    body = (<g>
+      <path d="M28 12 Q50 12 72 35 Q50 58 28 58 Q38 35 28 12 Z" fill={fill} stroke={stroke} strokeWidth={sw} strokeLinejoin="round" />
+      <path d="M20 12 Q30 35 20 58" fill="none" stroke={stroke} strokeWidth={sw} />
+    </g>);
+    outX = 72;
+  } else {
+    // fallback: labeled box
+    body = <rect x="24" y="12" width="48" height="46" rx="6" fill={fill} stroke={stroke} strokeWidth={sw} />;
+  }
+  return (
+    <svg viewBox="0 0 100 70" width={w} height={h} className="cq-gate-svg" preserveAspectRatio="xMidYMid meet">
+      {body}
+      {hasBubble && bubble(outX + 5)}
+      <text x={base === "AND" ? 45 : 40} y="39" className="cq-gate-txt" fill={stroke}>{base}</text>
+    </svg>
+  );
+}
 function CircuitLab({ onBack, onHome, challenge = null, onChallengeComplete = null }) {
   // components: switches (inputs), gates, lights (outputs)
   // In lesson mode, seed the canvas with exactly the switches + light the
@@ -6104,6 +6498,7 @@ function CircuitLab({ onBack, onHome, challenge = null, onChallengeComplete = nu
   const [question, setQuestion] = useState("");
   const [chat, setChat] = useState([]);
   const [asking, setAsking] = useState(false);
+  const [goal, setGoal] = useState(""); // creative mode: what the learner wants to build
   const canvasRef = useRef(null);
 
   // Build the engine circuit from the visual components + wires, then evaluate.
@@ -6190,7 +6585,7 @@ function CircuitLab({ onBack, onHome, challenge = null, onChallengeComplete = nu
     setChat((c) => [...c, { role: "you", text: q }]); setQuestion(""); setAsking(true);
     try {
       const desc = describeCircuit(comps, wires, evalResult);
-      const a = await askCircuitTeacher({ circuit: desc, question: q });
+      const a = await askCircuitTeacher({ circuit: desc, question: q, goal: challenge ? challenge.brief : goal });
       setChat((c) => [...c, { role: "teacher", text: a }]);
     } catch {
       setChat((c) => [...c, { role: "teacher", text: "I couldn't answer just now — the teacher needs the live AI connection." }]);
@@ -6211,6 +6606,11 @@ function CircuitLab({ onBack, onHome, challenge = null, onChallengeComplete = nu
         <>
           <h1 className="cq-home-title">Build a circuit.</h1>
           <p className="cq-home-sub">Add switches, gates, and a light. Wire them up, flip the switches, and watch what turns on. This is how computers actually think — in ones and zeros.</p>
+          <div className="cq-lab-goalrow">
+            <span className="cq-lab-goallbl">🎯 Building toward something?</span>
+            <input className="cq-search" placeholder="e.g. light on only when both switches are on" value={goal} onChange={(e) => setGoal(e.target.value)} />
+          </div>
+          {goal.trim() && <p className="cq-lab-goalnote">The teacher will help you get there — ask it anything about your circuit.</p>}
         </>
       )}
 
@@ -6259,7 +6659,7 @@ function CircuitLab({ onBack, onHome, challenge = null, onChallengeComplete = nu
               }}>
               {c.kind === "switch" && <span className="cq-circ-lbl">{c.label}<br />{c.on ? "1" : "0"}</span>}
               {c.kind === "light" && <span className="cq-circ-lbl">{c.label}</span>}
-              {c.kind === "gate" && <span className="cq-circ-lbl">{def.symbol}</span>}
+              {c.kind === "gate" && <GateSymbol type={c.gateType} on={isOn} w={gateW} h={gateH} />}
 
               {/* ports */}
               {c.kind !== "switch" && def && Array.from({ length: def.inputs }).map((_, p) => (
@@ -6291,7 +6691,7 @@ function CircuitLab({ onBack, onHome, challenge = null, onChallengeComplete = nu
           }}>✓ Check my circuit</button>
           {checkResult && (
             <span className={checkResult.pass ? "cq-circ-pass" : "cq-circ-fail"}>
-              {checkResult.pass ? "🎉 Correct! You built it." : checkResult.detail}
+              {checkResult.pass ? "Correct! You built it." : checkResult.detail}
             </span>
           )}
         </div>
@@ -6341,11 +6741,14 @@ function describeCircuit(comps, wires, result) {
   if (!result.settled) lines.push("NOTE: the circuit oscillates and never settles.");
   return lines.join("\n");
 }
-async function askCircuitTeacher({ circuit, question, signal }) {
+async function askCircuitTeacher({ circuit, question, goal, signal }) {
   const sys =
     "You are a warm teacher helping a beginner build a LOGIC-GATE circuit (switches, AND/OR/NOT/etc. gates, and lights). " +
     "You can SEE their exact circuit below, including which switches are on and which lights are lit — this is GROUND TRUTH computed by a real simulator, so trust it. " +
-    "Give a short, friendly, concrete answer grounded in THEIR circuit. If a light isn't on when they want it on, look at the wiring and switch states and tell them specifically what to change. Keep it brief — a nudge, not a lecture, unless they ask to learn a concept properly.\n\n" +
+    (goal && goal.trim()
+      ? "This is a CREATIVE build and the learner has told you their OWN goal: \"" + goal.trim() + "\". Help them get THERE — compare what their circuit currently does against their goal, and give a specific next step toward it. Don't impose a different goal; theirs is the target. "
+      : "This is a free creative build with no fixed goal. Help them with whatever they're exploring or ask what they're trying to make. ") +
+    "Give a short, friendly, concrete answer grounded in THEIR circuit. If a light isn't behaving how they want, look at the wiring and switch states and tell them specifically what to change. Keep it brief — a nudge, not a lecture, unless they ask to learn a concept properly.\n\n" +
     "THEIR CIRCUIT RIGHT NOW:\n" + circuit;
   return await callClaude([{ role: "user", content: question }], { system: sys, maxTokens: 600, signal });
 }
@@ -6356,23 +6759,25 @@ async function askCircuitTeacher({ circuit, question, signal }) {
 // from examples, and a 2-layer net learning XOR. Small enough to run live.
 const nnSigmoid = (x) => 1 / (1 + Math.exp(-x));
 // A network: { hidden: number of hidden neurons, w1, b1, w2, b2 }. 2 inputs, 1 output.
-function nnNewNetwork(hidden) {
+function nnNewNetwork(hidden, nIn = 2) {
   const rand = () => Math.random() * 2 - 1;
   return {
-    hidden,
-    w1: Array.from({ length: hidden }, () => [rand(), rand()]),
+    hidden, nIn,
+    w1: Array.from({ length: hidden }, () => Array.from({ length: nIn }, rand)),
     b1: Array.from({ length: hidden }, () => rand()),
     w2: Array.from({ length: hidden }, () => rand()),
     b2: rand(),
   };
 }
 function nnForward(net, inp) {
-  const h = net.w1.map((wj, j) => nnSigmoid(inp[0] * wj[0] + inp[1] * wj[1] + net.b1[j]));
+  const nIn = net.nIn || 2;
+  const h = net.w1.map((wj, j) => nnSigmoid(wj.reduce((s, w, i) => s + w * inp[i], 0) + net.b1[j]));
   const out = nnSigmoid(h.reduce((s, hj, j) => s + hj * net.w2[j], net.b2));
   return { h, out };
 }
 // One epoch of training over the dataset; returns average error.
 function nnTrainEpoch(net, data, lr = 0.5) {
+  const nIn = net.nIn || 2;
   let totalErr = 0;
   for (const [inp, target] of data) {
     const { h, out } = nnForward(net, inp);
@@ -6382,8 +6787,7 @@ function nnTrainEpoch(net, data, lr = 0.5) {
     for (let j = 0; j < net.hidden; j++) net.w2[j] -= lr * dOut * h[j];
     net.b2 -= lr * dOut;
     for (let j = 0; j < net.hidden; j++) {
-      net.w1[j][0] -= lr * dH[j] * inp[0];
-      net.w1[j][1] -= lr * dH[j] * inp[1];
+      for (let i = 0; i < nIn; i++) net.w1[j][i] -= lr * dH[j] * inp[i];
       net.b1[j] -= lr * dH[j];
     }
   }
@@ -6397,64 +6801,173 @@ function nnPredict(net, inp) { return nnForward(net, inp).out; }
 // result into plain-English health the learner (and AI) can understand.
 const BB_COMPONENTS = {
   battery: { label: "Battery (9V)", legs: ["+", "−"], value: 9, emoji: "🔋" },
+  battery3: { label: "Battery (3V)", legs: ["+", "−"], value: 3, emoji: "🔋" },
   resistor: { label: "Resistor", legs: ["end1", "end2"], value: 470, emoji: "▬", adjustable: true },
-  led: { label: "LED", legs: ["anode (long leg)", "cathode (short leg)"], emoji: "💡" },
+  pot: { label: "Potentiometer", legs: ["end1", "wiper", "end2"], value: 10000, emoji: "🎛", adjustable: true, adjMax: 10000, wiper: 0.5, threeLeg: true },
+  led: { label: "LED (red)", legs: ["anode (long leg)", "cathode (short leg)"], emoji: "🔴", color: "#ff5a5a", vf: 1.8 },
+  ledGreen: { label: "LED (green)", legs: ["anode (long leg)", "cathode (short leg)"], emoji: "🟢", color: "#5aff8a", vf: 2.1 },
+  ledBlue: { label: "LED (blue)", legs: ["anode (long leg)", "cathode (short leg)"], emoji: "🔵", color: "#5a9cff", vf: 3.0 },
+  switch: { label: "Switch", legs: ["in", "out"], emoji: "⭘", toggle: true },
 };
 let _bbId = 1;
+// ============ TINKERCAD-STYLE BREADBOARD ============
+// A real breadboard: components plug their legs into holes. Holes in the same
+// column (within a bank) are electrically connected, the two banks are split by
+// a center gap, and power rails run down the sides — exactly like a physical board.
+const BB_ROWS_TOP = [2, 3, 4, 5, 6];      // top bank rows (columns connect vertically)
+const BB_ROWS_BOT = [8, 9, 10, 11, 12];   // bottom bank rows
+const BB_COLS = 24;                        // number of columns
+const BB_HOLE = 20;                        // px spacing between holes
+const BB_X0 = 46, BB_Y0 = 40;              // board origin
+
+// The electrical net a hole belongs to. Same net = wired together.
+function bbNetOf(row, col) {
+  if (row === 0) return "P_top";
+  if (row === 1) return "N_top";
+  if (row === 15) return "P_bot";
+  if (row === 16) return "N_bot";
+  if (row >= 2 && row <= 6) return "T" + col;
+  if (row >= 8 && row <= 12) return "B" + col;
+  return "iso_" + row + "_" + col; // center gap: isolated
+}
+function bbHoleXY(row, col) {
+  // rows: 0=+top,1=-top, gap, 2-6 top bank, 7 center gap, 8-12 bottom bank, gap, 15=+bot,16=-bot
+  const rowY = { 0: 0, 1: 22, 2: 60, 3: 80, 4: 100, 5: 120, 6: 140, 8: 178, 9: 198, 10: 218, 11: 238, 12: 258, 15: 296, 16: 318 };
+  return { x: BB_X0 + col * BB_HOLE, y: BB_Y0 + (rowY[row] ?? 0) };
+}
+let _tbId = 1;
+
 function Breadboard({ onBack }) {
+  const [boards, setBoards] = useState([]); // placeable breadboards: {id, x, y}
+  const [dragBoard, setDragBoard] = useState(null); // {id, offx, offy} while dragging
+  const [dragComp, setDragComp] = useState(null); // {id, offx, offy} while dragging a component
+  const [wires, setWires] = useState([]); // leg-to-leg wires: {a:{comp,leg}, b:{comp,leg}}
+  const [wiring, setWiring] = useState(null); // {comp, leg} first leg of a leg-to-leg wire
+  const [wireColor, setWireColor] = useState("#e8514f"); // current wire color
   const [comps, setComps] = useState([]);
-  const [wires, setWires] = useState([]); // {from:{comp,leg}, to:{comp,leg}}
-  const [wiring, setWiring] = useState(null);
-  const [tool, setTool] = useState("wire");
+  const [jumpers, setJumpers] = useState([]);   // {a:{row,col}, b:{row,col}, color}
+  const [placing, setPlacing] = useState(null);  // {kind} being placed, awaiting hole taps
+  const [placeLeg, setPlaceLeg] = useState(0);   // which leg we're placing (0 or 1)
+  const [pendingLegs, setPendingLegs] = useState([]); // legs placed so far for the component being added
+  const [jumperStart, setJumperStart] = useState(null); // first hole of a jumper
+  const [tool, setTool] = useState("wire");     // place | jumper | delete | move
   const [selected, setSelected] = useState(null);
+  const [goal, setGoal] = useState("");
   const [result, setResult] = useState(null);
   const [chat, setChat] = useState([]);
   const [question, setQuestion] = useState("");
   const [asking, setAsking] = useState(false);
 
-  const addComp = (kind) => {
-    const def = BB_COMPONENTS[kind];
-    const id = kind + (_bbId++);
-    setComps((c) => [...c, { id, kind, x: 30 + (c.length % 3) * 110, y: 40 + Math.floor(c.length / 3) * 90, value: def.value }]);
+  const addBoard = () => {
+    setBoards((b) => [...b, { id: "board" + (_tbId++), x: 20 + b.length * 30, y: 20 + b.length * 30 }]);
     setResult(null);
   };
-  const removeComp = (id) => { setComps((c) => c.filter((x) => x.id !== id)); setWires((w) => w.filter((x) => x.from.comp !== id && x.to.comp !== id)); setResult(null); setSelected(null); };
-  const setResistance = (id, v) => { setComps((c) => c.map((x) => (x.id === id ? { ...x, value: v } : x))); setResult(null); };
 
+  const startPlacing = (kind) => {
+    // Drop the component directly onto the canvas with free-standing legs.
+    // Its two legs sit a little apart; you wire them to other legs (or plug into a board).
+    const def = BB_COMPONENTS[kind];
+    const n = comps.length;
+    const bx = 60 + (n % 4) * 140, by = 60 + Math.floor(n / 4) * 90;
+    const legs = def.legs.map((_, i) => ({ x: bx + i * 46, y: by }));
+    setComps((c) => [...c, { id: kind + (_tbId++), kind, legs, value: def.value, on: false, cx: bx, cy: by, wiper: def.wiper }]);
+    setResult(null); setPlacing(null); setTool("wire");
+  };
+
+  // Tap a hole: depends on tool + whether we're mid-placement.
+  const tapHole = (row, col) => {
+    if (tool === "place" && placing) {
+      const legs = [...pendingLegs, { row, col }];
+      const need = BB_COMPONENTS[placing].legs.length;
+      if (legs.length >= need) {
+        const def = BB_COMPONENTS[placing];
+        setComps((c) => [...c, { id: placing + (_tbId++), kind: placing, legs, value: def.value, on: false }]);
+        setPlacing(null); setPendingLegs([]); setResult(null);
+      } else {
+        setPendingLegs(legs);
+      }
+      return;
+    }
+    if (tool === "jumper") {
+      if (!jumperStart) { setJumperStart({ row, col }); return; }
+      if (jumperStart.row === row && jumperStart.col === col) { setJumperStart(null); return; }
+      setJumpers((j) => [...j, { a: jumperStart, b: { row, col }, color: "#e8514f" }]);
+      setJumperStart(null); setResult(null);
+      return;
+    }
+  };
+
+  const removeComp = (id) => { setComps((c) => c.filter((x) => x.id !== id)); setSelected(null); setResult(null); };
+  const setResistance = (id, v) => { setComps((c) => c.map((x) => (x.id === id ? { ...x, value: v } : x))); setResult(null); };
+  const toggleSwitch = (id) => { setComps((cs) => cs.map((x) => x.id === id ? { ...x, on: !x.on } : x)); setResult(null); };
+  // Resolve a leg to an {x,y} pixel position: board holes use bbHoleXY (offset by
+  // the board's position if it's on a board), free legs use their own x,y.
+  const legXY = (c, li) => {
+    const leg = c.legs[li];
+    if (!leg) return { x: 0, y: 0 };
+    if (leg.row !== undefined) {
+      const board = boards[0]; const bp = bbHoleXY(leg.row, leg.col);
+      return board ? { x: bp.x + board.x, y: bp.y + board.y } : bp;
+    }
+    return { x: leg.x, y: leg.y };
+  };
+
+  // Tap a leg dot: connect two legs with a wire (leg-to-leg).
   const tapLeg = (compId, legIdx) => {
-    if (tool !== "wire") return;
+    if (tool === "delete") return;
     if (!wiring) { setWiring({ comp: compId, leg: legIdx }); return; }
     if (wiring.comp === compId && wiring.leg === legIdx) { setWiring(null); return; }
-    setWires((w) => [...w, { from: { ...wiring }, to: { comp: compId, leg: legIdx } }]);
+    setWires((w) => [...w, { a: wiring, b: { comp: compId, leg: legIdx }, color: wireColor }]);
     setWiring(null); setResult(null);
   };
 
-  // Build the engine netlist from components + leg-to-leg wires, then simulate.
+  const clearAll = () => { setComps([]); setJumpers([]); setWires([]); setResult(null); setSelected(null); setPlacing(null); setPendingLegs([]); setJumperStart(null); setWiring(null); };
+
+  // A leg's electrical net: a board hole → bbNetOf; a free canvas leg → unique id.
+  const legNet = (c, li) => {
+    const leg = c.legs[li];
+    if (!leg) return null;
+    if (leg.row !== undefined) return bbNetOf(leg.row, leg.col);
+    return "leg_" + c.id + "_" + li;
+  };
+
+  // Simulate: nets come from board holes, jumper wires (hole-to-hole), and
+  // leg-to-leg wires (free canvas). Then MNA. Works with or without a board.
   const simulate = () => {
-    // Union-find over legs to assign circuit nodes. Each (comp,leg) is a terminal.
-    const legKey = (c, l) => c + "#" + l;
     const parent = {};
     const find = (k) => { if (parent[k] === undefined) parent[k] = k; while (parent[k] !== k) { parent[k] = parent[parent[k]]; k = parent[k]; } return k; };
-    const union = (a, b) => { parent[find(a)] = find(b); };
-    for (const c of comps) BB_COMPONENTS[c.kind].legs.forEach((_, i) => find(legKey(c.id, i)));
-    for (const w of wires) union(legKey(w.from.comp, w.from.leg), legKey(w.to.comp, w.to.leg));
-    // Assign node numbers; ground = the battery − leg's group (node 0).
-    const battery = comps.find((c) => c.kind === "battery");
+    const union = (a, b) => { if (a && b) parent[find(a)] = find(b); };
+    const hn = (h) => bbNetOf(h.row, h.col);
+    for (const j of jumpers) union(hn(j.a), hn(j.b));
+    // leg-to-leg wires (free canvas)
+    const compById = (id) => comps.find((x) => x.id === id);
+    for (const w of wires) union(legNet(compById(w.a.comp), w.a.leg), legNet(compById(w.b.comp), w.b.leg));
+    for (const c of comps) if (c.kind === "switch" && c.on && c.legs[0] && c.legs[1]) union(legNet(c, 0), legNet(c, 1));
+    const battery = comps.find((c) => (c.kind === "battery" || c.kind === "battery3") && c.legs[0] && c.legs[1]);
     if (!battery) { setResult({ error: "Add a battery — a circuit needs a power source." }); return; }
-    const groundGroup = find(legKey(battery.id, 1)); // − leg
-    const groupToNode = { [groundGroup]: 0 };
-    let nextNode = 1;
-    const nodeOf = (c, l) => { const g = find(legKey(c, l)); if (groupToNode[g] === undefined) groupToNode[g] = nextNode++; return groupToNode[g]; };
+    const gnd = find(legNet(battery, 1));
+    const netNode = { [gnd]: 0 };
+    let next = 1;
+    const nodeOf = (c, li) => { const n = find(legNet(c, li)); if (netNode[n] === undefined) netNode[n] = next++; return netNode[n]; };
     const engineComps = [];
     for (const c of comps) {
-      if (c.kind === "battery") engineComps.push({ type: "V", id: c.id, n1: nodeOf(c.id, 0), n2: nodeOf(c.id, 1), value: c.value });
-      else if (c.kind === "resistor") engineComps.push({ type: "R", id: c.id, n1: nodeOf(c.id, 0), n2: nodeOf(c.id, 1), value: c.value });
-      else if (c.kind === "led") engineComps.push({ type: "LED", id: c.id, n1: nodeOf(c.id, 0), n2: nodeOf(c.id, 1), value: 0 });
+      if (c.kind === "pot") {
+        // 3-leg pot = voltage divider: end1→wiper and wiper→end2, split by wiper (0..1).
+        if (!c.legs[0] || !c.legs[1] || !c.legs[2]) continue;
+        const nE1 = nodeOf(c, 0), nW = nodeOf(c, 1), nE2 = nodeOf(c, 2);
+        const w = c.wiper ?? 0.5;
+        engineComps.push({ type: "R", id: c.id + "_a", n1: nE1, n2: nW, value: Math.max(1, c.value * w) });
+        engineComps.push({ type: "R", id: c.id + "_b", n1: nW, n2: nE2, value: Math.max(1, c.value * (1 - w)) });
+        continue;
+      }
+      if (!c.legs[0] || !c.legs[1]) continue;
+      const n1 = nodeOf(c, 0), n2 = nodeOf(c, 1);
+      if (c.kind === "battery" || c.kind === "battery3") engineComps.push({ type: "V", id: c.id, n1, n2, value: BB_COMPONENTS[c.kind].value });
+      else if (c.kind === "resistor") engineComps.push({ type: "R", id: c.id, n1, n2, value: Math.max(1, c.value) });
+      else if (c.kind === "led" || c.kind === "ledGreen" || c.kind === "ledBlue") engineComps.push({ type: "LED", id: c.id, n1, n2, value: 0, vf: BB_COMPONENTS[c.kind].vf });
     }
-    const numNodes = nextNode;
     let sim;
-    try { sim = mnaSolveDC(numNodes, engineComps); } catch (e) { setResult({ error: "Couldn't solve this circuit — check your wiring." }); return; }
-    // Translate into plain-English health per component.
+    try { sim = mnaSolveDC(next, engineComps); } catch (e) { setResult({ error: "Couldn't solve this circuit — check your wiring." }); return; }
     const health = analyzeBreadboard(comps, engineComps, sim);
     setResult({ health, V: sim.V });
   };
@@ -6463,67 +6976,217 @@ function Breadboard({ onBack }) {
     const q = question.trim(); if (!q) return;
     setChat((c) => [...c, { role: "you", text: q }]); setQuestion(""); setAsking(true);
     try {
-      const desc = describeBreadboard(comps, wires, result);
-      const a = await askBreadboardTeacher({ circuit: desc, question: q });
+      const desc = describeBreadboard(comps, jumpers, result);
+      const a = await askBreadboardTeacher({ circuit: desc, question: q, goal: goal.trim() || null });
       setChat((c) => [...c, { role: "teacher", text: a }]);
-    } catch { setChat((c) => [...c, { role: "teacher", text: "I couldn't answer just now — the teacher needs the live AI connection." }]); }
+    } catch { setChat((c) => [...c, { role: "teacher", text: "I couldn't answer just now — the teacher needs the live connection." }]); }
     finally { setAsking(false); }
   };
 
+  // ---- render the SVG breadboard ----
+  const allRows = [0, 1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 15, 16];
+  const litOf = (compId) => result && result.health && result.health[compId];
+  const boardW = BB_X0 + BB_COLS * BB_HOLE + 20;
+
   return (
     <main className="cq-main">
-      <button className="cq-back" onClick={onBack}>← Home</button>
+      <button className="cq-back" onClick={onBack}>← Labs</button>
       <p className="cq-eyebrow">Breadboard · Real electronics</p>
-      <h1 className="cq-home-title">Wire up real components.</h1>
-      <p className="cq-home-sub">Place a battery, resistor, and LED, then connect their legs. This runs REAL circuit physics — get it right and the LED lights up; forget the resistor and it burns out, just like real life.</p>
+      <h1 className="cq-home-title">Electronics workspace.</h1>
+      <p className="cq-home-sub">Add components and wire them together — tap two leg dots to connect them. Or add a breadboard to plug into if you want one. Power it on and watch real physics: get it right and the LED lights; forget a resistor and it burns out.</p>
+
+      <div className="cq-lab-goalrow">
+        <span className="cq-lab-goallbl">🎯 Building toward something?</span>
+        <input className="cq-search" placeholder="e.g. a switch that turns an LED on" value={goal} onChange={(e) => setGoal(e.target.value)} />
+      </div>
 
       <div className="cq-circ-palette">
         <span className="cq-circ-plabel">Add:</span>
+        <button className="cq-circ-pbtn board" onClick={addBoard}>🔲 Breadboard</button>
         {Object.keys(BB_COMPONENTS).map((k) => (
-          <button key={k} className="cq-circ-pbtn" onClick={() => addComp(k)}>{BB_COMPONENTS[k].emoji} {BB_COMPONENTS[k].label}</button>
+          <button key={k} className={`cq-circ-pbtn ${placing === k ? "active" : ""}`} onClick={() => startPlacing(k)} disabled={boards.length === 0 && false}>{BB_COMPONENTS[k].emoji} {BB_COMPONENTS[k].label}</button>
         ))}
       </div>
       <div className="cq-circ-tools">
-        <button className={`cq-circ-tool ${tool === "wire" ? "active" : ""}`} onClick={() => { setTool("wire"); }}>🔌 Wire legs</button>
-        <button className={`cq-circ-tool ${tool === "delete" ? "active" : ""}`} onClick={() => { setTool("delete"); setWiring(null); }}>🗑️ Delete</button>
-        {wiring && <span className="cq-circ-hint">Now tap another leg to connect →</span>}
+        <button className={`cq-circ-tool ${tool === "wire" ? "active" : ""}`} onClick={() => { setTool("wire"); setPlacing(null); setWiring(null); }}>🔗 Wire (tap two legs)</button>
+        {tool === "wire" && (
+          <span className="cq-wire-colors">
+            {["#e8514f", "#4f8de0", "#3ec98a", "#e0a94f", "#111", "#e8e8e8"].map((col) => (
+              <button key={col} className={`cq-wire-swatch ${wireColor === col ? "active" : ""}`} style={{ background: col }} onClick={() => setWireColor(col)} title="Wire color" />
+            ))}
+          </span>
+        )}
+        <button className={`cq-circ-tool ${tool === "delete" ? "active" : ""}`} onClick={() => { setTool("delete"); setPlacing(null); }}>🗑️ Delete (tap a part or wire)</button>
+        <button className="cq-circ-tool" onClick={clearAll}>↺ Clear</button>
+        {tool === "wire" && !wiring && <span className="cq-circ-hint">Tap a leg dot to start a wire →</span>}
+        {tool === "wire" && wiring && <span className="cq-circ-hint">Tap another leg to connect →</span>}
       </div>
 
-      <div className="cq-bb-canvas">
-        <svg className="cq-circ-wires">
+      <div className="cq-tb-scroll">
+        {boards.length === 0 && comps.length === 0 && (
+          <div className="cq-tb-emptyhint">
+            <p>Empty workspace. Add components from the palette above — wire them together, or add a breadboard to plug into.</p>
+          </div>
+        )}
+        <svg className="cq-tb-board" width={boardW + 60} height={BB_Y0 + 380} viewBox={`0 0 ${boardW + 60} ${BB_Y0 + 380}`}
+          onPointerMove={(e) => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            const scale = (boardW + 60) / rect.width;
+            const mx = (e.clientX - rect.left) * scale, my = (e.clientY - rect.top) * scale;
+            if (dragBoard) {
+              setBoards((bs) => bs.map((b) => b.id === dragBoard.id ? { ...b, x: Math.max(-10, mx - dragBoard.offx), y: Math.max(-10, my - dragBoard.offy) } : b));
+            } else if (dragComp) {
+              const dx = mx - dragComp.startX, dy = my - dragComp.startY;
+              setComps((cs) => cs.map((c) => {
+                if (c.id !== dragComp.id) return c;
+                const legs = c.legs.map((leg, i) => leg.row !== undefined ? leg : { x: dragComp.legBase[i].x + dx, y: dragComp.legBase[i].y + dy });
+                return { ...c, legs };
+              }));
+            }
+          }}
+          onPointerUp={() => { setDragBoard(null); setDragComp(null); }} onPointerLeave={() => { setDragBoard(null); setDragComp(null); }}>
+          {boards.map((board) => (
+          <g key={board.id} transform={`translate(${board.x}, ${board.y})`}>
+          {/* board body — drag handle */}
+          <rect x="20" y="18" width={boardW - 40} height={BB_Y0 + 300} rx="12" className="cq-tb-body"
+            style={{ cursor: "grab" }}
+            onPointerDown={(e) => { const rect = e.currentTarget.ownerSVGElement.getBoundingClientRect(); const scale = (boardW + 60) / rect.width; setDragBoard({ id: board.id, offx: (e.clientX - rect.left) * scale - board.x, offy: (e.clientY - rect.top) * scale - board.y }); }} />
+          {/* rail guide lines */}
+          <line x1="30" y1={bbHoleXY(0, 0).y} x2={boardW - 30} y2={bbHoleXY(0, 0).y} className="cq-tb-railline pos" />
+          <line x1="30" y1={bbHoleXY(1, 0).y} x2={boardW - 30} y2={bbHoleXY(1, 0).y} className="cq-tb-railline neg" />
+          <line x1="30" y1={bbHoleXY(15, 0).y} x2={boardW - 30} y2={bbHoleXY(15, 0).y} className="cq-tb-railline pos" />
+          <line x1="30" y1={bbHoleXY(16, 0).y} x2={boardW - 30} y2={bbHoleXY(16, 0).y} className="cq-tb-railline neg" />
+          <text x="26" y={bbHoleXY(0, 0).y + 4} className="cq-tb-raillbl pos">+</text>
+          <text x="26" y={bbHoleXY(1, 0).y + 4} className="cq-tb-raillbl neg">−</text>
+          {/* center gap trough */}
+          <rect x="30" y={bbHoleXY(6, 0).y + 12} width={boardW - 60} height="16" className="cq-tb-gap" />
+
+          {/* holes */}
+          {allRows.map((row) => Array.from({ length: BB_COLS }).map((_, col) => {
+            const { x, y } = bbHoleXY(row, col);
+            const isRail = row === 0 || row === 1 || row === 15 || row === 16;
+            // rails have fewer holes grouped; keep simple: draw all
+            const pendingHere = tool === "jumper" && jumperStart && jumperStart.row === row && jumperStart.col === col;
+            return <circle key={row + "_" + col} cx={x} cy={y} r="4.2"
+              className={`cq-tb-hole ${isRail ? "rail" : ""} ${pendingHere ? "active" : ""}`}
+              onClick={() => tapHole(row, col)} />;
+          }))}
+
+          {/* jumper wires */}
+          {/* pending-placement markers */}
+          {pendingLegs.map((h, i) => { const p = bbHoleXY(h.row, h.col); return <circle key={"p" + i} cx={p.x} cy={p.y} r="6" className="cq-tb-pending" />; })}
+          </g>
+          ))}
+
+          {/* ===== CANVAS LAYER: free components + leg-to-leg wires (board optional) ===== */}
+          {/* leg-to-leg wires */}
           {wires.map((w, i) => {
-            const from = comps.find((c) => c.id === w.from.comp), to = comps.find((c) => c.id === w.to.comp);
-            if (!from || !to) return null;
-            const fp = bbLegPos(from, w.from.leg), tp = bbLegPos(to, w.to.leg);
-            return <line key={i} x1={fp.x} y1={fp.y} x2={tp.x} y2={tp.y} className="cq-wire on" />;
+            const ca = comps.find((x) => x.id === w.a.comp), cb = comps.find((x) => x.id === w.b.comp);
+            if (!ca || !cb) return null;
+            const a = legXY(ca, w.a.leg), b = legXY(cb, w.b.leg);
+            const d = `M${a.x} ${a.y} C ${a.x} ${a.y - 34}, ${b.x} ${b.y - 34}, ${b.x} ${b.y}`;
+            return (
+              <g key={"w" + i} style={{ cursor: tool === "delete" ? "pointer" : "default" }}
+                onClick={() => { if (tool === "delete") { setWires((ws) => ws.filter((_, idx) => idx !== i)); setResult(null); } }}>
+                <path d={d} className="cq-tb-jumper-hit" />
+                <path d={d} className="cq-tb-jumper" style={{ stroke: w.color || "#e8514f" }} />
+              </g>
+            );
+          })}
+
+          {/* components */}
+          {comps.map((c) => {
+            const def = BB_COMPONENTS[c.kind];
+            const h = litOf(c.id);
+            if (!c.legs[0]) return null;
+            const p0 = legXY(c, 0), p1 = c.legs[1] ? legXY(c, 1) : p0;
+            const midx = (p0.x + p1.x) / 2, midy = (p0.y + p1.y) / 2;
+            const lit = h && h.lit, danger = h && h.danger;
+            const onBody = () => { if (tool === "delete") removeComp(c.id); else setSelected(c.id === selected ? null : c.id); };
+            return (
+              <g key={c.id} className="cq-tb-comp">
+                {/* leg wires from body to leg endpoints */}
+                <line x1={p0.x} y1={p0.y} x2={midx} y2={midy} className="cq-tb-leg" />
+                <line x1={p1.x} y1={p1.y} x2={midx} y2={midy} className="cq-tb-leg" />
+                {/* body */}
+                <g onClick={onBody}
+                  onPointerDown={(e) => {
+                    if (tool === "delete") return;
+                    const svg = e.currentTarget.ownerSVGElement; const rect = svg.getBoundingClientRect();
+                    const scale = (boardW + 60) / rect.width;
+                    const mx = (e.clientX - rect.left) * scale, my = (e.clientY - rect.top) * scale;
+                    setDragComp({ id: c.id, startX: mx, startY: my, legBase: c.legs.map((l) => l.row !== undefined ? { x: 0, y: 0 } : { x: l.x, y: l.y }) });
+                  }}
+                  style={{ cursor: "grab" }}>
+                {c.kind.startsWith("led") ? (
+                  <g>
+                    {/* LED: rounded dome with a flat side on the cathode (−) to signal polarity */}
+                    <path d={`M ${midx - 9} ${midy} A 9 9 0 1 1 ${midx + 7} ${midy + 5} L ${midx + 7} ${midy - 5} Z`}
+                      fill={lit ? (def.color || "#ff5a5a") : "#3a2f2f"} stroke={danger ? "var(--rose)" : lit ? (def.color || "#ff5a5a") : "#6a5a5a"} strokeWidth="1.5"
+                      style={lit ? { filter: `drop-shadow(0 0 9px ${def.color || "#ff5a5a"})` } : {}} />
+                    <line x1={midx + 7} y1={midy - 6} x2={midx + 7} y2={midy + 6} stroke="#888" strokeWidth="2" />
+                  </g>
+                ) : c.kind === "resistor" ? (
+                  <g><rect x={midx - 16} y={midy - 6} width="32" height="12" rx="3" fill="#c8a06a" stroke="#8a6a3a" /><rect x={midx - 8} y={midy - 6} width="3" height="12" fill="#7a3a2a" /><rect x={midx - 1} y={midy - 6} width="3" height="12" fill="#c04a2a" /><rect x={midx + 6} y={midy - 6} width="3" height="12" fill="#3a2a7a" /></g>
+                ) : c.kind === "pot" ? (
+                  <g>
+                    {/* potentiometer: body + a knob to look distinct from a resistor */}
+                    <rect x={midx - 15} y={midy - 10} width="30" height="20" rx="4" fill="#3a4a6a" stroke="#5a6a8a" />
+                    <circle cx={midx} cy={midy} r="7" fill="#c0c8d8" stroke="#8a92a2" strokeWidth="1.5" />
+                    <line x1={midx} y1={midy} x2={midx} y2={midy - 6} stroke="#333" strokeWidth="1.5" />
+                  </g>
+                ) : c.kind.startsWith("battery") ? (
+                  <g><rect x={midx - 17} y={midy - 10} width="34" height="20" rx="3" fill="#2a3550" stroke="var(--neon-deep)" /><text x={midx} y={midy + 4} className="cq-tb-batlbl">{def.value}V</text></g>
+                ) : c.kind === "switch" ? (
+                  <g><rect x={midx - 12} y={midy - 8} width="24" height="16" rx="3" fill={c.on ? "var(--neon-ghost)" : "#2a2a35"} stroke={c.on ? "var(--neon)" : "#555"} /><text x={midx} y={midy + 4} className="cq-tb-swlbl">{c.on ? "ON" : "OFF"}</text></g>
+                ) : null}
+                </g>
+                {/* tappable leg dots for wiring, with polarity/role labels */}
+                {c.legs.map((_, li) => {
+                  const lp = legXY(c, li);
+                  const active = wiring && wiring.comp === c.id && wiring.leg === li;
+                  // Leg labels so polarity/roles are readable
+                  let lbl = "", lblClass = "";
+                  if (c.kind === "battery" || c.kind === "battery3") { lbl = li === 0 ? "+" : "−"; lblClass = li === 0 ? "pos" : "neg"; }
+                  else if (c.kind.startsWith("led")) { lbl = li === 0 ? "+" : "−"; lblClass = li === 0 ? "pos" : "neg"; }
+                  return (
+                    <g key={li}>
+                      <circle cx={lp.x} cy={lp.y} r="5.5" className={`cq-tb-legdot ${active ? "active" : ""}`}
+                        onClick={(e) => { e.stopPropagation(); tapLeg(c.id, li); }} />
+                      {lbl && <text x={lp.x} y={lp.y - 9} className={`cq-tb-leglbl ${lblClass}`}>{lbl}</text>}
+                    </g>
+                  );
+                })}
+              </g>
+            );
           })}
         </svg>
-        {comps.map((c) => {
-          const def = BB_COMPONENTS[c.kind];
-          const lit = result && result.health && result.health[c.id] && result.health[c.id].lit;
-          return (
-            <div key={c.id} className={`cq-bb-comp ${lit ? "lit" : ""}`} style={{ left: c.x, top: c.y }}
-              onClick={() => { if (tool === "delete") removeComp(c.id); else setSelected(c.id === selected ? null : c.id); }}>
-              <span className="cq-bb-emoji">{def.emoji}</span>
-              <span className="cq-bb-name">{c.kind === "resistor" ? c.value + "Ω" : def.label}</span>
-              <div className="cq-bb-legs">
-                {def.legs.map((leg, li) => (
-                  <button key={li} className={`cq-bb-leg ${wiring && wiring.comp === c.id && wiring.leg === li ? "active" : ""}`}
-                    onClick={(e) => { e.stopPropagation(); tapLeg(c.id, li); }} title={leg}>{leg.split(" ")[0]}</button>
-                ))}
-              </div>
-            </div>
-          );
-        })}
       </div>
 
-      {selected && comps.find((c) => c.id === selected)?.kind === "resistor" && (
-        <div className="cq-bb-adjust">
-          Resistor value: {comps.find((c) => c.id === selected).value}Ω
-          <input type="range" min="47" max="1000" step="1" value={comps.find((c) => c.id === selected).value}
-            onChange={(e) => setResistance(selected, parseInt(e.target.value))} className="cq-bb-slider" />
-        </div>
-      )}
+      {/* adjust panel */}
+      {selected && (() => {
+        const c = comps.find((x) => x.id === selected); if (!c) return null;
+        if (c.kind === "resistor") return (
+          <div className="cq-bb-adjust">
+            Resistor: {c.value}Ω
+            <input type="range" min="100" max={BB_COMPONENTS[c.kind].adjMax || 2200} step="10" value={c.value} onChange={(e) => setResistance(c.id, parseInt(e.target.value))} className="cq-bb-slider" />
+          </div>
+        );
+        if (c.kind === "pot") return (
+          <div className="cq-bb-adjust">
+            <div>Potentiometer total: {c.value}Ω</div>
+            <input type="range" min="1000" max="10000" step="100" value={c.value} onChange={(e) => setResistance(c.id, parseInt(e.target.value))} className="cq-bb-slider" />
+            <div style={{ marginTop: 8 }}>Wiper position: {Math.round((c.wiper ?? 0.5) * 100)}% — splits {Math.round(c.value * (c.wiper ?? 0.5))}Ω / {Math.round(c.value * (1 - (c.wiper ?? 0.5)))}Ω</div>
+            <input type="range" min="0" max="100" step="1" value={Math.round((c.wiper ?? 0.5) * 100)} onChange={(e) => { const w = parseInt(e.target.value) / 100; setComps((cs) => cs.map((x) => x.id === c.id ? { ...x, wiper: w } : x)); setResult(null); }} className="cq-bb-slider" />
+          </div>
+        );
+        if (c.kind === "switch") return (
+          <div className="cq-bb-adjust">Switch is {c.on ? "ON (closed)" : "OFF (open)"}
+            <button className="cq-clearbtn" onClick={() => toggleSwitch(c.id)}>{c.on ? "Turn OFF" : "Turn ON"}</button>
+          </div>
+        );
+        return null;
+      })()}
 
       <div className="cq-circ-checkrow">
         <button className="cq-run" onClick={simulate}>⚡ Power it on</button>
@@ -6533,9 +7196,7 @@ function Breadboard({ onBack }) {
       {result && result.health && (
         <div className="cq-bb-results">
           {Object.entries(result.health).map(([id, h]) => (
-            <div key={id} className={`cq-bb-health ${h.danger ? "danger" : h.lit ? "good" : ""}`}>
-              {h.emoji} {h.message}
-            </div>
+            <div key={id} className={`cq-bb-health ${h.danger ? "danger" : h.lit ? "good" : ""}`}>{h.emoji} {h.message}</div>
           ))}
         </div>
       )}
@@ -6543,7 +7204,7 @@ function Breadboard({ onBack }) {
       <div className="cq-teacher">
         <div className="cq-teacher-head">🧑‍🏫 Ask about your circuit</div>
         {chat.length > 0 && <div className="cq-teacher-log">{chat.map((m, i) => <div key={i} className={`cq-bubble ${m.role}`}>{m.text}</div>)}{asking && <div className="cq-bubble teacher">…</div>}</div>}
-        {chat.length === 0 && !asking && <p className="cq-proj-teacherhint">Ask “why won’t my LED light up?” or “what does the resistor do?”</p>}
+        {chat.length === 0 && !asking && <p className="cq-proj-teacherhint">Ask “why won’t my LED light up?” or state a goal and I’ll help you build it.</p>}
         <div className="cq-teacher-inputrow">
           <input className="cq-search" placeholder="Ask about your circuit…" value={question} onChange={(e) => setQuestion(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") ask(); }} />
           <button className="cq-run" onClick={ask} disabled={!question.trim() || asking}>{asking ? "…" : "Ask"}</button>
@@ -6552,52 +7213,66 @@ function Breadboard({ onBack }) {
     </main>
   );
 }
-function bbLegPos(comp, legIdx) {
-  const def = BB_COMPONENTS[comp.kind];
-  const n = def.legs.length;
-  return { x: comp.x + 20 + legIdx * 50, y: comp.y + 68 };
-}
 // Translate the raw physics into plain-English health (and detect common faults).
 function analyzeBreadboard(comps, engineComps, sim) {
   const health = {};
-  // Accurate current: find the resistor in series (current through it = V/R), else
-  // estimate from the LED diode equation. This gives physically correct mA.
   const nodeV = (node) => (node === 0 ? 0 : sim.V[node] || 0);
   for (const c of comps) {
-    if (c.kind === "led") {
+    if (c.kind === "led" || c.kind === "ledGreen" || c.kind === "ledBlue") {
       const ec = engineComps.find((e) => e.id === c.id);
       const vLed = sim.diodeV[c.id] || 0;
       const hasResistor = comps.some((x) => x.kind === "resistor");
-      // Current: prefer a resistor's V/R (accurate); else diode equation.
+      // Current: prefer a resistor's V/R (accurate); else the LED is directly across
+      // the source with almost nothing limiting it — effectively a dead short for the LED.
       let mA;
       const resistor = engineComps.find((e) => e.type === "R");
       if (resistor) mA = Math.abs(nodeV(resistor.n1) - nodeV(resistor.n2)) / resistor.value * 1000;
-      else { const Id = MNA_LED_IS * (Math.exp(Math.min(vLed, 2.4) / MNA_DIODE_VT) - 1); mA = Id * 1000; }
-      if (vLed < 1.4) health[c.id] = { emoji: "⚫", message: "The LED is off — not enough voltage to light it. Check it's in a complete loop and the long leg (anode) faces the battery's + side.", lit: false };
-      else if (mA > 30) health[c.id] = { emoji: "🔥", message: `The LED has ${mA.toFixed(0)}mA flowing through it — that's too much, it would burn out! ${hasResistor ? "Try a bigger resistor to limit the current more." : "You need a resistor to limit the current."}`, danger: true, lit: false };
-      else health[c.id] = { emoji: "💡", message: `The LED lights up! About ${mA.toFixed(0)}mA is flowing — a healthy amount.`, lit: true };
-    } else if (c.kind === "resistor") {
-      health[c.id] = { emoji: "▬", message: `The ${c.value}Ω resistor is limiting the current to protect the LED.`, lit: false };
+      else mA = 999; // no resistor = runaway current, guaranteed burnout
+      // Real LED limits: ~20mA is the sweet spot, ~25mA is the practical ceiling.
+      if (vLed < 1.6 && mA < 2) health[c.id] = { emoji: "○", message: "The LED is off — not enough current is flowing. Check it's in a complete loop and the long leg (anode) faces the battery's + side.", lit: false };
+      else if (!hasResistor) health[c.id] = { emoji: "△", message: "No resistor! The LED is connected straight across the battery, so far too much current flows through it — in real life it would burn out instantly. Add a resistor in series to limit the current.", danger: true, lit: false };
+      else if (mA > 25) health[c.id] = { emoji: "△", message: `Too much current — about ${mA.toFixed(0)}mA is flowing, but a normal LED can only handle around 20mA. It would overheat and burn out. Use a larger resistor (at 9V, try 330Ω or more).`, danger: true, lit: false };
+      else if (mA < 2) health[c.id] = { emoji: "◐", message: `The LED is barely lit — only about ${mA.toFixed(1)}mA is flowing. The resistor is a bit too large; try a smaller one for a brighter LED.`, lit: true, dim: true };
+      else health[c.id] = { emoji: "●", message: `The LED lights up cleanly — about ${mA.toFixed(0)}mA is flowing, right in the healthy range for a normal LED.`, lit: true };
+    } else if (c.kind === "resistor" || c.kind === "pot") {
+      health[c.id] = { emoji: "▬", message: `The ${c.value}Ω ${c.kind === "pot" ? "potentiometer" : "resistor"} limits the current that reaches the LED, protecting it.`, lit: false };
     }
   }
   return health;
 }
-function describeBreadboard(comps, wires, result) {
+function describeBreadboard(comps, jumpers, result) {
   const lines = [];
-  lines.push("Components: " + comps.map((c) => c.kind === "resistor" ? c.value + "Ω resistor" : c.kind === "battery" ? "9V battery" : "LED").join(", "));
-  lines.push("Wires (leg to leg): " + (wires.length ? wires.map((w) => {
-    const fc = comps.find((c) => c.id === w.from.comp), tc = comps.find((c) => c.id === w.to.comp);
-    const legName = (c, i) => BB_COMPONENTS[c.kind].legs[i];
-    return `${fc.kind} ${legName(fc, w.from.leg)} → ${tc.kind} ${legName(tc, w.to.leg)}`;
-  }).join("; ") : "none yet"));
+  const holeName = (h) => {
+    if (!h) return "unplugged";
+    if (h.row === 0 || h.row === 15) return "+ power rail";
+    if (h.row === 1 || h.row === 16) return "− power rail";
+    const bank = h.row <= 6 ? "top" : "bottom";
+    return `${bank} column ${h.col}`;
+  };
+  const labelOf = (c) => {
+    if (c.kind === "resistor") return c.value + "Ω resistor";
+    if (c.kind === "pot") return c.value + "Ω potentiometer";
+    if (c.kind === "battery" || c.kind === "battery3") return BB_COMPONENTS[c.kind].value + "V battery";
+    if (c.kind === "switch") return "switch (" + (c.on ? "ON" : "OFF") + ")";
+    return BB_COMPONENTS[c.kind].label;
+  };
+  lines.push("Components on the board:");
+  for (const c of comps) {
+    lines.push(`- ${labelOf(c)}: ${BB_COMPONENTS[c.kind].legs[0]} in ${holeName(c.legs[0])}, ${BB_COMPONENTS[c.kind].legs[1]} in ${holeName(c.legs[1])}`);
+  }
+  if (jumpers.length) lines.push("Jumper wires: " + jumpers.map((j) => `${holeName(j.a)} ↔ ${holeName(j.b)}`).join("; "));
+  lines.push("(Remember: holes in the same column within a bank are connected inside the board.)");
   if (result && result.health) lines.push("Result: " + Object.values(result.health).map((h) => h.message).join(" "));
   return lines.join("\n");
 }
-async function askBreadboardTeacher({ circuit, question, signal }) {
+async function askBreadboardTeacher({ circuit, question, goal, signal }) {
   const sys =
-    "You are a warm electronics teacher helping a beginner wire a real breadboard circuit (battery, resistor, LED) with named legs. " +
+    "You are a warm electronics teacher helping a beginner wire a real breadboard circuit (battery, resistor, LEDs, switch) by plugging components into holes. " +
     "You can see their exact circuit and the REAL physics result below — computed by an actual circuit simulator, so trust it. " +
-    "Explain simply and concretely. Common issues: LED backwards (long leg/anode must face battery +), no resistor (LED burns out), incomplete loop. Keep it brief and encouraging.\n\n" +
+    (goal && goal.trim()
+      ? "The learner has told you their OWN goal: \"" + goal.trim() + "\". Help them get THERE — compare what their circuit does now to their goal and give a specific next step. "
+      : "") +
+    "Explain simply and concretely. Remember how a breadboard works: holes in the same column (within a bank) are connected inside the board. Common issues: LED backwards (long leg/anode toward +), no resistor (LED burns out), incomplete loop, components not sharing a column. Keep it brief and encouraging.\n\n" +
     "THEIR CIRCUIT:\n" + circuit;
   return await callClaude([{ role: "user", content: question }], { system: sys, maxTokens: 600, signal });
 }
@@ -6693,7 +7368,7 @@ function mnaSolveDC(numNodes, comps) {
 }
 
 const CSS = `
-.cq-circ-palette{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:8px 0 10px}
+.cq-circ-palette{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:14px 0 16px}
 .cq-circ-plabel{font-size:13px;color:var(--ink-soft);font-weight:600;margin-right:2px}
 .cq-circ-pbtn{background:var(--bg-2);border:1px solid var(--line);border-radius:8px;color:var(--ink-soft);font-family:var(--mono);font-size:12px;font-weight:600;padding:7px 10px;cursor:pointer}
 .cq-circ-pbtn:hover{border-color:var(--teal-deep);color:var(--teal)}
@@ -6709,8 +7384,10 @@ const CSS = `
 .cq-circ-comp.sel{border-color:var(--teal);box-shadow:0 0 0 2px var(--teal-ghost)}
 .cq-circ-comp.switch{border-radius:50%;background:var(--bg-2);font-weight:700}
 .cq-circ-comp.switch.on{background:var(--teal);color:#04211d;border-color:var(--teal)}
-.cq-circ-comp.gate{background:var(--bg-3);font-weight:700;font-size:11px}
-.cq-circ-comp.gate.on{border-color:var(--teal);color:var(--teal)}
+.cq-circ-comp.gate{background:transparent;border:none;font-weight:700;font-size:11px}
+.cq-circ-comp.gate.on{border:none;color:var(--neon)}
+.cq-gate-svg{display:block;overflow:visible}
+.cq-gate-txt{font-family:var(--mono);font-size:15px;font-weight:700;text-anchor:middle;pointer-events:none}
 .cq-circ-comp.light{border-radius:50%;background:var(--bg-2);font-weight:700}
 .cq-circ-comp.light.on{background:var(--amber);color:#2a1e00;border-color:var(--amber);box-shadow:0 0 16px var(--amber)}
 .cq-circ-lbl{font-size:11px;text-align:center;line-height:1.2;pointer-events:none}
@@ -6726,7 +7403,11 @@ const CSS = `
 .cq-circ-pass{color:var(--teal);font-weight:600;font-size:14px}
 .cq-circ-fail{color:var(--amber);font-size:14px}
 .cq-circ-freelink{margin-top:18px}
-.cq-ai-controls{display:flex;flex-wrap:wrap;gap:18px;margin:6px 0 10px}
+.cq-ai-controls{display:flex;flex-wrap:wrap;gap:22px;margin:14px 0 16px}
+.cq-ai-tasks{margin:6px 0 16px;padding-bottom:14px;border-bottom:1px solid var(--line)}
+.cq-ai-classify{display:flex;flex-direction:column;align-items:center;gap:10px;margin:12px 0}
+.cq-ai-classsvg{border:1px solid var(--line);border-radius:12px;background:var(--bg-1)}
+.cq-ai-classhint{font-size:13px;color:var(--ink-soft);line-height:1.5;text-align:center;max-width:420px;margin:0}
 .cq-ai-ctrl{display:flex;flex-direction:column;gap:7px}
 .cq-ai-lbl{font-size:13px;font-weight:600;color:var(--ink-soft)}
 .cq-ai-chips{display:flex;gap:6px;flex-wrap:wrap}
@@ -6744,6 +7425,29 @@ const CSS = `
 .cq-ai-txt{fill:var(--ink-faint);font-size:11px;text-anchor:middle;font-family:var(--mono)}
 .cq-ai-wire{opacity:.7}
 .cq-ai-trainrow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+.cq-lab-goalrow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0 4px}
+.cq-lab-goallbl{font-size:13px;color:var(--ink-soft);font-weight:600;flex-shrink:0}
+.cq-lab-goalrow .cq-search{flex:1;min-width:200px}
+.cq-lab-goalnote{font-size:12.5px;color:var(--teal);margin:2px 0 10px}
+.cq-lab-lessonhint{display:block;font-size:13px;color:var(--ink-soft);margin-bottom:8px}
+.cq-ai-custom{background:var(--bg-1);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px}
+.cq-ai-customhint{font-size:13px;color:var(--amber);line-height:1.5;margin:0 0 12px}
+.cq-ai-customgrid{display:flex;flex-direction:column;gap:6px;max-width:280px}
+.cq-ai-customhead{display:flex;gap:8px;font-size:11px;color:var(--ink-soft);font-family:var(--mono);font-weight:700}
+.cq-ai-customhead span{flex:1;text-align:center}
+.cq-ai-customrow{display:flex;gap:8px;align-items:center}
+.cq-ai-cellin{flex:1;text-align:center;font-family:var(--mono);font-size:15px;color:var(--ink-soft);background:var(--bg-0);border-radius:8px;padding:8px 0}
+.cq-ai-celltgt{flex:1;text-align:center;font-family:var(--mono);font-size:15px;font-weight:700;color:var(--ink-soft);background:var(--bg-0);border:1.5px solid var(--line);border-radius:8px;padding:8px 0;cursor:pointer}
+.cq-ai-celltgt.on{background:var(--teal-ghost);border-color:var(--teal-deep);color:var(--teal)}
+.cq-clearbtn.active{background:var(--violet-ghost);border-color:rgba(155,140,255,.5);color:#cfc6ff}
+.cq-ai-tune{background:var(--bg-1);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:14px}
+.cq-ai-tunehint{font-size:13px;color:var(--amber);line-height:1.5;margin:0 0 12px}
+.cq-ai-tunegroup{margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--line)}
+.cq-ai-tunegroup:last-child{border-bottom:none;margin-bottom:0;padding-bottom:0}
+.cq-ai-tunelbl{display:block;font-size:12.5px;font-weight:700;color:var(--violet,#9b8cff);margin-bottom:8px;font-family:var(--mono)}
+.cq-ai-tunerow{display:flex;align-items:center;gap:10px;margin-bottom:7px}
+.cq-ai-tunename{font-size:11.5px;color:var(--ink-soft);font-family:var(--mono);width:96px;flex-shrink:0}
+.cq-ai-tuneval{font-size:12px;color:var(--ink);font-family:var(--mono);width:38px;text-align:right;flex-shrink:0}
 .cq-ai-stat{font-size:13px;color:var(--ink-soft);font-family:var(--mono)}
 .cq-ai-table{border:1px solid var(--line);border-radius:12px;overflow:hidden;font-family:var(--mono);font-size:13px}
 .cq-ai-throw{display:grid;grid-template-columns:1fr 1fr 1fr 40px;padding:9px 12px;border-bottom:1px solid var(--line)}
@@ -6752,7 +7456,8 @@ const CSS = `
 .cq-ai-success{color:var(--teal);font-weight:600;margin-top:12px}
 .cq-bb-canvas{position:relative;height:300px;background:#1a2b1e;background-image:radial-gradient(rgba(255,255,255,.06) 1px,transparent 1px);background-size:22px 22px;border:1px solid var(--line);border-radius:14px;overflow:hidden;margin-bottom:8px}
 .cq-bb-comp{position:absolute;display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer;z-index:2;padding:6px;border-radius:10px;background:var(--bg-3);border:1.5px solid var(--line);min-width:70px}
-.cq-bb-comp.lit{border-color:var(--amber);box-shadow:0 0 18px var(--amber)}
+.cq-bb-comp.lit{border-color:var(--led-color,var(--neon));box-shadow:0 0 20px -2px var(--led-color,var(--neon))}
+.cq-bb-comp.danger{border-color:var(--rose);box-shadow:0 0 20px -4px var(--rose)}
 .cq-bb-emoji{font-size:22px}
 .cq-bb-name{font-size:10.5px;color:var(--ink-soft);font-family:var(--mono);text-align:center;line-height:1.1}
 .cq-bb-legs{display:flex;gap:4px;margin-top:3px}
@@ -6761,6 +7466,40 @@ const CSS = `
 .cq-bb-adjust{margin:8px 0;font-size:13px;color:var(--ink-soft);font-family:var(--mono);display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .cq-bb-slider{flex:1;min-width:140px;accent-color:var(--teal)}
 .cq-bb-results{margin-top:12px;display:flex;flex-direction:column;gap:8px}
+.cq-tb-scroll{overflow-x:auto;border-radius:14px;margin:6px 0 14px;border:1px solid var(--line);background:#0a0e17}
+.cq-tb-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:60px 20px;color:var(--ink-soft)}
+.cq-tb-empty p{margin:0;font-size:15px}
+.cq-tb-emptyhint{padding:30px 24px;text-align:center;color:var(--ink-soft)}
+.cq-tb-emptyhint p{margin:0 auto;font-size:14px;line-height:1.6;max-width:440px}
+.cq-tb-legdot{fill:#c0c0c0;stroke:#888;stroke-width:1;cursor:pointer;transition:fill .12s,stroke .12s}
+.cq-tb-leglbl{font-family:var(--mono);font-size:11px;font-weight:700;text-anchor:middle}
+.cq-tb-leglbl.pos{fill:#ff6a6a}
+.cq-tb-leglbl.neg{fill:#6a9cff}
+.cq-tb-legdot:hover{fill:var(--neon);stroke:var(--neon-bright)}
+.cq-tb-legdot.active{fill:var(--neon);stroke:var(--neon-bright)}
+.cq-circ-pbtn.board{background:var(--neon-ghost);border-color:var(--neon-deep);color:var(--neon)}
+.cq-tb-board{display:block}
+.cq-tb-body{fill:#f4f2ec;stroke:#cbc7bb;stroke-width:1.5;filter:drop-shadow(0 6px 14px rgba(0,0,0,.45))}
+.cq-tb-hole{fill:#242424;stroke:#000;stroke-width:.4;stroke-opacity:.35;cursor:pointer;transition:fill .12s}
+.cq-tb-hole:hover{fill:var(--neon)}
+.cq-tb-hole.rail{fill:#444}
+.cq-tb-hole.active{fill:var(--neon);stroke:var(--neon-bright)}
+.cq-tb-railline{stroke-width:2.5;opacity:.85;stroke-linecap:round}
+.cq-tb-railline.pos{stroke:#e0574f}
+.cq-tb-railline.neg{stroke:#4f7de0}
+.cq-tb-raillbl{font-family:var(--mono);font-size:13px;font-weight:700}
+.cq-tb-raillbl.pos{fill:#e0574f}
+.cq-tb-raillbl.neg{fill:#4f7de0}
+.cq-tb-gap{fill:#dcd9d0}
+.cq-tb-jumper{fill:none;stroke-width:3.5;stroke-linecap:round;opacity:.9}
+.cq-wire-colors{display:inline-flex;gap:5px;align-items:center;margin-left:4px}
+.cq-wire-swatch{width:20px;height:20px;border-radius:6px;border:2px solid var(--line);cursor:pointer;padding:0;transition:.12s}
+.cq-wire-swatch.active{border-color:var(--neon);transform:scale(1.12)}
+.cq-tb-jumper-hit{fill:none;stroke:transparent;stroke-width:14}
+.cq-tb-leg{stroke:#9a9a9a;stroke-width:2}
+.cq-tb-comp{transition:.12s}
+.cq-tb-batlbl,.cq-tb-swlbl{font-family:var(--mono);font-size:9px;font-weight:700;fill:var(--ink);text-anchor:middle}
+.cq-tb-pending{fill:none;stroke:var(--neon);stroke-width:2;stroke-dasharray:3 2}
 .cq-bb-health{padding:11px 14px;border-radius:10px;font-size:14px;background:var(--bg-2);border:1px solid var(--line);color:var(--ink-soft);line-height:1.45}
 .cq-bb-health.good{border-color:var(--teal-deep);color:var(--teal);background:var(--teal-ghost)}
 .cq-bb-health.danger{border-color:var(--rose);color:var(--rose);background:rgba(240,110,90,.08)}
@@ -6770,42 +7509,47 @@ const CSS = `
 
 /* ============ DESIGN TOKENS ============ */
 .cq-root{
-  /* surface ramp: deep indigo-slate, warmer than default black */
-  --bg-0:#0e1320; --bg-1:#151b2e; --bg-2:#1c2438; --bg-3:#243049;
-  --ink:#eef1f8; --ink-soft:#aab3cc; --ink-faint:#6f7a99;
-  --line:#283149; --line-soft:#1f273c;
-  /* one confident accent family (chalk-teal) + warm "your turn" amber */
-  --teal:#5ee0c0; --teal-deep:#1f9e87; --teal-ghost:rgba(94,224,192,.12);
-  --amber:#f5c97b; --amber-ghost:rgba(245,201,123,.12);
-  --violet:#9b8cff; --violet-ghost:rgba(155,140,255,.12);
-  --rose:#ff8aa3;
+  /* surface ramp: cold blue-black night */
+  --bg-0:#070a12; --bg-1:#0d1220; --bg-2:#131a2c; --bg-3:#1c273f;
+  --ink:#dae2f0; --ink-soft:#93a3c0; --ink-faint:#5f6f8f;
+  --line:#1f2b45; --line-soft:#17203a;
+  /* cold cyberpunk neon: cyan lead + magenta secondary (both slightly restrained) */
+  --neon:#3ac9e0; --neon-bright:#5fdcef; --neon-deep:#127a99; --neon-ghost:rgba(58,201,224,.12);
+  --magenta:#bd54dd; --magenta-ghost:rgba(189,84,221,.12);
+  --violet:#8c9dff; --violet-ghost:rgba(140,157,255,.10);
+  --rose:#ff6ba8;
+  /* teal aliased to the neon so existing references adopt the new accent cleanly */
+  --teal:#3ac9e0; --teal-deep:#127a99; --teal-ghost:rgba(58,201,224,.12);
+  --amber:#e6b980; --amber-ghost:rgba(230,185,128,.10);
+  /* code syntax palette — deliberately calm & readable, NOT neon */
+  --code-bg:#0a0e17; --code-text:#c9d3e6; --code-kw:#c58fff; --code-str:#8fd6a0; --code-num:#e6b980; --code-com:#5c6a86; --code-fn:#7fb6f0;
   --radius:16px; --radius-sm:11px; --radius-lg:22px;
-  --shadow:0 18px 40px -24px rgba(0,0,0,.7);
+  --shadow:0 20px 44px -26px rgba(0,0,0,.85);
   --display:'Fraunces',Georgia,serif;
   --body:'Inter',system-ui,sans-serif;
   --mono:'JetBrains Mono',ui-monospace,monospace;
   font-family:var(--body); color:var(--ink);
   background:
-    radial-gradient(1100px 520px at 78% -12%, #1d2540 0%, transparent 60%),
-    radial-gradient(900px 480px at 8% 8%, #19223a 0%, transparent 55%),
+    radial-gradient(1050px 500px at 84% -12%, #10233a 0%, transparent 55%),
+    radial-gradient(820px 460px at 2% 4%, #191033 0%, transparent 52%),
     var(--bg-0);
   min-height:100vh; -webkit-font-smoothing:antialiased;
 }
 .cq-root *{box-sizing:border-box}
 .cq-root button{color:inherit}
-.cq-root ::selection{background:var(--teal-ghost)}
+.cq-root ::selection{background:var(--neon-ghost)}
 
 /* ============ HEADER ============ */
-.cq-header{display:flex;justify-content:space-between;align-items:center;padding:16px 26px;border-bottom:1px solid var(--line-soft);position:sticky;top:0;z-index:20;background:rgba(14,19,32,.82);backdrop-filter:blur(14px)}
+.cq-header{display:flex;justify-content:space-between;align-items:center;gap:48px;padding:20px 40px;border-bottom:1px solid var(--line-soft);position:sticky;top:0;z-index:20;background:rgba(11,10,18,.82);backdrop-filter:blur(14px);flex-wrap:wrap}
 .cq-brand{display:flex;align-items:center;gap:11px}
-.cq-logo{font-family:var(--mono);font-weight:600;color:var(--bg-0);background:linear-gradient(135deg,var(--teal),var(--teal-deep));padding:5px 10px;border-radius:9px;font-size:15px;box-shadow:0 4px 14px -4px var(--teal-deep)}
+.cq-logo{display:inline-flex;align-items:center;justify-content:center;background:var(--bg-2);border:1px solid var(--line);padding:5px;border-radius:11px;box-shadow:0 0 18px -8px var(--neon)}
 .cq-name{font-family:var(--display);font-weight:600;letter-spacing:-.3px;font-size:20px}
-.cq-xp{font-size:12.5px;font-weight:600;color:var(--amber);background:var(--amber-ghost);padding:6px 12px;border-radius:99px;border:1px solid rgba(245,201,123,.22)}
+.cq-xp{font-size:12px;font-weight:500;letter-spacing:.02em;color:var(--ink-soft);background:var(--bg-2);padding:6px 12px;border-radius:8px;border:1px solid var(--line)}
 
 /* ============ LAYOUT ============ */
-.cq-main{max-width:940px;margin:0 auto;padding:34px 22px 72px;animation:cq-fade .4s ease}
+.cq-main{max-width:940px;margin:0 auto;padding:52px 28px 96px;animation:cq-fade .4s ease}
 @keyframes cq-fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
-.cq-eyebrow{text-transform:uppercase;letter-spacing:2.5px;font-size:10.5px;color:var(--teal);font-weight:700;margin:0 0 10px}
+.cq-eyebrow{text-transform:uppercase;letter-spacing:2.8px;font-size:10.5px;color:var(--neon);font-weight:700;margin:0 0 12px;text-shadow:0 0 12px rgba(58,201,224,.45)}
 .cq-back{display:inline-flex;align-items:center;gap:6px;background:none;border:none;color:var(--ink-faint);cursor:pointer;font-size:13px;margin-bottom:20px;font-family:inherit;padding:6px 0;transition:color .15s}
 .cq-back:hover{color:var(--ink)}
 
@@ -6829,11 +7573,11 @@ const CSS = `
 .cq-modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:18px;flex-wrap:wrap}
 .cq-hero-ai .cq-eyebrow{color:var(--violet)}
 .cq-hero-hardware .cq-eyebrow{color:var(--amber)}
-.cq-home-title{font-family:var(--display);font-size:38px;font-weight:600;letter-spacing:-1.2px;margin:0 0 14px;line-height:1.04}
+.cq-home-title{font-family:var(--display);font-size:38px;font-weight:600;letter-spacing:-1.2px;margin:0 0 14px;line-height:1.04;color:var(--ink);text-shadow:0 0 24px rgba(58,201,224,.12)}
 .cq-home-sub{color:var(--ink-soft);font-size:15.5px;line-height:1.6;margin:0;max-width:600px}
 .cq-home-sub b{color:var(--ink);font-weight:600}
-.cq-classlist{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:16px}
-.cq-section-label{font-size:11px;text-transform:uppercase;letter-spacing:2px;color:var(--ink-faint);font-weight:700;margin:0 0 14px}
+.cq-classlist{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:22px}
+.cq-section-label{font-size:11px;text-transform:uppercase;letter-spacing:2px;color:var(--ink-faint);font-weight:700;margin:0 0 18px}
 .cq-tabs{display:flex;gap:8px;margin-bottom:22px;background:var(--bg-0);padding:6px;border-radius:14px;border:1px solid var(--line)}
 .cq-tab{flex:1;background:none;border:none;color:var(--ink-soft);padding:11px;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;transition:.15s}
 .cq-tab.on{background:var(--violet);color:#fff;box-shadow:0 6px 16px -8px var(--violet)}
@@ -6854,7 +7598,7 @@ const CSS = `
 .cq-resumehero-bar{width:200px;max-width:48vw;height:8px;background:var(--bg-0);border-radius:99px;overflow:hidden;border:1px solid var(--line-soft)}
 .cq-resumehero-fill{height:100%;background:linear-gradient(90deg,var(--teal-deep),var(--teal));border-radius:99px;transition:width .6s}
 .cq-resumehero-cta{font-weight:700;color:var(--teal);font-size:15px;white-space:nowrap}
-.cq-classcard{position:relative;text-align:left;background:linear-gradient(180deg,var(--bg-2),var(--bg-1));border:1px solid var(--line);border-radius:var(--radius);padding:22px;cursor:pointer;transition:transform .18s cubic-bezier(.2,.7,.3,1),border-color .18s,box-shadow .18s;color:inherit;font-family:inherit;display:flex;flex-direction:column;gap:13px;overflow:hidden}
+.cq-classcard{position:relative;text-align:left;background:linear-gradient(180deg,var(--bg-2),var(--bg-1));border:1px solid var(--line);border-radius:var(--radius);padding:26px;cursor:pointer;transition:transform .18s cubic-bezier(.2,.7,.3,1),border-color .18s,box-shadow .18s;color:inherit;font-family:inherit;display:flex;flex-direction:column;gap:14px;overflow:hidden}
 .cq-classcard::before{content:'';position:absolute;inset:0 0 auto 0;height:2px;background:linear-gradient(90deg,var(--teal),transparent);opacity:0;transition:opacity .2s}
 .cq-classcard:hover:not(:disabled){transform:translateY(-4px);border-color:var(--line);box-shadow:var(--shadow)}
 .cq-classcard:hover:not(:disabled)::before{opacity:1}
@@ -6922,7 +7666,7 @@ const CSS = `
 .cq-genbox{margin-top:22px;background:linear-gradient(180deg,var(--bg-2),var(--bg-1));border:1px solid var(--line);border-radius:var(--radius);padding:24px;display:flex;flex-direction:column;gap:14px;align-items:flex-start}
 .cq-gentext h3{margin:0 0 6px;font-size:16px;font-family:var(--display);font-weight:600}
 .cq-gentext p{margin:0;color:var(--ink-soft);font-size:13px;line-height:1.5}
-.cq-genbtn{background:linear-gradient(135deg,var(--violet),#6f5cff);color:#fff;border:none;padding:12px 22px;border-radius:var(--radius-sm);font-weight:700;cursor:pointer;font-family:inherit;font-size:14px;transition:transform .15s,filter .15s;box-shadow:0 8px 20px -10px #6f5cff}
+.cq-genbtn{background:linear-gradient(135deg,var(--neon),var(--neon-deep));color:#04121a;border:none;padding:12px 22px;border-radius:var(--radius-sm);font-weight:700;cursor:pointer;font-family:inherit;font-size:14px;transition:transform .15s,filter .15s;box-shadow:0 8px 20px -10px var(--neon-deep)}
 .cq-builder{text-align:left}
 .cq-builder-title{font-family:var(--display);font-size:19px;font-weight:600;margin:0 0 14px}
 .cq-set{background:var(--bg-0);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:12px}
@@ -6979,7 +7723,7 @@ const CSS = `
 .cq-plain{background:var(--teal-ghost);border:1px solid rgba(94,224,192,.35);border-radius:12px;padding:16px;font-size:15px;line-height:1.6;margin-bottom:18px}
 .cq-plain-tag{display:inline-block;font-family:var(--mono);font-weight:600;color:var(--teal);background:var(--bg-0);padding:2px 8px;border-radius:6px;margin-right:10px}
 .cq-tapnote{text-align:center;color:var(--ink-faint);font-size:13px;margin:0 0 16px}
-.cq-teach{background:linear-gradient(135deg,var(--teal-ghost),var(--violet-ghost));border:1px solid rgba(94,224,192,.3);border-radius:14px;padding:18px 20px;margin-bottom:22px}
+.cq-teach{background:var(--bg-2);border:1px solid var(--line);border-left:3px solid var(--neon);border-radius:12px;padding:20px 22px;margin-bottom:24px}
 .cq-teach-text{font-size:15.5px;line-height:1.7;margin:0 0 14px;color:var(--ink)}
 .cq-teach-text code{font-family:var(--mono);background:var(--bg-0);padding:2px 6px;border-radius:5px;color:var(--teal);font-size:.9em}
 .cq-teach-example{background:var(--bg-0);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:12px}
@@ -6989,19 +7733,19 @@ const CSS = `
 .cq-teach-example pre{margin:0;font-family:var(--mono);font-size:13.5px;line-height:1.6;color:var(--ink);white-space:pre-wrap}
 .cq-teach-now{margin:0;font-size:13px;font-weight:700;color:var(--teal)}
 .cq-canvaswrap{margin-top:16px;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#000}
-.cq-canvas{width:100%;height:420px;border:none;display:block;background:#0e1320}
+.cq-canvas{width:100%;height:420px;border:none;display:block;background:#070a12}
 .cq-expected{margin:14px 0;background:var(--bg-0);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
 .cq-expected-label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:var(--amber);font-weight:700;margin-bottom:6px}
 .cq-expected pre{margin:0;font-family:var(--mono);font-size:14px;color:var(--ink);white-space:pre-wrap}
 .cq-runout{margin-top:16px}
 .cq-runout-label{font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:var(--ink-faint);font-weight:700;margin-bottom:6px}
-.cq-console{background:#0a0e1a;border:1px solid var(--line);border-radius:10px;padding:14px;font-family:var(--mono);font-size:13.5px;color:#cfe9d8;white-space:pre-wrap;max-height:260px;overflow:auto;margin:0}
+.cq-console{background:var(--code-bg);border:1px solid var(--line);border-radius:10px;padding:14px 16px;font-family:var(--mono);font-size:13px;line-height:1.55;color:var(--code-text);white-space:pre-wrap;max-height:280px;overflow:auto;margin:0}
 .cq-runout-note{color:#ff8aa3;font-size:13px;margin-top:8px}
 
 /* ============ FEEDBACK ============ */
-.cq-takeaway{background:linear-gradient(100deg,var(--teal-ghost),var(--violet-ghost));border:1px solid rgba(94,224,192,.4);border-radius:12px;padding:16px;font-size:15px;line-height:1.6;font-weight:500;animation:cq-pop .35s cubic-bezier(.2,.8,.3,1.2)}
-.cq-takeaway.big{font-size:16px;text-align:center;padding:22px}
-@keyframes cq-pop{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:none}}
+.cq-takeaway{background:linear-gradient(100deg,var(--teal-ghost),var(--violet-ghost));border:1px solid rgba(94,224,192,.4);border-radius:12px;padding:16px;font-size:15px;line-height:1.6;font-weight:500;animation:cq-settle .4s cubic-bezier(.22,.61,.36,1)}
+.cq-takeaway.big{font-size:15.5px;padding:18px 20px}
+@keyframes cq-settle{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 .cq-nudge{background:var(--amber-ghost);border:1px solid rgba(245,201,123,.4);border-radius:12px;padding:15px;font-size:14px;line-height:1.6;color:#f7dca6}
 .cq-iotip{margin-top:10px;background:rgba(139,92,246,.14);border:1.5px solid var(--violet);border-radius:12px;padding:14px 16px;font-size:15px;font-weight:600;line-height:1.5;color:#d9ccff}
 .cq-notyet{color:var(--amber);font-size:13px;margin-bottom:10px;font-weight:600}
@@ -7076,10 +7820,11 @@ const CSS = `
 .cq-banktok.big{font-size:21px;padding:13px 22px}
 .cq-banktok.right{border-color:var(--teal);background:var(--teal-ghost)}
 .cq-banktok.wrong{border-color:var(--rose);background:rgba(255,138,163,.12)}
-.cq-buildrow{display:flex;gap:10px;align-items:center;margin-top:8px}
+.cq-buildrow{display:flex;gap:12px;align-items:center;margin-top:18px}
 .cq-hintbtn{background:transparent;border:1px solid var(--violet);color:#c9b8ff;border-radius:10px;padding:10px 16px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit}
 .cq-hintbtn:hover{background:rgba(139,92,246,.12)}
-.cq-run{background:linear-gradient(135deg,var(--teal),var(--teal-deep));color:var(--bg-0);border:none;padding:13px 26px;border-radius:var(--radius-sm);font-weight:700;cursor:pointer;font-family:inherit;font-size:15px;transition:transform .15s,filter .15s}
+.cq-run{background:linear-gradient(135deg,var(--neon),var(--neon-deep));color:#04121a;border:none;padding:13px 26px;border-radius:var(--radius-sm);font-weight:700;cursor:pointer;font-family:inherit;font-size:15px;transition:transform .15s,filter .15s,box-shadow .2s;box-shadow:0 0 16px -6px rgba(58,201,224,.5),inset 0 0 0 1px rgba(255,255,255,.1)}
+.cq-run:hover{box-shadow:0 0 22px -4px rgba(58,201,224,.65),inset 0 0 0 1px rgba(255,255,255,.12)}
 .cq-run:hover:not(:disabled){transform:translateY(-1px);filter:brightness(1.06)}
 .cq-run:disabled{opacity:.5;cursor:default}
 .cq-clearbtn{background:none;border:1px solid var(--line);color:var(--ink-faint);padding:13px 18px;border-radius:var(--radius-sm);cursor:pointer;font-family:inherit;font-size:14px}
@@ -7100,7 +7845,7 @@ const CSS = `
 /* ============ TEST RESULTS ============ */
 .cq-results{padding:14px 0 0}
 .cq-err{background:rgba(255,138,163,.1);border:1px solid var(--rose);color:#ffd1da;padding:12px 14px;border-radius:10px;font-family:var(--mono);font-size:13px}
-.cq-celebrate{background:linear-gradient(100deg,var(--teal-ghost),var(--violet-ghost));border:1px solid var(--teal);padding:14px;border-radius:10px;font-weight:600;text-align:center;animation:cq-pop .35s cubic-bezier(.2,.8,.3,1.2)}
+.cq-celebrate{background:var(--bg-2);border:1px solid var(--teal-deep);border-left:3px solid var(--teal);padding:14px 16px;border-radius:10px;font-weight:500;color:var(--ink);animation:cq-settle .4s cubic-bezier(.22,.61,.36,1)}
 .cq-celebrate.review{background:var(--bg-2);border-color:var(--line);color:var(--ink-soft)}
 .cq-testrow{display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid var(--line-soft);font-family:var(--mono);font-size:12.5px}
 .cq-testrow:last-child{border-bottom:none}
@@ -7129,12 +7874,13 @@ const CSS = `
 .cq-footer{text-align:center;color:var(--ink-faint);font-size:12px;padding:26px;border-top:1px solid var(--line-soft);margin-top:20px}
 
 /* ============ PROJECT MODE ============ */
-.cq-headerright{display:flex;align-items:center;gap:10px}
+.cq-headerright{display:flex;align-items:center;gap:14px;flex-wrap:wrap;justify-content:flex-end}
 .cq-offline-badge{font-size:12px;font-weight:600;padding:6px 11px;border-radius:999px;background:rgba(245,158,11,.14);color:#fbbf24;border:1px solid rgba(245,158,11,.35);white-space:nowrap}
 .cq-offline-badge.syncing{background:rgba(139,92,246,.14);color:#c4b5fd;border-color:rgba(139,92,246,.35)}
-.cq-projbtn{background:var(--violet-ghost);border:1px solid rgba(155,140,255,.3);color:var(--violet);padding:7px 14px;border-radius:99px;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;transition:.15s}
+.cq-projbtn{background:var(--bg-2);border:1px solid var(--line);color:var(--ink-soft);padding:10px 18px;border-radius:12px;font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;transition:.18s;letter-spacing:.01em}
+.cq-projbtn:hover{border-color:var(--neon);color:var(--ink)}
 .cq-projbtn:hover{filter:brightness(1.12)}
-.cq-projhero{width:100%;display:flex;align-items:center;justify-content:space-between;gap:16px;background:linear-gradient(120deg,var(--violet-ghost),var(--bg-1));border:1px solid var(--violet);border-radius:var(--radius-lg);padding:20px 24px;margin-bottom:22px;cursor:pointer;font-family:inherit;color:inherit;box-shadow:0 14px 34px -22px #6f5cff;transition:transform .18s,filter .18s;text-align:left}
+.cq-projhero{width:100%;display:flex;align-items:center;justify-content:space-between;gap:16px;background:linear-gradient(120deg,var(--violet-ghost),var(--bg-1));border:1px solid var(--violet);border-radius:var(--radius-lg);padding:20px 24px;margin-bottom:22px;cursor:pointer;font-family:inherit;color:inherit;box-shadow:0 14px 34px -22px var(--neon-deep);transition:transform .18s,filter .18s;text-align:left}
 .cq-projhero:hover{transform:translateY(-2px);filter:brightness(1.05)}
 .cq-projhero-left{display:flex;align-items:center;gap:16px}
 .cq-projhero-emoji{font-size:34px}
@@ -7184,7 +7930,7 @@ const CSS = `
 .cq-proj-dot:hover{border-color:var(--violet);color:var(--ink)}
 .cq-proj-dot.active{border-color:var(--violet);color:var(--violet);box-shadow:0 0 0 1px var(--violet)}
 .cq-proj-dot.done{background:var(--teal);border-color:var(--teal);color:var(--bg-0)}
-.cq-teacher{background:linear-gradient(180deg,var(--bg-1),var(--bg-1));border:1px solid var(--violet);border-radius:var(--radius-lg);padding:20px;margin-top:18px;box-shadow:var(--shadow)}
+.cq-teacher{background:linear-gradient(180deg,var(--bg-1),var(--bg-1));border:1px solid var(--line);border-radius:var(--radius-lg);padding:24px;margin-top:26px;box-shadow:var(--shadow)}
 .cq-lessonhelp{margin-top:16px;border:1px solid var(--violet);border-radius:12px;overflow:hidden;background:rgba(139,92,246,.05)}
 .cq-lessonhelp-toggle{width:100%;text-align:left;background:transparent;border:none;color:var(--text);font-size:14px;font-weight:600;padding:12px 14px;cursor:pointer}
 .cq-lessonhelp-toggle:hover{background:rgba(139,92,246,.08)}
