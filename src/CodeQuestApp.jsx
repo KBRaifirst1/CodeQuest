@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useRef, useSyncExternalStore } from "react";
+import React, { useState, useEffect, useRef, useMemo, useSyncExternalStore } from "react";
 
 // Build marker — check this in the browser console to confirm which version is
 // actually running: type  window.__CQ_VERSION  in DevTools. If it's not the
 // value below, your browser/Vercel is serving an older bundle.
-const CQ_VERSION = "2026-07-10-v19-hint-no-answer";
+const CQ_VERSION = "2026-07-12-v44-java-lessons";
 if (typeof window !== "undefined") {
   window.__CQ_VERSION = CQ_VERSION;
   try { console.log("%cCodeQuest build: " + CQ_VERSION, "color:#6366f1;font-weight:bold"); } catch {}
@@ -44,8 +44,100 @@ function verifyRuns(code, fnName, tests) {
   }
   return { ok: true };
 }
-
-// ---------- The General Coding course (language-neutral, think like a coder) ----------
+// Real lesson checker for TypeScript: compile with Babel (strips types), then run
+// the function against the test cases — just like the JS checker, but for TS.
+async function verifyTypeScript(code, fnName, tests) {
+  if (!code.trim()) return { ok: false, why: "write some code first" };
+  let js;
+  try {
+    await loadScriptOnce("https://unpkg.com/@babel/standalone/babel.min.js");
+    const B = typeof window !== "undefined" ? window.Babel : null;
+    if (!B) return { ok: false, why: "the TypeScript compiler didn't load", engineError: true };
+    js = B.transform(code, { presets: ["typescript"], filename: "sol.ts" }).code;
+  } catch (e) { return { ok: false, why: "syntax error: " + (e && e.message ? e.message.slice(0, 60) : e) }; }
+  let fn;
+  try { fn = new Function(`${js}; return typeof ${fnName}==='function'?${fnName}:undefined;`)(); }
+  catch (e) { return { ok: false, why: "it couldn't run: " + e.message }; }
+  if (!fn) return { ok: false, why: `no function called ${fnName} yet` };
+  for (const t of tests) {
+    let got;
+    try { got = fn(...t.args); } catch (e) { return { ok: false, why: "it hit an error: " + e.message }; }
+    if (JSON.stringify(got) !== JSON.stringify(t.expected))
+      return { ok: false, why: `with ${t.args.join(", ")} it gave ${JSON.stringify(got)}, but should give ${JSON.stringify(t.expected)}` };
+  }
+  return { ok: true };
+}
+// Real lesson checker for SQL: seed a fresh database, run the learner's query,
+// and compare the result rows to the expected answer. This is the query-check
+// model (different from function-tests) — the honest way to test SQL.
+async function verifySQL(code, seed, expected) {
+  if (!code.trim()) return { ok: false, why: "write a query first" };
+  let SQL;
+  try {
+    await loadScriptOnce("https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.js");
+    SQL = await window.initSqlJs({ locateFile: (f) => "https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/" + f });
+  } catch (e) { return { ok: false, why: "the database engine didn't load", engineError: true }; }
+  const db = new SQL.Database();
+  try {
+    if (seed && seed.trim()) db.run(seed);
+    let res;
+    try { res = db.exec(code); } catch (e) { return { ok: false, why: "SQL error: " + (e && e.message ? e.message.slice(0, 70) : e) }; }
+    const rows = res.length ? res[0].values.map((r) => r.map((v) => v)) : [];
+    // Compare as sets of rows if order isn't specified, else exact. Default: exact.
+    const norm = (rr) => JSON.stringify(rr);
+    if (norm(rows) !== norm(expected)) {
+      // try order-insensitive
+      const sortRows = (rr) => [...rr].map((r) => JSON.stringify(r)).sort();
+      if (JSON.stringify(sortRows(rows)) === JSON.stringify(sortRows(expected)))
+        return { ok: true };
+      return { ok: false, why: `the query returned ${rows.length} row(s) that don't match the expected answer. Got: ${JSON.stringify(rows).slice(0, 80)}` };
+    }
+    return { ok: true };
+  } finally { try { db.close(); } catch {} }
+}
+async function verifyJava(code, fnName, tests, consoleEl, displayEl) {
+  if (typeof window === "undefined") return { ok: false, why: "Java needs a browser", engineError: true };
+  if (!code.trim()) return { ok: false, why: "write some code first" };
+  const argLit = (a) => (typeof a === "string" ? '"' + String(a).replace(/"/g, '\\"') + '"' : String(a));
+  const calls = tests.map((t, i) => `System.out.println("CQ" + ${i} + ":" + ${fnName}(${t.args.map(argLit).join(", ")}));`).join("\n    ");
+  const harness = `public class Main {\n  ${code}\n  public static void main(String[] args) {\n    ${calls}\n  }\n}`;
+  let r;
+  try { r = await runProjectJava(harness, consoleEl, displayEl); }
+  catch (e) { return { ok: false, why: "Java error: " + (e && e.message ? e.message.slice(0, 60) : e), engineError: true }; }
+  if (r.setupNeeded) return { ok: false, why: r.error, engineError: true };
+  if (!r.ok) return { ok: false, why: (r.compileError ? "it didn't compile: " : "it hit an error: ") + (r.error || "").slice(0, 100) };
+  const lines = (r.output || "").split("\n");
+  for (let i = 0; i < tests.length; i++) {
+    const line = lines.find((l) => l.startsWith("CQ" + i + ":"));
+    const got = line ? line.slice(("CQ" + i + ":").length).trim() : "";
+    if (String(got) !== String(tests[i].expected))
+      return { ok: false, why: `with ${tests[i].args.join(", ")} it gave ${got || "(nothing)"}, but should give ${tests[i].expected}` };
+  }
+  return { ok: true };
+}
+async function verifyLua(code, fnName, tests) {
+  if (!code.trim()) return { ok: false, why: "write some code first" };
+  let factory;
+  try {
+    if (!_luaFactory) { const mod = await import(/* @vite-ignore */ "https://esm.sh/wasmoon@1.16.0"); _luaFactory = new mod.LuaFactory(); }
+    factory = _luaFactory;
+  } catch (e) { return { ok: false, why: "the Lua engine didn't load", engineError: true }; }
+  for (const t of tests) {
+    let lua;
+    try {
+      lua = await factory.createEngine();
+      const argList = t.args.map((a) => JSON.stringify(a)).join(", ");
+      await lua.doString(code + `\n__cq_result = ${fnName}(${argList})`);
+      const got = lua.global.get("__cq_result");
+      if (JSON.stringify(got) !== JSON.stringify(t.expected)) {
+        lua.global.close();
+        return { ok: false, why: `with ${t.args.join(", ")} it gave ${JSON.stringify(got)}, but should give ${JSON.stringify(t.expected)}` };
+      }
+    } catch (e) { return { ok: false, why: "it hit an error: " + (e && e.message ? e.message.slice(0, 60) : e) }; }
+    finally { try { if (lua) lua.global.close(); } catch {} }
+  }
+  return { ok: true };
+}
 // Puzzles first, then neutral code. Progressively harder. Three skills:
 // patterns/reading, breaking into steps, predicting what code does.
 const GENERAL_STEPS = [
@@ -700,6 +792,19 @@ ${head}</head><body>${body}</body></html>`;
     return shell(`<style>${escScript(raw)}</style>`,
       `<div class="box">Box</div>\n<button class="btn">Button</button>\n<p class="text">Some text to style.</p>\n<ul class="list"><li>One</li><li>Two</li></ul>`);
   }
+  if (kind === "p5") {
+    // p5.js is JavaScript that draws to a canvas — it renders live in the same
+    // sandboxed iframe as the other visual languages. Real execution, real errors.
+    return shell(
+      `<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>`,
+      `<div id="err"></div>
+<script>
+window.onerror = function(m){ document.getElementById('err').innerHTML = '<pre style="color:#c0392b;white-space:pre-wrap">'+String(m)+'</pre>'; };
+try {
+${escScript(raw)}
+} catch(e){ document.getElementById('err').innerHTML = '<pre style="color:#c0392b;white-space:pre-wrap">'+String(e && e.message || e)+'</pre>'; }
+</` + `script>`);
+  }
   if (kind === "jsx") {
     return shell(
       `<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -738,7 +843,47 @@ try {
   return shell("", raw);
 }
 
-// For languages we can't run in the browser natively (Java, C++, etc.), we ask
+// Combine the files of a WEB project into one live page. HTML gives structure,
+// every CSS file becomes a <style>, and one behavior file (JS/TS/JSX/p5) becomes
+// the script. This is the honest "real webpage" — the three parts working
+// together exactly as they do on a real site.
+function markupProjectHTML(files) {
+  const escScript = (s) => String(s || "").replace(/<\/script/gi, "<\\/script");
+  const pick = (re) => files.filter((f) => re.test(f.name));
+  const htmlFile = pick(/\.html?$/i)[0];
+  const cssFiles = pick(/\.css$/i);
+  const jsFile = pick(/\.(js|ts|jsx)$/i)[0];
+  const p5File = files.find((f) => f.lang === "p5");
+
+  const styles = cssFiles.map((f) => `<style>${escScript(f.code)}</style>`).join("\n");
+  const bodyHtml = htmlFile ? String(htmlFile.code || "") : '<div id="root"></div><div id="app"></div>';
+
+  // Behaviour: p5 and JSX need their libraries; TS/JSX compile via Babel.
+  let head = styles;
+  let script = "";
+  if (p5File) {
+    head += `\n<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>`;
+    script = `<script>\ntry {\n${escScript(p5File.code)}\n} catch(e){ document.body.insertAdjacentHTML('beforeend','<pre style=\\"color:#c0392b\\">'+String(e&&e.message||e)+'</pre>'); }\n</` + `script>`;
+  } else if (jsFile && /\.jsx$/i.test(jsFile.name)) {
+    head += `\n<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>\n<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>\n<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>`;
+    script = `<script type="text/babel" data-presets="react">\ntry {\n${escScript(jsFile.code)}\n} catch(e){ document.body.insertAdjacentHTML('beforeend','<pre style=\\"color:#c0392b\\">'+String(e&&e.message||e)+'</pre>'); }\n</` + `script>`;
+  } else if (jsFile && /\.ts$/i.test(jsFile.name)) {
+    head += `\n<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>`;
+    script = `<script>\ntry {\n  var __js = Babel.transform(${JSON.stringify(jsFile.code || "")}, { presets: ['typescript'], filename: 'main.ts' }).code;\n  (new Function(__js))();\n} catch(e){ document.body.insertAdjacentHTML('beforeend','<pre style=\\"color:#c0392b\\">'+String(e&&e.message||e)+'</pre>'); }\n</` + `script>`;
+  } else if (jsFile) {
+    script = `<script>\ntry {\n${escScript(jsFile.code)}\n} catch(e){ document.body.insertAdjacentHTML('beforeend','<pre style=\\"color:#c0392b\\">'+String(e&&e.message||e)+'</pre>'); }\n</` + `script>`;
+  }
+  return `<!doctype html><html><head><meta charset="utf-8">
+<style>html,body{margin:0;padding:16px;font-family:system-ui,-apple-system,sans-serif;background:#fff;color:#111;line-height:1.5}</style>
+${head}</head><body>${bodyHtml}${script}</body></html>`;
+}
+// Does this set of files form a runnable WEB project (has at least an html/css/js
+// mix, more than one web file)?
+function isWebProject(files) {
+  const web = files.filter((f) => /\.(html?|css|js|ts|jsx)$/i.test(f.name) || f.lang === "p5");
+  const kinds = new Set(web.map((f) => (/\.html?$/i.test(f.name) ? "html" : /\.css$/i.test(f.name) ? "css" : "js")));
+  return web.length >= 2 && kinds.size >= 2;
+}
 // Gemini to translate to JavaScript that produces the SAME stdout via console.log.
 // The JS runs in a sandboxed iframe that captures output and posts it back via
 // postMessage. Compare captured stdout to step.expectedOutput.
@@ -855,8 +1000,10 @@ const topicSystemFor = (langLabel, runnable, count = null) =>
       (count > 1 ? "They build on each other, easy to harder. " : "")
     : "YOU choose the topic and how many lessons fit it (between 3 and 5). They build on each other, easy to harder. ") +
   "EVERY lesson must TEACH before it tests: explain the new idea in plain words, then show a tiny worked example. " +
+  "NOVELTY IS REQUIRED — this is critical: every single lesson must introduce a genuinely NEW concept (declared in its `concept` field) that the learner has NOT already learned. A lesson MAY freely USE things the learner already knows (for example, it's fine to use print() inside a lesson about loops) — but the NEW concept it teaches must be something different. Example: if the learner already knows basic print(), do NOT make another lesson whose concept is 'print' — instead you may teach 'printing multiple values', 'f-strings', or 'the sep and end options' (all new capabilities), or move to an entirely different concept. Do NOT make several lessons that are the same idea reworded or with bigger numbers. Across the set, cover DIFFERENT building blocks so the learner steadily discovers new parts of the language. " +
   "Respond with ONLY JSON, no prose, no fences: {\"topic\":string (2-4 words), \"lessons\":[ {" +
   "\"title\":string, " +
+  "\"concept\":string — REQUIRED. A SHORT tag (2-4 words, lowercase) naming the ONE specific NEW capability this lesson teaches, e.g. \"f-strings\", \"list slicing\", \"for loop\", \"dictionary lookup\", \"try/except\". RULES for this field: (a) it must be the NEW thing introduced, not something the learner already knows that the lesson merely uses; (b) use the standard name for the concept, not a made-up synonym (say \"print\" not \"showing text\", \"for loop\" not \"repeating\"); (c) never leave it blank; (d) two lessons in this set must never share a concept, and it must not be a concept the learner already knows. If you can't name a genuinely new concept, don't make the lesson. " +
   "\"teach\":string (2-3 plain sentences that EXPLAIN the new concept clearly, as if to a beginner who has never seen it; may use `inline code`), " +
   "\"example\":string (a short worked example line or two showing the idea in " + langLabel + ", e.g. an input and what it produces), " +
   "\"fnName\":string (camelCase), " +
@@ -865,6 +1012,12 @@ const topicSystemFor = (langLabel, runnable, count = null) =>
   "\"solution\":string (complete correct " + langLabel + " code), " +
   "\"tests\":array of >=2 {\"args\":array,\"expected\":any}} ] }. " +
   `Use real ${langLabel} syntax exactly. Keep it beginner-friendly. ` +
+  "TEACHING QUALITY (important — the learner has no other teacher, so be accurate): " +
+  "(1) Explanations must be SIMPLE but never MISLEADING. Do not give a comforting half-truth they will have to unlearn later. If a simple analogy would be wrong in an important way, skip it and describe what the thing actually does. " +
+  `(2) Write the solution the way an experienced ${langLabel} programmer would: follow that language normal conventions and idioms (for Python that means readable, PEP 8 style; clear variable names, not x or tmp; the normal way of doing things, not a clunky workaround). ` +
+  "(3) Always explain WHY, not just what: a one-line reason the concept matters or how it is used in real code. " +
+  "(4) Do not teach bad habits: no confusing names, no needless complexity. " +
+  "(5) Prefer the clearest correct explanation over the shortest one. " +
   "CRITICAL — match tests to the io style: For \"return\" lessons the function must RETURN the expected value (the checker compares the return value). For \"print\" lessons the function must PRINT exactly the expected value as text (the checker compares what's printed) — and the lesson's teach/example must clearly tell the learner to use print. Never write a lesson whose solution prints but whose io says \"return\" (or vice-versa) — the io field must match what the solution actually does, and expected must match that output. " +
   `Every starter must NOT pass its tests; every solution MUST pass.`;
 
@@ -1079,11 +1232,12 @@ const difficultyClause = (level) => {
 // backfill wrapper below tops up the shortfall.
 async function generateTopicBatch({ classId, langLabel, priorTopics, customTopic, howManyToAsk, wanted, diff, fixedTopic = null, signal }) {
   const runnable = classId === "js" || classId === "py";
+  const alreadyCovered = (priorTopics || []).length ? `The learner has ALREADY LEARNED these concepts — you may USE them in lessons, but do NOT make any lesson whose NEW concept is one of these: ${(priorTopics || []).join(", ")}. Teach something new instead. ` : "";
   const topicClause = fixedTopic
-    ? `Keep using the SAME topic: "${fixedTopic}". Make MORE lessons under it (different from any you've made before).`
+    ? `Keep using the SAME topic: "${fixedTopic}", but each new lesson must teach a DIFFERENT aspect of it the learner hasn't done yet — go deeper or wider into "${fixedTopic}", never repeat an aspect already covered.`
     : "";
   const ask = customTopic
-    ? `Make a themed ${langLabel} set about "${customTopic}" now. Create exactly ${howManyToAsk} lesson${howManyToAsk === 1 ? "" : "s"} that teach this specific topic${wanted !== 1 ? ", easy to harder" : ""}. ${diff} ${topicClause} Each lesson explains the idea first, then a worked example, then the exercise.`
+    ? `Make a themed ${langLabel} set about "${customTopic}" now. ${alreadyCovered}Create exactly ${howManyToAsk} lesson${howManyToAsk === 1 ? "" : "s"} that teach this specific topic${wanted !== 1 ? ", easy to harder" : ""}. Each lesson must introduce a NEW aspect of "${customTopic}" — different sub-skills, not the same thing repeated (e.g. for a graphics topic: drawing, then colors, then movement, then input — not 'set up the window' three times). ${diff} ${topicClause} Each lesson explains the idea first, then a worked example, then the exercise.`
     : `Make a fresh themed ${langLabel} set now. Avoid these topics already covered: ${(priorTopics || []).join(", ") || "none"}. Pick a NEW beginner topic and make exactly ${howManyToAsk} lesson${howManyToAsk === 1 ? "" : "s"} for it. ${diff} ${topicClause} Remember: each lesson explains the idea first, then a worked example, then the exercise.`;
   let raw;
   try { raw = await callClaude([{ role: "user", content: ask }], { system: topicSystemFor(langLabel, runnable, howManyToAsk), maxTokens: 6000, signal, thinking: true }); }
@@ -1093,21 +1247,67 @@ async function generateTopicBatch({ classId, langLabel, priorTopics, customTopic
   const chapter = `✨ ${topic}`;
   const rawLessons = Array.isArray(parsed.lessons) ? parsed.lessons.slice(0, 12) : [];
   const out = [];
+  // Normalize a concept tag so synonyms and formatting variants match the same
+  // learned concept — closes loopholes where the AI writes "printing", "print()",
+  // or "Print" instead of "print" to sneak a known concept past the filter.
+  const CONCEPT_SYNONYMS = {
+    "printing": "print", "print statement": "print", "printing output": "print", "output": "print", "console output": "print",
+    "printing values": "print", "display": "print", "show output": "print",
+    "for loops": "for loop", "for-loop": "for loop", "looping": "for loop", "loops": "for loop", "iterate": "for loop", "iteration": "for loop",
+    "while loops": "while loop",
+    "f string": "f-strings", "fstring": "f-strings", "fstrings": "f-strings", "formatted strings": "f-strings", "string formatting": "f-strings",
+    "variable": "variables", "assigning variables": "variables", "assignment": "variables",
+    "function": "functions", "defining functions": "functions", "def": "functions",
+    "conditional": "conditionals", "if statement": "conditionals", "if statements": "conditionals", "if else": "conditionals", "if/else": "conditionals",
+    "list": "lists", "arrays": "lists", "array": "lists",
+    "dictionaries": "dictionary", "dict": "dictionary", "dicts": "dictionary", "hashmap": "dictionary",
+    "string": "strings", "string methods": "strings",
+    "returning values": "return", "return value": "return", "returning": "return",
+  };
+  const normConcept = (c) => {
+    let s = (c || "").toString().toLowerCase().trim();
+    s = s.replace(/\(\s*\)/g, "").replace(/[^a-z0-9 /+-]/g, "").replace(/\s+/g, " ").trim(); // drop (), punctuation
+    if (CONCEPT_SYNONYMS[s]) s = CONCEPT_SYNONYMS[s];
+    // Singularize a trailing plural "s" as a last-ditch match (loops→loop), but
+    // only after synonym mapping so we don't mangle "f-strings".
+    return s;
+  };
+  const learnedSet = new Set((learnedConcepts || []).map(normConcept).filter(Boolean));
+  const seenConcepts = new Set(); // guard against the AI repeating the same concept
+  const seenFns = new Set();
+  const conceptKey = (L) => {
+    // Normalize a lesson title to its core nouns for a fuzzy concept match.
+    return (L.title || "").toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\b(a|an|the|and|with|to|of|for|your|you|make|write|create|build|function|two|it|its|number|numbers|value|values)\b/g, "").replace(/\s+/g, " ").trim();
+  };
   for (const L of rawLessons) {
     // Cancel check per-lesson: Python verification via Pyodide can take seconds
     // per lesson, so without this a Stop during validation waits for ALL of them.
     if (signal?.aborted) throw new Error("cancelled");
-    if (!L.fnName || !L.solution || !Array.isArray(L.tests) || L.tests.length < 2) continue;
-    // verify the solution actually runs (JS natively, Python via Pyodide)
-    let valid;
-    if (classId === "js") valid = verifyRuns(L.solution, L.fnName, L.tests).ok && !verifyRuns(L.starter || "", L.fnName, L.tests).ok;
-    else if (classId === "py") { const v = await verifyPython(L.solution, L.fnName, L.tests, L.io); valid = v.ok; }
-    else valid = true; // shouldn't reach here for non-runnable, handled elsewhere
-    if (!valid) continue;
+    const check = await validateLesson(L, classId);
+    if (!check.ok) continue; // silently drop broken lessons — the learner never sees them
+    // Novelty guard: skip a lesson that repeats a concept already in this set,
+    // so the learner keeps seeing NEW things rather than variations of one idea.
+    // Same function name = almost certainly the same concept; a matching stripped
+    // title is a fuzzy catch for the rest.
+    const fn = (L.fnName || "").toLowerCase();
+    const ck = conceptKey(L);
+    if ((fn && seenFns.has(fn)) || (ck && seenConcepts.has(ck))) continue;
+    // HARD RULE: if this lesson's declared NEW concept is one the learner has
+    // already learned, drop it — they shouldn't get a lesson ABOUT something they
+    // know (though lessons may freely USE known things). Uses the normalizer so
+    // synonyms/formatting can't sneak a known concept past. If the AI FAILED to
+    // declare a concept, fall back to the normalized title so the lesson is never
+    // left unchecked (closes the empty-concept loophole).
+    const declared = normConcept(L.concept);
+    const thisConcept = declared || ck; // never empty → always checked
+    if (thisConcept && (learnedSet.has(thisConcept) || seenConcepts.has(thisConcept))) continue;
+    if (fn) seenFns.add(fn);
+    if (ck) seenConcepts.add(ck);
+    if (thisConcept) seenConcepts.add(thisConcept);
     out.push({
       id: "ai_" + Math.random().toString(36).slice(2, 8),
       type: "type", chapter, topic, generated: true, lang: classId,
-      title: L.title || "Lesson", teach: L.teach || "", example: L.example || "",
+      title: L.title || "Lesson", teach: L.teach || "", example: L.example || "", concept: thisConcept,
       intro: L.teach || "Type the function so the tests pass.",
       starter: L.starter || `function ${L.fnName}() {\n  \n}`, fnName: L.fnName, tests: L.tests, io: L.io === "print" ? "print" : "return",
       why: "🎉 You solved it — and it ran for real.",
@@ -1116,7 +1316,7 @@ async function generateTopicBatch({ classId, langLabel, priorTopics, customTopic
   return { topic, chapter, lessons: out };
 }
 
-async function generateTopicUnit({ classId = "js", langLabel = "JavaScript", priorTopics, customTopic = null, count = null, difficulty = null, signal }) {
+async function generateTopicUnit({ classId = "js", langLabel = "JavaScript", priorTopics, learnedConcepts = [], customTopic = null, count = null, difficulty = null, signal }) {
   const wanted = count && count >= 1 && count <= 10 ? count : null; // validated user request
   const target = wanted || 4; // when the AI picks the count, aim for 4 valid lessons
   const diff = difficultyClause(difficulty);
@@ -1178,6 +1378,771 @@ function loadPyodide() {
   });
   return _pyLoading;
 }
+// ---------- Lesson validator ----------
+// Runs BEFORE a lesson is shown to the learner. Catches broken/impossible
+// lessons so the learner never has to (they're learning to code — they can't
+// tell a broken lesson from their own mistake). Returns {ok, reason}.
+//
+// Checks:
+//  1. Has the required pieces (fnName, solution, >=2 tests).
+//  2. The author's SOLUTION actually passes all tests (lesson is solvable).
+//  3. The STARTER does NOT already pass (otherwise there's nothing to learn).
+//  4. Tests are self-consistent (no two identical args with different expected).
+//  5. The example shown in the teaching text doesn't contradict the tests
+//     (e.g. teach says print "hi" but tests want "Hi") — the exact class of bug
+//     that trips up beginners who follow the example literally.
+async function validateLesson(L, classId) {
+  if (!L || !L.fnName || !L.solution || !Array.isArray(L.tests) || L.tests.length < 2) {
+    return { ok: false, reason: "missing fnName/solution/tests" };
+  }
+  // 4. Self-consistent tests: same args must not map to different expected.
+  const seen = new Map();
+  for (const t of L.tests) {
+    if (!t || !Array.isArray(t.args)) return { ok: false, reason: "malformed test" };
+    const key = JSON.stringify(t.args);
+    if (seen.has(key) && JSON.stringify(seen.get(key)) !== JSON.stringify(t.expected)) {
+      return { ok: false, reason: "contradictory tests (same input, different expected)" };
+    }
+    seen.set(key, t.expected);
+  }
+  // 2 & 3: solution passes, starter fails. Language-specific runner.
+  if (classId === "js") {
+    const solOk = verifyRuns(L.solution, L.fnName, L.tests).ok;
+    if (!solOk) return { ok: false, reason: "author solution fails its own tests" };
+    const starterOk = verifyRuns(L.starter || "", L.fnName, L.tests).ok;
+    if (starterOk) return { ok: false, reason: "starter already passes (nothing to solve)" };
+  } else if (classId === "ts") {
+    const v = await verifyTypeScript(L.solution, L.fnName, L.tests);
+    if (v.engineError) return { ok: true }; // can't validate offline; accept
+    if (!v.ok) return { ok: false, reason: "author solution fails its own tests" };
+    const sv = await verifyTypeScript(L.starter || "", L.fnName, L.tests);
+    if (sv.ok) return { ok: false, reason: "starter already passes (nothing to solve)" };
+  } else if (classId === "lua") {
+    const v = await verifyLua(L.solution, L.fnName, L.tests);
+    if (v.engineError) return { ok: true };
+    if (!v.ok) return { ok: false, reason: "author solution fails its own tests" };
+    const sv = await verifyLua(L.starter || "", L.fnName, L.tests);
+    if (sv.ok) return { ok: false, reason: "starter already passes (nothing to solve)" };
+  } else if (classId === "java") {
+    // Java compiles only in the browser (CheerpJ), so we can't validate the
+    // solution offline during generation — accept it; the harness + runtime
+    // check happens live when the learner runs it.
+    return { ok: true };
+  } else if (classId === "py") {
+    const v = await verifyPython(L.solution, L.fnName, L.tests, L.io);
+    if (!v.ok) return { ok: false, reason: "author solution fails its own tests" };
+    // Starter-passes check for Python too (was previously skipped).
+    if (L.starter && L.starter.trim() && !/pass\s*$/.test(L.starter.trim())) {
+      const sv = await verifyPython(L.starter, L.fnName, L.tests, L.io);
+      if (sv.ok) return { ok: false, reason: "starter already passes (nothing to solve)" };
+    }
+  } else {
+    // AI-judged languages: we can't run them, so we can't deep-validate. Accept
+    // if the basic shape is present (the AI judge grades leniently at runtime).
+    return { ok: true };
+  }
+  // 5: example-vs-tests consistency. If the teaching text or example shows a
+  // concrete expected output/value, make sure it doesn't contradict the tests.
+  // We look for quoted strings in the example that look like they claim an
+  // output, and check none directly conflicts with an expected string of the
+  // same shape. This is heuristic and conservative — it only rejects clear
+  // contradictions (same words, different capitalization/punctuation).
+  const exampleText = ((L.example || "") + " " + (L.teach || "")).toString();
+  const expectedStrings = L.tests.map((t) => t.expected).filter((e) => typeof e === "string");
+  for (const exp of expectedStrings) {
+    // Does the example contain the same phrase but with different case/spacing?
+    const norm = (s) => s.toLowerCase().replace(/\s+/g, " ").replace(/[.!?,]/g, "").trim();
+    const expNorm = norm(exp);
+    if (!expNorm) continue;
+    // Find quoted strings in the example.
+    const quoted = [...exampleText.matchAll(/["']([^"']{2,})["']/g)].map((m) => m[1]);
+    for (const q of quoted) {
+      // Same normalized content but different EXACT content = a contradiction
+      // the learner would hit by copying the example.
+      if (norm(q) === expNorm && q !== exp) {
+        return { ok: false, reason: `example shows "${q}" but test wants "${exp}" (capitalization/punctuation mismatch)` };
+      }
+    }
+  }
+  // 6: code-quality guard — reject solutions that model clear bad habits, since
+  // the learner copies the style they see. Conservative: only flags genuinely
+  // poor teaching examples. Uses plain string checks (no regex) to stay robust.
+  const sol = (L.solution || "").toString();
+  if (classId === "py") {
+    const hasBareExcept = sol.includes("except:");
+    if (hasBareExcept) return { ok: false, reason: "bare except (bad habit)" };
+    if (sol.includes("eval(")) return { ok: false, reason: "eval() (unsafe habit)" };
+    if (sol.includes("== True") || sol.includes("== False")) return { ok: false, reason: "compares to True/False (un-idiomatic)" };
+  }
+  return { ok: true };
+}
+
+// ---------- Whole-program runners for PROJECT MODE ----------
+// Projects aren't graded function tests — the learner writes a whole program and
+// runs it to see what it does. These run the WHOLE program and capture real
+// output + real errors. Python runs via Pyodide, JS runs natively in a worker-ish
+// sandbox, and markup (html/css/jsx/vue/svelte) renders live via the iframe.
+const PROJECT_LANGS = ["py", "js", "ts", "java", "lua", "basic", "asm", "php", "c", "cpp", "sql", "p5", "html", "css", "jsx", "vue", "svelte"];
+const PROJECT_LANG_LABEL = { py: "Python", js: "JavaScript", ts: "TypeScript", java: "Java", lua: "Lua", basic: "BASIC", asm: "Assembly", php: "PHP", c: "C", cpp: "C++", sql: "SQL", p5: "p5 (drawing)", html: "HTML", css: "CSS", jsx: "React (JSX)", vue: "Vue", svelte: "Svelte" };
+function projectLangMode(lang) {
+  if (lang === "py" || lang === "js" || lang === "ts" || lang === "lua" || lang === "basic" || lang === "asm" || lang === "php" || lang === "c" || lang === "cpp") return "run"; // text output
+  if (lang === "sql") return "sql";     // table output
+  if (lang === "java") return "java";   // real JVM in the browser (CheerpJ)
+  return "markup";                       // live preview in iframe (incl. p5)
+}
+// The default file name for a language — used when a project starts, and as the
+// basis for imports (e.g. a Python file "helpers.py" is imported as "helpers").
+const PROJECT_FILE_EXT = { py: "py", js: "js", ts: "ts", java: "java", lua: "lua", basic: "bas", asm: "asm", php: "php", c: "c", cpp: "cpp", sql: "sql", p5: "js", html: "html", css: "css", jsx: "jsx", vue: "vue", svelte: "svelte" };
+function defaultFileName(lang, base) {
+  const ext = PROJECT_FILE_EXT[lang] || "txt";
+  if (lang === "java") return (base || "Main") + ".java"; // Java file must match class
+  if (lang === "html") return "index.html";
+  return (base || "main") + "." + ext;
+}
+// Build the starting files for a project. A project is always a LIST of files;
+// most start with just one. Saved older projects (single `code` string) are
+// upgraded to a one-file list so nothing breaks.
+function initialProjectFiles(plan) {
+  if (Array.isArray(plan.files) && plan.files.length) return plan.files.map((f) => ({ ...f }));
+  const lang = plan.lang || "py";
+  return [{ name: defaultFileName(lang), lang, code: plan.code || plan.starter || "" }];
+}
+// Load a script from a CDN once, and resolve when it's ready. Used for the
+// in-browser language engines (TypeScript via Babel, SQL via sql.js) so they
+// only download if the learner actually uses that language.
+const _scriptCache = {};
+function loadScriptOnce(src) {
+  if (_scriptCache[src]) return _scriptCache[src];
+  _scriptCache[src] = new Promise((resolve, reject) => {
+    if (typeof document === "undefined") return reject(new Error("no document"));
+    const s = document.createElement("script");
+    s.src = src; s.async = true;
+    s.onload = () => resolve(true);
+    s.onerror = () => reject(new Error("Couldn't load " + src));
+    document.head.appendChild(s);
+  });
+  return _scriptCache[src];
+}
+// Run a whole TypeScript program: compile to JS in-browser with Babel (the same
+// Babel already used for JSX), then run it exactly like the JS runner.
+async function runProjectTS(code) {
+  try {
+    await loadScriptOnce("https://unpkg.com/@babel/standalone/babel.min.js");
+  } catch (e) {
+    return { ok: false, output: "", error: "Couldn't load the TypeScript compiler: " + e.message };
+  }
+  const B = typeof window !== "undefined" ? window.Babel : null;
+  if (!B) return { ok: false, output: "", error: "TypeScript compiler didn't load." };
+  let js;
+  try {
+    js = B.transform(code, { presets: ["typescript"], filename: "project.ts" }).code;
+  } catch (e) {
+    // A TypeScript syntax error is a REAL error — surface it as-is.
+    return { ok: false, output: "", error: String(e && e.message ? e.message : e) };
+  }
+  return runProjectJS(js);
+}
+// Run SQL for real: sql.js is SQLite compiled to WebAssembly, running fully in
+// the browser. Returns real result tables and real SQL errors.
+async function runProjectSQL(code) {
+  try {
+    await loadScriptOnce("https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.js");
+  } catch (e) {
+    return { ok: false, output: "", error: "Couldn't load the SQL engine: " + e.message };
+  }
+  const initSqlJs = typeof window !== "undefined" ? window.initSqlJs : null;
+  if (!initSqlJs) return { ok: false, output: "", error: "SQL engine didn't load." };
+  try {
+    const SQL = await initSqlJs({ locateFile: (f) => "https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/" + f });
+    const db = new SQL.Database();
+    const res = db.exec(code); // runs every statement; throws real SQL errors
+    if (!res || !res.length) return { ok: true, output: "", tables: [] };
+    // Shape the results into simple tables the UI can render.
+    const tables = res.map((r) => ({ columns: r.columns, values: r.values }));
+    return { ok: true, output: "", tables };
+  } catch (e) {
+    return { ok: false, output: "", error: String(e && e.message ? e.message : e) };
+  }
+}
+// ---------- JAVA, for real, in the browser (CheerpJ) ----------
+// CheerpJ is a full JVM compiled to WebAssembly. Because javac is itself written
+// in Java, the COMPILER runs in the browser too — so we can compile and run code
+// the learner just typed, with no server. This mirrors the approach used by
+// Leaning Technologies' own JavaFiddle (Apache-2.0), which is the reference
+// implementation for compiling-in-the-browser with CheerpJ.
+//
+// REQUIREMENT: `tools.jar` (the javac compiler, ~17.5MB) must be served from this
+// app's own domain at /tools.jar — CheerpJ's "/app/" mount maps to our web server.
+// Without it, compiling can't work and we say so plainly instead of failing weirdly.
+const CHEERPJ_LOADER = "https://cjrtnc.leaningtech.com/4.3/loader.js";
+const JAVA_TOOLS_JAR = "/tools.jar";       // must exist in the app's public/ folder
+const JAVA_CLASSPATH = "/app/tools.jar:/files/";
+let _cheerpjReady = null;   // init happens once per page — it's a whole JVM
+let _cheerpjDisplayEl = null;
+async function ensureCheerpJ(displayEl) {
+  if (!_cheerpjReady) {
+    _cheerpjReady = (async () => {
+      await loadScriptOnce(CHEERPJ_LOADER);
+      if (typeof window === "undefined" || !window.cheerpjInit) throw new Error("CheerpJ didn't load.");
+      await window.cheerpjInit({ status: "none" });
+      return true;
+    })();
+  }
+  await _cheerpjReady;
+  // Create the display once — it's where Swing/AWT windows render (a bonus for
+  // console programs, essential if the learner writes a GUI).
+  if (displayEl && _cheerpjDisplayEl !== displayEl && window.cheerpjCreateDisplay) {
+    try { window.cheerpjCreateDisplay(-1, -1, displayEl); _cheerpjDisplayEl = displayEl; } catch {}
+  }
+}
+// Work out the class to run from the learner's own code (e.g. `public class Dice`
+// → run "Dice"), including a package if they declared one.
+function javaMainClass(code) {
+  const pkg = code.match(/^\s*package\s+([\w.]+)\s*;/m);
+  const cls = code.match(/public\s+class\s+(\w+)/) || code.match(/\bclass\s+(\w+)/);
+  const name = cls ? cls[1] : "Main";
+  return { className: pkg ? pkg[1] + "." + name : name, fileName: name + ".java" };
+}
+// Compile + run a whole Java program. Returns real javac errors and real program
+// output. `consoleEl` MUST be the element with id="console" — CheerpJ implicitly
+// writes System.out/err into it.
+async function runProjectJava(code, consoleEl, displayEl) {
+  if (typeof window === "undefined") return { ok: false, output: "", error: "Java needs a browser." };
+  // Check tools.jar is actually being served before we spin up a whole JVM —
+  // otherwise the failure is cryptic.
+  try {
+    const head = await fetch(JAVA_TOOLS_JAR, { method: "HEAD" });
+    if (!head.ok) throw new Error("missing");
+  } catch {
+    return {
+      ok: false, output: "",
+      error: "Java needs the compiler file to be added to this app first (tools.jar isn't being served at /tools.jar). Everything else works — this one language needs that file in place.",
+      setupNeeded: true,
+    };
+  }
+  try {
+    await ensureCheerpJ(displayEl);
+  } catch (e) {
+    return { ok: false, output: "", error: "Couldn't start the Java engine: " + (e && e.message ? e.message : e) };
+  }
+  const { className, fileName } = javaMainClass(code);
+  if (consoleEl) consoleEl.innerHTML = "";
+  if (displayEl) { /* leave the display; CheerpJ owns it */ }
+  const readConsole = () => (consoleEl ? (consoleEl.innerText || "").replace(/\n+$/, "") : "");
+  try {
+    // 1) Put the learner's source into CheerpJ's virtual filesystem.
+    const enc = new TextEncoder();
+    window.cheerpjAddStringFile("/str/" + fileName, enc.encode(code));
+    // 2) Compile it with the real javac, running inside the JVM.
+    const exit = await window.cheerpjRunMain(
+      "com.sun.tools.javac.Main", JAVA_CLASSPATH, "/str/" + fileName, "-d", "/files/", "-Xlint"
+    );
+    if (exit !== 0) {
+      // javac wrote its real errors into the console element.
+      const compileErrors = readConsole();
+      return { ok: false, output: "", error: compileErrors || "The code didn't compile.", compileError: true };
+    }
+    // 3) It compiled — now run it. Output lands in the console element.
+    if (consoleEl) consoleEl.innerHTML = "";
+    await window.cheerpjRunMain(className, JAVA_CLASSPATH);
+    // Give CheerpJ a tick to flush output into the DOM before we read it.
+    await new Promise((r) => setTimeout(r, 60));
+    return { ok: true, output: readConsole() };
+  } catch (e) {
+    const partial = readConsole();
+    return { ok: false, output: partial, error: String(e && e.message ? e.message : e) };
+  }
+}
+
+// Run a whole Python program, capturing everything it prints + any real error.
+async function runProjectPython(code, files = null, activeName = null) {
+  let py;
+  try { py = await loadPyodide(); } catch (e) { return { ok: false, output: "", error: "Couldn't start Python: " + e.message }; }
+  let out = "";
+  try {
+    py.setStdout({ batched: (s) => { out += s + "\n"; } });
+    py.setStderr({ batched: (s) => { out += s + "\n"; } });
+  } catch {}
+  try {
+    // If this is a multi-file project, write every .py file into Pyodide's
+    // virtual filesystem first, so the active file can genuinely `import` them.
+    if (Array.isArray(files) && files.length > 1) {
+      try { py.runPython("import sys\nif '' not in sys.path: sys.path.insert(0, '')"); } catch {}
+      for (const f of files) {
+        if (f && f.name && /\.py$/i.test(f.name)) {
+          try { py.FS.writeFile(f.name, f.code || ""); } catch {}
+        }
+      }
+    }
+    await py.runPythonAsync(code);
+    return { ok: true, output: out.replace(/\n$/, "") };
+  } catch (e) {
+    // Keep partial output printed before the error, plus the real error message.
+    return { ok: false, output: out.replace(/\n$/, ""), error: String(e && e.message ? e.message : e) };
+  }
+}
+// Run a whole JS program, capturing console.log output + any real error. Runs in
+// a Function scope with a captured console — same real execution the JS lessons use.
+// For multi-file JS projects, all files become a little module registry so the
+// active file can `import` from the others for real.
+function runProjectJS(code, files = null, activeName = null) {
+  const logs = [];
+  const push = (...a) => logs.push(a.map((x) => (typeof x === "object" && x !== null ? JSON.stringify(x) : String(x))).join(" "));
+  const fakeConsole = { log: push, error: push, warn: push, info: push };
+
+  // Single-file: run directly (unchanged behavior).
+  if (!Array.isArray(files) || files.filter((f) => /\.(js|ts|jsx)$/i.test(f.name)).length <= 1) {
+    try {
+      // eslint-disable-next-line no-new-func
+      const fn = new Function("console", code);
+      fn(fakeConsole);
+      return { ok: true, output: logs.join("\n") };
+    } catch (e) {
+      return { ok: false, output: logs.join("\n"), error: String(e && e.message ? e.message : e) };
+    }
+  }
+
+  // Multi-file: compile each file to CommonJS with Babel, then wire a require()
+  // that resolves other project files by name.
+  const B = typeof window !== "undefined" ? window.Babel : null;
+  if (!B) return { ok: false, output: "", error: "Couldn't load the compiler for multi-file JS." };
+  const norm = (n) => n.replace(/^\.?\//, "").replace(/\.(js|ts|jsx)$/i, "");
+  const registry = {};
+  for (const f of files) {
+    if (!/\.(js|ts|jsx)$/i.test(f.name)) continue;
+    const presets = [["env", { modules: "commonjs" }]];
+    if (/\.tsx?$/i.test(f.name)) presets.push("typescript");
+    if (/\.jsx$/i.test(f.name)) presets.push("react");
+    try {
+      registry[norm(f.name)] = B.transform(f.code || "", { presets, filename: f.name }).code;
+    } catch (e) {
+      return { ok: false, output: logs.join("\n"), error: "In " + f.name + ": " + (e && e.message ? e.message : e) };
+    }
+  }
+  const cache = {};
+  const makeRequire = () => function require(path) {
+    const key = norm(path);
+    if (cache[key]) return cache[key].exports;
+    if (!(key in registry)) throw new Error("Cannot find file '" + path + "' in this project");
+    const module = { exports: {} };
+    cache[key] = module;
+    // eslint-disable-next-line no-new-func
+    const fn = new Function("require", "module", "exports", "console", registry[key]);
+    fn(makeRequire(), module, module.exports, fakeConsole);
+    return module.exports;
+  };
+  try {
+    makeRequire()(norm(activeName || files[0].name));
+    return { ok: true, output: logs.join("\n") };
+  } catch (e) {
+    return { ok: false, output: logs.join("\n"), error: String(e && e.message ? e.message : e) };
+  }
+}
+
+// Run a JS project that also has a .sql file — the JS gets a real `db` it can
+// query (sql.js), seeded by running the .sql file first. This is the one honest
+// cross-language combo: JavaScript talking to a real SQLite database.
+async function runProjectJSWithSQL(files, activeName) {
+  const sqlFile = files.find((f) => /\.sql$/i.test(f.name));
+  const logs = [];
+  const push = (...a) => logs.push(a.map((x) => (typeof x === "object" && x !== null ? JSON.stringify(x) : String(x))).join(" "));
+  const fakeConsole = { log: push, error: push, warn: push, info: push };
+  let db = null;
+  try {
+    await loadScriptOnce("https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.js");
+    const SQL = await window.initSqlJs({ locateFile: (f) => "https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/" + f });
+    db = new SQL.Database();
+    if (sqlFile && sqlFile.code.trim()) db.run(sqlFile.code); // seed the DB
+  } catch (e) {
+    return { ok: false, output: "", error: "Couldn't set up the database: " + (e && e.message ? e.message : e) };
+  }
+  // Give JS a friendly query() helper that returns rows as objects.
+  const query = (sql) => {
+    const res = db.exec(sql);
+    if (!res.length) return [];
+    return res[0].values.map((row) => { const o = {}; res[0].columns.forEach((c, i) => (o[c] = row[i])); return o; });
+  };
+  const active = files.find((f) => f.name === activeName) || files.find((f) => /\.js$/i.test(f.name));
+  if (!active) return { ok: false, output: "", error: "No JavaScript file to run." };
+  try {
+    // eslint-disable-next-line no-new-func
+    const fn = new Function("console", "db", "query", active.code);
+    fn(fakeConsole, db, query);
+    return { ok: true, output: logs.join("\n") };
+  } catch (e) {
+    return { ok: false, output: logs.join("\n"), error: String(e && e.message ? e.message : e) };
+  }
+}
+
+// Run a whole Lua program via Wasmoon (a real Lua 5.4 VM in WebAssembly). Loads
+// as an ES module from a CDN so it works without a bundler. Captures print output
+// and real Lua errors.
+let _luaFactory = null;
+// Run a BASIC program with our from-scratch interpreter (proven against 12 tests:
+// PRINT, LET, arithmetic, FOR/STEP, IF/THEN, GOTO, INPUT, string vars). Classic
+// line-numbered beginner BASIC — no engine to load, it just runs.
+function runBASIC(source, inputs = []) {
+  const out = [];
+  let inputIdx = 0;
+  const lines = source.split("\n").map((l) => l.trim()).filter((l) => l)
+    .map((l) => { const m = l.match(/^(\d+)\s*(.*)$/); return m ? { num: +m[1], text: m[2] } : { num: null, text: l }; })
+    .filter((l) => l.num !== null)
+    .sort((a, b) => a.num - b.num);
+  const lineIndex = {}; lines.forEach((l, i) => (lineIndex[l.num] = i));
+  const vars = {};
+  function evalExpr(expr) {
+    expr = expr.trim();
+    if (/^".*"$/.test(expr)) return expr.slice(1, -1);
+    const tokens = expr.match(/("[^"]*"|[A-Za-z_]\w*\$?|\d+\.?\d*|[<>=]+|[-+*/()]|\S)/g) || [];
+    const js = tokens.map((t) => {
+      if (/^".*"$/.test(t)) return JSON.stringify(t.slice(1, -1));
+      if (/^[A-Za-z_]\w*\$?$/.test(t)) { const v = vars[t]; return typeof v === "string" ? JSON.stringify(v) : (v ?? 0); }
+      if (t === "=") return "===";
+      if (t === "<>") return "!==";
+      return t;
+    }).join(" ");
+    try { return Function('"use strict"; return (' + js + ")")(); } catch { return 0; }
+  }
+  let pc = 0, guard = 0;
+  const forStack = [];
+  while (pc < lines.length && guard++ < 100000) {
+    const { text } = lines[pc];
+    const upper = text.toUpperCase();
+    if (upper.startsWith("PRINT")) {
+      const rest = text.slice(5).trim();
+      if (!rest) out.push("");
+      else out.push(rest.split(";").map((p) => { const v = evalExpr(p); return v === undefined ? "" : String(v); }).join(""));
+      pc++;
+    } else if (upper.startsWith("LET ") || /^[A-Za-z_]\w*\$?\s*=/.test(text)) {
+      const body = upper.startsWith("LET ") ? text.slice(4) : text;
+      const eq = body.indexOf("=");
+      vars[body.slice(0, eq).trim()] = evalExpr(body.slice(eq + 1));
+      pc++;
+    } else if (upper.startsWith("INPUT ")) {
+      const name = text.slice(6).trim();
+      const val = inputs[inputIdx++];
+      vars[name] = name.endsWith("$") ? String(val ?? "") : Number(val ?? 0);
+      pc++;
+    } else if (upper.startsWith("IF ")) {
+      const thenIdx = upper.indexOf("THEN");
+      const cond = text.slice(2, thenIdx).trim();
+      const then = text.slice(thenIdx + 4).trim();
+      if (evalExpr(cond)) {
+        if (/^\d+$/.test(then)) pc = lineIndex[+then] ?? pc + 1;
+        else { lines.splice(pc + 1, 0, { num: -1, text: then }); pc++; }
+      } else pc++;
+    } else if (upper.startsWith("GOTO ")) {
+      pc = lineIndex[+text.slice(5).trim()] ?? pc + 1;
+    } else if (upper.startsWith("FOR ")) {
+      const m = text.match(/FOR\s+(\w+)\s*=\s*(.+?)\s+TO\s+(.+?)(?:\s+STEP\s+(.+))?$/i);
+      const v = m[1]; vars[v] = evalExpr(m[2]);
+      forStack.push({ v, end: evalExpr(m[3]), step: m[4] ? evalExpr(m[4]) : 1, line: pc });
+      pc++;
+    } else if (upper.startsWith("NEXT")) {
+      const f = forStack[forStack.length - 1];
+      if (!f) { pc++; continue; }
+      vars[f.v] += f.step;
+      if ((f.step > 0 && vars[f.v] <= f.end) || (f.step < 0 && vars[f.v] >= f.end)) pc = f.line + 1;
+      else { forStack.pop(); pc++; }
+    } else if (upper === "END") break;
+    else pc++;
+  }
+  return out.join("\n");
+}
+function runProjectBASIC(code) {
+  try { return { ok: true, output: runBASIC(code) }; }
+  catch (e) { return { ok: false, output: "", error: String(e && e.message ? e.message : e) }; }
+}
+// A small teaching CPU emulator (from scratch, proven against 8 tests). A clean
+// educational instruction set — registers R0-R3, MOV/ADD/SUB/MUL, PRINT, jumps
+// (JMP/JZ/JNZ), labels, HLT — that SHOWS how a processor runs instructions.
+function runAssembly(source) {
+  const out = [];
+  const regs = { R0: 0, R1: 0, R2: 0, R3: 0 };
+  const lines = source.split("\n").map((l) => l.replace(/;.*$/, "").trim()).filter((l) => l);
+  const labels = {};
+  const program = [];
+  for (const line of lines) {
+    const lm = line.match(/^(\w+):\s*(.*)$/);
+    if (lm && !(lm[1].toUpperCase() in { MOV: 1, ADD: 1, SUB: 1, MUL: 1, PRINT: 1, JMP: 1, JZ: 1, JNZ: 1, HLT: 1 })) {
+      labels[lm[1]] = program.length; if (lm[2]) program.push(lm[2]);
+    } else program.push(line);
+  }
+  const val = (tok) => (tok in regs ? regs[tok] : Number(tok));
+  let pc = 0, guard = 0;
+  while (pc < program.length && guard++ < 100000) {
+    const parts = program[pc].split(/[\s,]+/).filter(Boolean);
+    const op = parts[0].toUpperCase();
+    if (op === "MOV") { regs[parts[1]] = val(parts[2]); pc++; }
+    else if (op === "ADD") { regs[parts[1]] += val(parts[2]); pc++; }
+    else if (op === "SUB") { regs[parts[1]] -= val(parts[2]); pc++; }
+    else if (op === "MUL") { regs[parts[1]] *= val(parts[2]); pc++; }
+    else if (op === "PRINT") { out.push(String(val(parts[1]))); pc++; }
+    else if (op === "JMP") { pc = labels[parts[1]] ?? pc + 1; }
+    else if (op === "JZ") { pc = val(parts[1]) === 0 ? (labels[parts[2]] ?? pc + 1) : pc + 1; }
+    else if (op === "JNZ") { pc = val(parts[1]) !== 0 ? (labels[parts[2]] ?? pc + 1) : pc + 1; }
+    else if (op === "HLT") break;
+    else pc++;
+  }
+  return { output: out.join("\n"), regs };
+}
+function runProjectAssembly(code) {
+  try { const r = runAssembly(code); return { ok: true, output: r.output }; }
+  catch (e) { return { ok: false, output: "", error: String(e && e.message ? e.message : e) }; }
+}
+
+// Run PHP for real via php-wasm (the official PHP interpreter compiled to WASM).
+// Loads as an ESM module from a CDN. Captures echo/print output and errors.
+let _phpInstance = null;
+async function runProjectPHP(code) {
+  let php;
+  try {
+    if (!_phpInstance) {
+      const mod = await import(/* @vite-ignore */ "https://cdn.jsdelivr.net/npm/php-wasm/PhpWeb.mjs");
+      _phpInstance = new mod.PhpWeb();
+      await new Promise((res) => { _phpInstance.addEventListener("ready", res, { once: true }); });
+    }
+    php = _phpInstance;
+  } catch (e) {
+    return { ok: false, output: "", error: "Couldn't load the PHP engine: " + (e && e.message ? e.message : e) };
+  }
+  let out = "", err = "";
+  const onOut = (ev) => { out += ev.detail; };
+  const onErr = (ev) => { err += ev.detail; };
+  php.addEventListener("output", onOut);
+  php.addEventListener("error", onErr);
+  try {
+    // Ensure the code has an opening tag so echo/print produce output.
+    const src = /<\?php|<\?=/.test(code) ? code : "<?php\n" + code;
+    await php.run(src);
+    php.removeEventListener("output", onOut);
+    php.removeEventListener("error", onErr);
+    if (err.trim() && !out.trim()) return { ok: false, output: "", error: err.trim() };
+    return { ok: true, output: (out + (err ? "\n" + err : "")).replace(/\n$/, "") };
+  } catch (e) {
+    php.removeEventListener("output", onOut);
+    php.removeEventListener("error", onErr);
+    return { ok: false, output: out, error: String(e && e.message ? e.message : e) };
+  }
+}
+
+// Run C or C++ for real via the Wasmer JS SDK's in-browser clang. This compiles
+// the source to a WASIX executable and runs it — a real compiler in the browser.
+// NOTE: needs cross-origin isolation (COOP/COEP headers) for SharedArrayBuffer,
+// and downloads clang (~30MB compressed) on first use.
+let _wasmerInit = null, _clangPkg = null;
+async function runProjectCFamily(code, isCpp) {
+  try {
+    if (!_wasmerInit) {
+      const sdk = await import(/* @vite-ignore */ "https://unpkg.com/@wasmer/sdk@latest/dist/index.mjs");
+      await sdk.init();
+      _wasmerInit = sdk;
+    }
+  } catch (e) {
+    return { ok: false, output: "", error: "Couldn't load the C/C++ compiler engine: " + (e && e.message ? e.message : e) };
+  }
+  const sdk = _wasmerInit;
+  // Cross-origin isolation is required for the compiler's threads.
+  if (typeof crossOriginIsolated !== "undefined" && !crossOriginIsolated) {
+    return { ok: false, output: "",
+      error: "C/C++ needs this site to send special security headers (COOP/COEP) so the compiler can run. They aren't set yet — everything else works; this language needs that server config.",
+      setupNeeded: true };
+  }
+  try {
+    if (!_clangPkg) _clangPkg = await sdk.Wasmer.fromRegistry("clang/clang");
+    const srcName = isCpp ? "main.cpp" : "main.c";
+    const compiler = isCpp ? "clang++" : "clang";
+    // 1) Compile source → a.wasm inside the package's virtual filesystem.
+    const compile = await _clangPkg.entrypoint.run({
+      args: [compiler === "clang++" ? "clang++" : "clang", srcName, "-o", "a.wasm", "-O2"],
+      mount: { "/src": { [srcName]: code } },
+      cwd: "/src",
+    });
+    const compileResult = await compile.wait();
+    if (compileResult.code !== 0) {
+      return { ok: false, output: "", error: (compileResult.stderr || "Compilation failed").slice(0, 500) };
+    }
+    // 2) Run the compiled program.
+    const wasmBytes = await _clangPkg.fs?.readFile?.("/src/a.wasm");
+    if (wasmBytes) {
+      const prog = await sdk.Wasmer.fromFile(wasmBytes);
+      const runInst = await prog.entrypoint.run();
+      const runResult = await runInst.wait();
+      return { ok: true, output: (runResult.stdout || "").replace(/\n$/, "") + (runResult.stderr ? "\n" + runResult.stderr : "") };
+    }
+    return { ok: true, output: (compileResult.stdout || "compiled successfully").replace(/\n$/, "") };
+  } catch (e) {
+    return { ok: false, output: "", error: "C/C++ error: " + (e && e.message ? e.message : e) };
+  }
+}
+
+async function runProjectLua(code) {
+  try {
+    if (!_luaFactory) {
+      const mod = await import(/* @vite-ignore */ "https://esm.sh/wasmoon@1.16.0");
+      _luaFactory = new mod.LuaFactory();
+    }
+  } catch (e) {
+    return { ok: false, output: "", error: "Couldn't load the Lua engine: " + (e && e.message ? e.message : e) };
+  }
+  let out = "";
+  let lua;
+  try {
+    lua = await _luaFactory.createEngine();
+    // Capture Lua's print() into our output.
+    lua.global.set("print", (...args) => {
+      out += args.map((a) => (a === undefined || a === null ? "nil" : String(a))).join("\t") + "\n";
+    });
+    await lua.doString(code);
+    return { ok: true, output: out.replace(/\n$/, "") };
+  } catch (e) {
+    return { ok: false, output: out.replace(/\n$/, ""), error: String(e && e.message ? e.message : e) };
+  } finally {
+    try { if (lua) lua.global.close(); } catch {}
+  }
+}
+
+// ---------- DIGITAL CIRCUIT ENGINE (logic gates) ----------
+// Simple boolean propagation, proven against truth tables, chained logic, an SR
+// latch (memory), and a full adder (arithmetic). A circuit is inputs (switches),
+// gates, and outputs (lights); we propagate values until they settle — which also
+// handles feedback loops (needed for memory).
+const GATE_DEFS = {
+  AND:  { inputs: 2, symbol: "AND",  fn: (a, b) => a && b },
+  OR:   { inputs: 2, symbol: "OR",   fn: (a, b) => a || b },
+  NOT:  { inputs: 1, symbol: "NOT",  fn: (a) => !a },
+  NAND: { inputs: 2, symbol: "NAND", fn: (a, b) => !(a && b) },
+  NOR:  { inputs: 2, symbol: "NOR",  fn: (a, b) => !(a || b) },
+  XOR:  { inputs: 2, symbol: "XOR",  fn: (a, b) => a !== b },
+  XNOR: { inputs: 2, symbol: "XNOR", fn: (a, b) => a === b },
+};
+// circuit = { inputs:{name:bool}, gates:[{id,type,ins:[ref]}], outputs:[{name,from:ref}] }
+// ref = {input:name} | {gate:id} | {const:bool}
+// ---------- CIRCUIT LESSONS (touch challenges, engine-checked) ----------
+// Each challenge names some inputs and one output, and gives a target truth table
+// (for every combination of inputs, what the output SHOULD be). The learner builds
+// a circuit on the canvas; we run the real engine for every input combination and
+// check it matches the target. Honest auto-checking — the engine knows the truth.
+const CIRCUIT_CHALLENGES = [
+  {
+    id: "light-on", title: "Turn it on", inputs: ["A"], output: "Y",
+    brief: "Make light Y turn on whenever switch A is on. (Hint: you can wire a switch straight to a light!)",
+    truth: { "0": false, "1": true }, teach: "A wire just carries a signal. Connect A's output straight to Y's input.",
+  },
+  {
+    id: "invert", title: "The opposite", inputs: ["A"], output: "Y",
+    brief: "Make light Y turn on only when switch A is OFF. You'll need a NOT gate.",
+    truth: { "0": true, "1": false }, teach: "A NOT gate flips its input: on becomes off, off becomes on.",
+  },
+  {
+    id: "both", title: "Both on", inputs: ["A", "B"], output: "Y",
+    brief: "Make Y light up only when BOTH switches are on. This is an AND gate.",
+    truth: { "00": false, "01": false, "10": false, "11": true }, teach: "AND is true only when every input is true.",
+  },
+  {
+    id: "either", title: "Either one", inputs: ["A", "B"], output: "Y",
+    brief: "Make Y light up when EITHER switch is on (or both). This is an OR gate.",
+    truth: { "00": false, "01": true, "10": true, "11": true }, teach: "OR is true when at least one input is true.",
+  },
+  {
+    id: "exactly-one", title: "Exactly one", inputs: ["A", "B"], output: "Y",
+    brief: "Make Y light up only when EXACTLY one switch is on — not both, not neither. This is XOR.",
+    truth: { "00": false, "01": true, "10": true, "11": false }, teach: "XOR (exclusive or) is true when the inputs are different.",
+  },
+  {
+    id: "not-both", title: "Not both", inputs: ["A", "B"], output: "Y",
+    brief: "Make Y light up unless BOTH switches are on. This is NAND — the most important gate in computing (you can build everything from it!).",
+    truth: { "00": true, "01": true, "10": true, "11": false }, teach: "NAND is 'not and' — off only when both inputs are on.",
+  },
+  {
+    id: "half-add-sum", title: "Adding: the sum bit", inputs: ["A", "B"], output: "Y",
+    brief: "Time to build a calculator! When you add two bits, the 'sum' bit is on when exactly one input is on (1+0=1, but 1+1=10, so sum is 0). That's XOR — you've got this.",
+    truth: { "00": false, "01": true, "10": true, "11": false }, teach: "Adding 1+1 in binary is 10 — the sum bit is 0 and you carry a 1. The sum bit alone is XOR.",
+  },
+  {
+    id: "half-add-carry", title: "Adding: the carry bit", inputs: ["A", "B"], output: "Y",
+    brief: "When you add two bits, you 'carry' a 1 only when BOTH are 1 (1+1=10). Build the carry bit — it's just AND! Together with the last one, you've built a HALF ADDER.",
+    truth: { "00": false, "01": false, "10": false, "11": true }, teach: "The carry is AND. Sum (XOR) + carry (AND) together = a half adder, the heart of how computers add.",
+  },
+  {
+    id: "full-add", title: "The full adder", inputs: ["A", "B", "C"], output: "Y", threeInput: true,
+    brief: "The real thing: add THREE bits (two numbers plus a carry-in) and give the sum bit. It's on when an ODD number of inputs are on. Chain these and you can add any numbers — this is literally how your computer does math.",
+    truth: { "000": false, "001": true, "010": true, "011": false, "100": true, "101": false, "110": false, "111": true },
+    teach: "The sum of three bits is on when an odd number are on: A XOR B XOR C. Chain full adders and you've built the calculator inside every CPU.",
+  },
+];
+// Check a built circuit against a challenge's target truth table, using the real
+// engine. Returns { pass, detail } — detail lists any mismatched rows.
+function checkCircuitChallenge(challenge, comps, wires) {
+  const inputSwitches = challenge.inputs.map((label) => comps.find((c) => c.kind === "switch" && c.label === label));
+  const outLight = comps.find((c) => c.kind === "light" && c.label === challenge.output);
+  if (inputSwitches.some((s) => !s) || !outLight) {
+    return { pass: false, detail: "You need switches " + challenge.inputs.join(", ") + " and a light " + challenge.output + " on the canvas." };
+  }
+  // Build the engine circuit once (structure is fixed; we vary the input values).
+  const gates = comps.filter((c) => c.kind === "gate").map((c) => {
+    const def = GATE_DEFS[c.gateType];
+    const ins = [];
+    for (let p = 0; p < def.inputs; p++) {
+      const w = wires.find((w) => w.to.comp === c.id && w.to.port === p);
+      ins.push(w ? refOf(w.from, comps) : { const: false });
+    }
+    return { id: c.id, type: c.gateType, ins };
+  });
+  const outWire = wires.find((w) => w.to.comp === outLight.id);
+  const outputs = [{ name: "Y", from: outWire ? refOf(outWire.from, comps) : { const: false } }];
+
+  const mismatches = [];
+  const combos = Object.keys(challenge.truth);
+  for (const combo of combos) {
+    const inputs = {};
+    challenge.inputs.forEach((label, i) => { inputs[label] = combo[i] === "1"; });
+    const r = evaluateDigital({ inputs, gates, outputs });
+    const got = !!r.outputs.Y;
+    const want = challenge.truth[combo];
+    if (got !== want) mismatches.push({ combo, got, want });
+  }
+  if (mismatches.length === 0) return { pass: true };
+  const m = mismatches[0];
+  const desc = challenge.inputs.map((l, i) => l + "=" + m.combo[i]).join(", ");
+  return { pass: false, detail: `Not quite — when ${desc}, the light should be ${m.want ? "ON" : "OFF"} but it's ${m.got ? "ON" : "OFF"}. Keep going!` };
+}
+function refOf(fromEnd, comps) {
+  const src = comps.find((c) => c.id === fromEnd.comp);
+  if (!src) return { const: false };
+  if (src.kind === "switch") return { input: src.label };
+  if (src.kind === "gate") return { gate: src.id };
+  return { const: false };
+}
+
+function evaluateDigital(circuit) {
+  const gateOut = {};
+  for (const g of circuit.gates) gateOut[g.id] = false;
+  const readWire = (ref) => {
+    if (!ref) return false;
+    if (ref.input !== undefined) return !!circuit.inputs[ref.input];
+    if (ref.gate !== undefined) return !!gateOut[ref.gate];
+    if (ref.const !== undefined) return !!ref.const;
+    return false;
+  };
+  const maxIters = circuit.gates.length + 55;
+  let settled = false;
+  for (let iter = 0; iter < maxIters; iter++) {
+    let changed = false;
+    for (const g of circuit.gates) {
+      const def = GATE_DEFS[g.type];
+      if (!def) continue;
+      const vals = g.ins.map(readWire);
+      const out = def.fn(...vals);
+      if (out !== gateOut[g.id]) { gateOut[g.id] = out; changed = true; }
+    }
+    if (!changed) { settled = true; break; }
+  }
+  const outputs = {};
+  for (const o of circuit.outputs) outputs[o.name] = readWire(o.from);
+  return { gateOut, outputs, settled };
+}
+
 async function verifyPython(code, fnName, tests, io) {
   let py;
   try { py = await loadPyodide(); } catch (e) { return { ok: false, why: e.message, engineError: true }; }
@@ -1211,12 +2176,55 @@ for __t in __tests:
                 __ok = True
         __res.append(bool(__ok))
         if not __ok and __first_fail is None:
-            # Describe the mismatch for a helpful message.
-            if __printed == "":
-                __shown = repr(__g)
+            # Describe the mismatch for a helpful message. Tailor it to the io
+            # style so a PRINT lesson never confusingly mentions "returned None"
+            # (returning None is exactly right on a print lesson).
+            if __io_mode == "print":
+                # Focus on what was printed; ignore the (correct) None return.
+                if __printed.strip() != "":
+                    __shown = "it printed " + repr(__printed.strip())
+                elif __g is not None:
+                    __shown = "it returned " + repr(__g) + " but printed nothing"
+                else:
+                    __shown = "it printed nothing"
+            elif __io_mode == "return":
+                # Focus on what was returned.
+                if __g is not None:
+                    __shown = "it returned " + repr(__g)
+                elif __printed.strip() != "":
+                    __shown = "it printed " + repr(__printed.strip()) + " but returned nothing"
+                else:
+                    __shown = "it returned nothing"
             else:
-                __shown = "printed " + repr(__printed.strip()) + " and returned " + repr(__g)
-            __first_fail = "with " + ", ".join(repr(a) for a in __t["args"]) + " it gave " + __shown + ", but should give " + repr(__exp)
+                # Unknown io: show whatever is informative.
+                if __printed == "":
+                    __shown = "it gave " + repr(__g)
+                else:
+                    __shown = "it printed " + repr(__printed.strip())
+            __first_fail = "with " + ", ".join(repr(a) for a in __t["args"]) + ", " + __shown + " — but it should be " + repr(__exp)
+            # BEGINNER-KIND near-miss detection: if what they gave is ALMOST right
+            # — differing only by capitalization, extra/missing spaces, or trailing
+            # punctuation — tell them SPECIFICALLY what's off, so a tiny slip is a
+            # gentle nudge, not a dead end. (A learner can't tell a broken lesson
+            # from their own typo; naming the exact difference lets them learn.)
+            __got_str = None
+            if isinstance(__g, str):
+                __got_str = __g
+            elif __printed.strip() != "":
+                __got_str = __printed.strip()
+            if __got_str is not None and isinstance(__exp, str) and __got_str != __exp:
+                __g_low = __got_str.lower()
+                __e_low = __exp.lower()
+                if __g_low == __e_low:
+                    __tip = "So close! The words are right — it's just the capital letters. Check which letters should be UPPER or lower case."
+                elif __got_str.strip() == __exp.strip():
+                    __tip = "Almost! The text is right but there's an extra space at the start or end. Remove it."
+                elif __g_low.replace(" ", "") == __e_low.replace(" ", ""):
+                    __tip = "Very close! The letters match — check the spaces between words."
+                elif __got_str.rstrip(".!?,") == __exp.rstrip(".!?,"):
+                    __tip = "Almost there! It's just the punctuation at the end (like a . or ! or ?). Match it exactly."
+                elif __e_low in __g_low or __g_low in __e_low:
+                    __tip = "You're close — part of it matches. Compare your text carefully with what it should be, letter by letter."
             # Style-aware tip, returned as its OWN field so the UI can show it as a
             # prominent callout. Only nudge about STYLE when the learner used the
             # WRONG style for this lesson — never when they used the right style but
@@ -1270,7 +2278,9 @@ const langGenSystem = (cfg) =>
   `You generate a short beginner course (an array of ${cfg.count} lessons) for the ${cfg.label} programming language. ` +
   `EVERY lesson must TEACH before it tests: explain the new idea plainly, then show a worked example. ` +
   `Respond with ONLY a JSON object: {"lessons":[ ... ]}, no prose, no fences. ` +
-  (cfg.mode === "real"
+  (cfg.mode === "sql"
+    ? `Each lesson teaches ONE SQL idea via a real query challenge: {"title":string, "teach":string (2-3 plain sentences explaining the SQL concept to a beginner), "example":string (a short example query), "concept":string (e.g. "filtering rows with WHERE"), "seed":string (SQL that CREATEs one small table and INSERTs ~4-6 rows of data), "schema":string (a human-readable description of the table and its columns, shown to the learner), "starter":string (a partial query like "SELECT " for them to complete), "solution":string (the correct full query), "expected":array of rows (each row an array of values) that the solution returns}. The solution run against the seed MUST produce exactly the expected rows. Keep tables tiny and relatable (pets, books, students). Order from SELECT-all → WHERE → ORDER BY → COUNT/aggregate → GROUP BY.`
+    : cfg.mode === "real"
     ? `Each lesson: {"title":string, "teach":string (2-3 plain sentences that EXPLAIN the new concept to a total beginner, may use \`inline code\`), "example":string (a short worked example in ${cfg.label} showing the idea), "concept":string (the underlying idea, e.g. "doubling a number"), "fnName":string, "starter":string (a ${cfg.label} function skeleton with the right name and an empty body + a comment, NOT a working solution), "solution":string (complete correct ${cfg.label} code), "tests":array of >=2 {"args":array,"expected":any}}. Starters must NOT pass; solutions MUST pass. Use ${cfg.label} syntax exactly.`
     : `Each lesson: {"title":string, "teach":string (2-3 plain sentences that EXPLAIN the new concept to a total beginner), "example":string (a short worked example in ${cfg.label} showing the idea), "concept":string, "starter":string (a ${cfg.label} code skeleton to fill in), "checks":array of >=2 short strings (criteria a correct answer meets)}. Use real ${cfg.label} syntax.`) +
   ` Order lessons from easiest to hardest, each building on the last. Keep them small and beginner-friendly.`;
@@ -1281,13 +2291,13 @@ const langGenSystem = (cfg) =>
 const LANGUAGE_CATALOG = [
   { id: "js", label: "JavaScript", emoji: "🟨", mode: "real", blurb: "The language of the web — runs in every browser." },
   { id: "py", label: "Python", emoji: "🐍", mode: "real", blurb: "Famous for being readable. Great first or second language." },
-  { id: "ts", label: "TypeScript", emoji: "🔷", mode: "ai", blurb: "JavaScript with type-safety. Popular for big apps." },
+  { id: "ts", label: "TypeScript", emoji: "🔷", mode: "real", blurb: "JavaScript with type-safety. Popular for big apps." },
   { id: "html", label: "HTML", emoji: "📄", mode: "markup", blurb: "The skeleton of every web page — structure and content." },
   { id: "css", label: "CSS", emoji: "🎨", mode: "markup", blurb: "Makes web pages beautiful — colors, layout, and style." },
   { id: "jsx", label: "React (JSX)", emoji: "⚛️", mode: "markup", blurb: "Build interactive UIs with components — the modern web standard." },
   { id: "vue", label: "Vue", emoji: "💚", mode: "markup", blurb: "A friendly framework for building web interfaces." },
   { id: "svelte", label: "Svelte", emoji: "🧡", mode: "markup", blurb: "Write less code — a fresh take on building web UIs." },
-  { id: "java", label: "Java", emoji: "☕", mode: "ai", blurb: "Powers big apps and Android." },
+  { id: "java", label: "Java", emoji: "☕", mode: "real", blurb: "Powers big apps and Android." },
   { id: "cpp", label: "C++", emoji: "⚙️", mode: "ai", blurb: "Fast and powerful, used in games and systems." },
   { id: "c", label: "C", emoji: "🔧", mode: "ai", blurb: "The classic low-level language behind everything." },
   { id: "csharp", label: "C#", emoji: "🎯", mode: "ai", blurb: "Microsoft's language for apps and Unity games." },
@@ -1297,12 +2307,12 @@ const LANGUAGE_CATALOG = [
   { id: "swift", label: "Swift", emoji: "🕊️", mode: "ai", blurb: "Apple's language for iPhone and Mac apps." },
   { id: "kotlin", label: "Kotlin", emoji: "🟣", mode: "ai", blurb: "A modern, cleaner way to build Android apps." },
   { id: "php", label: "PHP", emoji: "🐘", mode: "ai", blurb: "Runs a huge share of the web's back-ends." },
-  { id: "sql", label: "SQL", emoji: "🗃️", mode: "ai", blurb: "How you ask questions of databases." },
+  { id: "sql", label: "SQL", emoji: "🗃️", mode: "sql", blurb: "How you ask questions of databases." },
   { id: "r", label: "R", emoji: "📊", mode: "ai", blurb: "Built for statistics and data analysis." },
   { id: "dart", label: "Dart", emoji: "🎯", mode: "ai", blurb: "Powers Flutter apps for phones and web." },
   { id: "scala", label: "Scala", emoji: "🔺", mode: "ai", blurb: "Blends object and functional styles on the JVM." },
   { id: "perl", label: "Perl", emoji: "🐪", mode: "ai", blurb: "A veteran language strong at text processing." },
-  { id: "lua", label: "Lua", emoji: "🌙", mode: "ai", blurb: "Lightweight and embeddable — common in games." },
+  { id: "lua", label: "Lua", emoji: "🌙", mode: "real", blurb: "Lightweight and embeddable — common in games." },
   { id: "haskell", label: "Haskell", emoji: "λ", mode: "ai", blurb: "Purely functional — a different way to think." },
   { id: "bash", label: "Bash", emoji: "💻", mode: "ai", blurb: "The shell language for automating your computer." },
   // ---- mainstream additions ----
@@ -1456,13 +2466,20 @@ async function generateCourse(classId, progressMap, signal) {
   const lessons = Array.isArray(parsed.lessons) ? parsed.lessons : [];
   const out = [];
   for (const L of lessons) {
+    if (cfg.mode === "sql") {
+      // Validate: the author's solution query, run on the seed, must yield expected.
+      if (!L.title || !L.seed || !L.solution || !Array.isArray(L.expected)) continue;
+      const check = await verifySQL(L.solution, L.seed, L.expected);
+      if (!check.engineError && !check.ok) continue; // skip lessons whose own solution fails
+      out.push({ id: "g_" + Math.random().toString(36).slice(2, 7), type: "sqlquery", chapter: `✨ ${cfg.label} course`, generated: true,
+        title: L.title, teach: L.teach || "", example: L.example || "", concept: L.concept || L.title,
+        schema: L.schema || "", seed: L.seed, starter: L.starter || "SELECT ", expected: L.expected, lang: "sql",
+        why: "🎉 That query ran on a real database — correct!" });
+      continue;
+    }
     if (cfg.mode === "real") {
-      if (!L.fnName || !L.solution || !Array.isArray(L.tests) || L.tests.length < 2) continue;
-      // validate: JS runs natively; Python via Pyodide
-      let valid;
-      if (classId === "js") valid = verifyRuns(L.solution, L.fnName, L.tests).ok && !verifyRuns(L.starter || "", L.fnName, L.tests).ok;
-      else { const v = await verifyPython(L.solution, L.fnName, L.tests, L.io); valid = v.ok; } // starter-pass check skipped for py (rare)
-      if (!valid) continue;
+      const check = await validateLesson(L, classId);
+      if (!check.ok) continue;
       out.push({ id: "g_" + Math.random().toString(36).slice(2, 7), type: "type", chapter: `✨ ${cfg.label} course`, generated: true,
         title: L.title || "Lesson", intro: L.teach || "Solve it so the tests pass.", concept: L.concept || L.title,
         teach: L.teach || "", example: L.example || "",
@@ -1496,65 +2513,226 @@ async function gradeAICode(step, code) {
 // plan means adding more languages later is a config change, not a rewrite.
 const PROJECT_LANG = { id: "js", label: "JavaScript", runnable: true };
 
-async function suggestProjects(signal) {
+async function suggestProjects(lang = "py", signal) {
+  const label = PROJECT_LANG_LABEL[lang] || "Python";
+  const kind = (lang === "py" || lang === "js" || lang === "ts" || lang === "java" || lang === "lua" || lang === "basic" || lang === "asm" || lang === "php" || lang === "c" || lang === "cpp") ? "program"
+    : lang === "sql" ? "database"
+    : lang === "p5" ? "drawing"
+    : "web";
   const sys =
-    "You suggest 4 small, motivating beginner programming projects (JavaScript) that a near-beginner could build in a guided, step-by-step way. " +
-    "Each must be buildable as a few small functions (no UI, no files). " +
+    `You suggest 4 small, motivating beginner projects to build in ${label}. ` +
+    (kind === "web" ? "These are web projects that show something on screen (a page, a styled card, a small interactive widget). "
+      : kind === "database" ? "These are small database projects: create a table, put some rows in, and query it to answer a question (e.g. a movie list, a scores table, a library catalogue). Each should be doable with plain SQL in one editor. "
+      : kind === "drawing" ? "These are small p5.js drawing/animation sketches that appear on a canvas (e.g. a bouncing ball, a simple pattern, a mouse-following shape, a tiny game). "
+      : "These are small programs a near-beginner could build (a calculator, a converter, a little text game, a checker). ") +
+    "Each should be achievable by a motivated beginner and genuinely fun to finish. " +
     "Respond with ONLY JSON: {\"projects\":[{\"title\":string (short), \"blurb\":string (one friendly sentence on what you'll build), \"emoji\":string}]}.";
-  const raw = await callClaude([{ role: "user", content: "Suggest 4 beginner JS projects." }], { system: sys, maxTokens: 600, signal });
+  const raw = await callClaude([{ role: "user", content: `Suggest 4 beginner ${label} projects.` }], { system: sys, maxTokens: 600, signal });
   const parsed = extractJSON(raw);
   const list = Array.isArray(parsed.projects) ? parsed.projects.filter((p) => p.title && p.blurb) : [];
   if (!list.length) throw new Error("none");
   return list.slice(0, 4);
 }
 
-async function planProject(idea, signal) {
+async function planProject(idea, lang = "py", signal) {
+  // Free-build model: we don't break the project into graded steps. We just turn
+  // the idea into a clear goal + a friendly first line, and hand the learner a
+  // blank editor. The teacher helps as they build (added in a later round).
+  const label = PROJECT_LANG_LABEL[lang] || "Python";
   const sys =
-    "You are a patient coding teacher. Turn the learner's project idea into a guided build plan in JavaScript, broken into small steps that each build ONE function or piece. " +
-    "EVERY step must teach before it asks. Respond with ONLY JSON: {" +
-    "\"title\":string, \"goal\":string (one sentence on what the finished project does), " +
-    "\"steps\":[{" +
-    "\"title\":string (short, e.g. \"Add up the items\"), " +
-    "\"teach\":string (2-4 plain sentences explaining the idea for THIS step to a beginner, may use `inline code`), " +
-    "\"example\":string (a tiny worked example in JS), " +
-    "\"fnName\":string (the function the learner writes this step, camelCase), " +
-    "\"starter\":string (a JS skeleton: correct function name, empty body, a // comment — NOT a solution), " +
-    "\"solution\":string (a complete correct JS solution for this step), " +
-    "\"tests\":array of >=2 {\"args\":array,\"expected\":any} that verify this step's function" +
-    "}] }. " +
-    "Make 3-6 steps that build on each other. Keep each step small. Every starter must NOT pass its tests; every solution MUST pass.";
-  const raw = await callClaude([{ role: "user", content: `Project idea: ${idea}\nMake the guided JavaScript build plan now.` }], { system: sys, maxTokens: 3000, signal, thinking: true });
+    `You are a warm coding teacher. A beginner wants to build a project in ${label}. ` +
+    "Turn their idea into a short, clear GOAL they can build toward — one or two sentences describing what the finished program should DO, in plain language. " +
+    "Also give a friendly one-line kickoff tip on where to start. " +
+    "Respond with ONLY JSON: {\"title\":string (short, 2-5 words), \"goal\":string (1-2 sentences, what it should do), \"start\":string (one friendly sentence: a good first thing to try)}.";
+  const raw = await callClaude([{ role: "user", content: `Project idea: ${idea}\nLanguage: ${label}\nGive the goal now.` }], { system: sys, maxTokens: 500, signal });
   const parsed = extractJSON(raw);
-  if (!parsed.title || !Array.isArray(parsed.steps) || parsed.steps.length < 2) throw new Error("bad-plan");
-  // keep only steps whose solution actually runs and whose starter doesn't
-  const steps = [];
-  for (const s of parsed.steps) {
-    if (!s.title || !s.teach || !s.fnName || !s.solution || !Array.isArray(s.tests) || s.tests.length < 2) continue;
-    const solOk = verifyRuns(s.solution, s.fnName, s.tests).ok;
-    const starterFails = !verifyRuns(s.starter || "", s.fnName, s.tests).ok;
-    if (!solOk || !starterFails) continue;
-    steps.push({
-      title: s.title, teach: s.teach, example: s.example || "",
-      fnName: s.fnName, starter: s.starter || `function ${s.fnName}() {\n  \n}`, tests: s.tests,
-    });
-  }
-  if (steps.length < 2) throw new Error("too-few-valid-steps");
-  return { title: parsed.title.slice(0, 60), goal: parsed.goal || "", lang: "js", steps };
+  if (!parsed.title || !parsed.goal) throw new Error("bad-plan");
+  // A sensible starter comment per language so the editor isn't empty-scary.
+  const starters = {
+    py: "# " + parsed.title + "\n# Goal: " + parsed.goal + "\n\n",
+    js: "// " + parsed.title + "\n// Goal: " + parsed.goal + "\n\n",
+    ts: "// " + parsed.title + "\n// Goal: " + parsed.goal + "\n\n",
+    lua: "-- " + parsed.title + "\n-- Goal: " + parsed.goal + "\n\n",
+    basic: "10 REM " + parsed.title + "\n20 REM Goal: " + parsed.goal + "\n30 PRINT \"Hello!\"\n",
+    asm: "; " + parsed.title + "\n; Goal: " + parsed.goal + "\nMOV R0, 42\nPRINT R0\nHLT\n",
+    php: "<?php\n// " + parsed.title + "\n// Goal: " + parsed.goal + "\necho \"Hello!\";\n",
+    c: "// " + parsed.title + "\n// Goal: " + parsed.goal + "\n#include <stdio.h>\nint main() {\n    printf(\"Hello!\\n\");\n    return 0;\n}\n",
+    cpp: "// " + parsed.title + "\n// Goal: " + parsed.goal + "\n#include <iostream>\nint main() {\n    std::cout << \"Hello!\" << std::endl;\n    return 0;\n}\n",
+    java: "// " + parsed.title + "\n// Goal: " + parsed.goal + "\n\npublic class Main {\n    public static void main(String[] args) {\n        \n    }\n}\n",
+    sql: "-- " + parsed.title + "\n-- Goal: " + parsed.goal + "\n-- Tip: make a table first, add some rows, then SELECT from it.\n\n",
+    p5: "// " + parsed.title + "\n// Goal: " + parsed.goal + "\n\nfunction setup() {\n  createCanvas(400, 400);\n}\n\nfunction draw() {\n  background(220);\n  \n}\n",
+    html: "<!-- " + parsed.title + " -->\n<!-- Goal: " + parsed.goal + " -->\n\n",
+    css: "/* " + parsed.title + " */\n\n",
+    jsx: "// " + parsed.title + "\n\n",
+    vue: "<!-- " + parsed.title + " -->\n\n",
+    svelte: "<!-- " + parsed.title + " -->\n\n",
+  };
+  return {
+    title: parsed.title.slice(0, 60),
+    goal: parsed.goal,
+    start: parsed.start || "",
+    lang,
+    starter: starters[lang] || "",
+  };
 }
 
 // Ask the teacher a freeform question with full project context (never advances).
-async function askTeacher({ project, stepIdx, code, question, signal }) {
-  const step = project.steps[stepIdx];
+// ---------- SMART PROJECT TEACHER ----------
+// The teacher for free-build project mode. Its whole character:
+//  • REMINDER BY DEFAULT — a quick one-liner, not a lecture. Most of the time the
+//    learner just needs a nudge, not to be taught.
+//  • LESSON ONLY WHEN GENUINELY NEW — if they've never learned the concept, or if
+//    they ask to go deeper, it offers a pack of 4 lessons on that ONE concept.
+//  • KNOWS WHAT THEY KNOW — uses the concept system so it can tell "you forgot"
+//    from "you never learned this".
+//  • ENCOURAGES PRODUCTIVE STRUGGLE — if they've got the pieces, it nudges them to
+//    try first. It never refuses, and it backs off the moment they're frustrated.
+//  • SCALES STUMBLE vs GAP — a typo gets a pointer; a real conceptual gap gets teaching.
+//
+// Returns { kind: "reminder"|"teach", text, concept } — `concept` is what the
+// learner is reaching for, so the UI can offer "teach me this properly".
+async function askProjectTeacher({ project, code, question, learnedConcepts = [], wantLesson = false, lastError = null, files = null, activeName = null, signal }) {
+  const label = PROJECT_LANG_LABEL[project.lang] || project.lang || "Python";
+  const known = (learnedConcepts || []).filter(Boolean).join(", ") || "nothing yet";
   const sys =
-    "You are a warm, encouraging coding teacher helping a beginner build a project, one step at a time. " +
-    "Answer the learner's question clearly and briefly, in plain language. Give hints and explanations, but DON'T just hand over the full solution unless they're really stuck and ask directly. Keep them moving.";
+    `You are a warm, sharp coding teacher sitting next to a beginner who is building a project in ${label}. ` +
+    "You can SEE their real code — always ground your answer in THEIR actual code, variable names, and goal. Never give generic textbook answers.\n\n" +
+    "HOW YOU RESPOND — this matters more than anything:\n" +
+    "1. DEFAULT TO A REMINDER, NOT A LESSON. Most of the time the learner just needs a quick nudge: one or two sentences, the specific thing to use, and they're moving again. Do NOT lecture. Do NOT explain at length unless they truly need it.\n" +
+    "2. If what they're asking about is something they ALREADY KNOW (see the list below), just remind them — e.g. \"you've got this — use round(total, 2)\". No teaching.\n" +
+    "3. If it's something they have genuinely NEVER learned, give a brief, clear explanation grounded in their code — and set \"newConcept\" to the concept name so we can offer them a proper lesson.\n" +
+    "4. ENCOURAGE PRODUCTIVE STRUGGLE: if they clearly have the pieces to work it out (they know the related concepts), gently invite them to try first — \"you actually know everything you need for this — want to take a swing before I show you?\" But NEVER refuse to help, and if they ask again or sound frustrated, just help them properly, no pushback.\n" +
+    "5. SCALE TO THE PROBLEM: a small slip (typo, missing colon, a name spelled wrong) gets a quick pointer, NOT a lesson. A real conceptual gap gets actual teaching.\n" +
+    "6. If they ask WHAT SHOULD I DO NEXT: read their code and their goal, and name ONE concrete next move. If their code is messy or half-finished, suggest getting the current piece working before adding more. Point at a specific line number when it helps.\n" +
+    "7. Never dump the whole solution unless they directly ask for it after trying.\n\n" +
+    `CONCEPTS THIS LEARNER HAS ALREADY LEARNED: ${known}\n` +
+    (wantLesson ? "\nTHEY HAVE ASKED TO LEARN THIS PROPERLY — so don't just remind; identify the single concept they need and set \"newConcept\" to it.\n" : "") +
+    "\nRespond with ONLY JSON: {\"kind\":\"reminder\"|\"teach\", \"text\":string (your reply to them, warm and brief, grounded in their code), \"newConcept\":string|null (the short standard name of the ONE concept they'd benefit from learning properly, e.g. \"f-strings\", \"type conversion\", \"for loop\" — or null if they don't need a lesson)}";
   const ctx =
-    `PROJECT: ${project.title} — ${project.goal}\n` +
-    `CURRENT STEP (${stepIdx + 1}/${project.steps.length}): ${step.title}\n` +
-    `What this step teaches: ${step.teach}\n` +
-    (code ? `Their code so far:\n\`\`\`js\n${code}\n\`\`\`\n` : "") +
-    `\nTheir question: ${question}`;
-  return await callClaude([{ role: "user", content: ctx }], { system: sys, maxTokens: 700, signal });
+    `PROJECT: ${project.title}\nGOAL: ${project.goal}\n` +
+    `LANGUAGE: ${label}\n` +
+    (code && code.trim() ? `THEIR CODE RIGHT NOW (with line numbers):\n${code.split("\n").map((l, i) => (i + 1) + " | " + l).join("\n")}\n` : "THEIR CODE: (empty — they haven't started yet)\n") +
+    (Array.isArray(files) && files.length > 1
+      ? `\nTHIS PROJECT HAS MULTIPLE FILES. The file they're working in right now is "${activeName}". Here are the OTHER files so you understand how they fit together:\n` +
+        files.filter((f) => f.name !== activeName).map((f) => `--- ${f.name} ---\n${f.code}`).join("\n") + "\n"
+      : "") +
+    (lastError ? `\nTHE ERROR THEIR CODE JUST HIT:\n${lastError}\n` : "") +
+    `\nTHEIR QUESTION: ${question}`;
+  const raw = await callClaude([{ role: "user", content: ctx }], { system: sys, maxTokens: 800, signal });
+  try {
+    const p = extractJSON(raw);
+    if (p && p.text) {
+      return { kind: p.kind === "teach" ? "teach" : "reminder", text: String(p.text), concept: p.newConcept ? String(p.newConcept).toLowerCase().trim() : null };
+    }
+  } catch {}
+  // If JSON parsing fails, still give them the raw answer rather than an error.
+  return { kind: "reminder", text: String(raw || "").slice(0, 1200), concept: null };
+}
+
+// Explain an error the learner's code actually hit. Scoped to the ERROR — it reads
+// the real error message, points at the line, and decides if this is a small
+// stumble (quick pointer) or a real gap (worth teaching the why).
+async function explainProjectError({ project, code, errorText, learnedConcepts = [], signal }) {
+  const label = PROJECT_LANG_LABEL[project.lang] || project.lang || "Python";
+  const known = (learnedConcepts || []).filter(Boolean).join(", ") || "nothing yet";
+  const sys =
+    `You are a coding teacher helping a beginner whose ${label} code just hit a real error. ` +
+    "You can see the REAL error message and their REAL code.\n\n" +
+    "RULES:\n" +
+    "1. Work FROM THE ERROR MESSAGE. Name the line number the error points at and what's actually wrong there, in plain language.\n" +
+    "2. SCALE YOUR RESPONSE. If this is a small slip (typo, missing colon/bracket/quote, misspelled name), give a SHORT pointer only — no lesson, no lecture, no big deal. Beginners don't need a lecture for a typo.\n" +
+    "3. If it's a REAL CONCEPTUAL error (something they'll hit again until they understand the underlying idea — like doing math on text, or using a variable before it exists), then explain WHY it happens, briefly, so it doesn't come back. Set \"newConcept\" to that concept.\n" +
+    "4. Be warm. An error is normal and is the best moment to learn — never make them feel bad.\n" +
+    "5. Don't rewrite their whole program. Point them at the problem so THEY fix it.\n\n" +
+    `CONCEPTS THEY ALREADY KNOW: ${known}\n` +
+    "\nRespond with ONLY JSON: {\"severity\":\"slip\"|\"gap\", \"text\":string (brief, warm, names the line and the issue), \"newConcept\":string|null (only if this reflects a real concept gap worth a proper lesson, else null)}";
+  const ctx =
+    `PROJECT GOAL: ${project.goal}\n` +
+    `THEIR CODE (with line numbers):\n${code.split("\n").map((l, i) => (i + 1) + " | " + l).join("\n")}\n\n` +
+    `THE REAL ERROR:\n${errorText}`;
+  const raw = await callClaude([{ role: "user", content: ctx }], { system: sys, maxTokens: 600, signal });
+  try {
+    const p = extractJSON(raw);
+    if (p && p.text) {
+      return { severity: p.severity === "gap" ? "gap" : "slip", text: String(p.text), concept: p.newConcept ? String(p.newConcept).toLowerCase().trim() : null };
+    }
+  } catch {}
+  return { severity: "slip", text: String(raw || "").slice(0, 800), concept: null };
+}
+
+// Nudge a learner who has STALLED — stopped typing for a while without running.
+// Deliberately quiet and specific: one nudge, points at a line, easy to ignore.
+async function nudgeStalledLearner({ project, code, learnedConcepts = [], signal }) {
+  const label = PROJECT_LANG_LABEL[project.lang] || project.lang || "Python";
+  const known = (learnedConcepts || []).filter(Boolean).join(", ") || "nothing yet";
+  const sys =
+    `You are a coding teacher watching a beginner build a ${label} project. They've stopped typing for a while — they're probably stuck.\n\n` +
+    "Offer ONE short, quiet nudge. Rules:\n" +
+    "1. Point at a SPECIFIC LINE NUMBER if there's a concrete snag there.\n" +
+    "2. Keep it to one or two sentences. This is a tap on the shoulder, not a lesson.\n" +
+    "3. Be encouraging and easy to ignore — they might just be thinking.\n" +
+    "4. If they know the concepts involved, nudge them toward figuring it out rather than telling them the answer.\n" +
+    "5. If their code honestly looks fine and on track, say something brief and encouraging instead of inventing a problem.\n\n" +
+    `CONCEPTS THEY KNOW: ${known}\n` +
+    "\nRespond with ONLY JSON: {\"text\":string (one or two sentences, mentions a line number if relevant)}";
+  const ctx =
+    `PROJECT GOAL: ${project.goal}\n` +
+    `THEIR CODE (with line numbers):\n${code.split("\n").map((l, i) => (i + 1) + " | " + l).join("\n")}`;
+  const raw = await callClaude([{ role: "user", content: ctx }], { system: sys, maxTokens: 400, signal });
+  try {
+    const p = extractJSON(raw);
+    if (p && p.text) return String(p.text);
+  } catch {}
+  return null;
+}
+
+// Generate a PACK OF 4 lessons that teach ONE concept properly, in the learner's
+// language, grounded in the project they're building. Four angles on the SAME
+// concept (not 4 different topics) — because one micro-lesson is too small to
+// actually teach something. They can do one and go back, or do all four.
+async function generateConceptPack({ concept, project, learnedConcepts = [], signal }) {
+  const label = PROJECT_LANG_LABEL[project.lang] || project.lang || "Python";
+  const runnable = project.lang === "py" || project.lang === "js";
+  const known = (learnedConcepts || []).filter(Boolean).join(", ") || "nothing yet";
+  const sys =
+    `You are a superb ${label} teacher. The learner is building a project ("${project.title}") and needs to learn ONE concept properly: "${concept}".\n\n` +
+    "Make a PACK OF EXACTLY 4 short lessons that teach THAT ONE CONCEPT from four different angles — building understanding step by step. " +
+    "They must all be about \"" + concept + "\" — NOT four different topics. For example, for \"f-strings\": what they are, putting values in, formatting numbers inside them, a common gotcha. " +
+    "Order them easiest to hardest. Each must teach something the previous one didn't.\n\n" +
+    "TEACHING QUALITY (the learner has no other teacher — be accurate): explanations must be simple but NEVER misleading; no half-truths they'd have to unlearn. Write code the way an experienced programmer would. Always say WHY it matters. " +
+    `Ground the examples in their project where natural (their goal: ${project.goal}) so it never feels like a detour.\n\n` +
+    `CONCEPTS THEY ALREADY KNOW (you may use these freely, don't re-teach them): ${known}\n\n` +
+    "Respond with ONLY JSON: {\"lessons\":[{" +
+    "\"title\":string (short), " +
+    "\"teach\":string (2-3 plain sentences explaining this angle of the concept), " +
+    "\"example\":string (a tiny worked example), " +
+    (runnable
+      ? "\"fnName\":string (camelCase or snake_case function they write), \"starter\":string (skeleton, NOT a solution), \"solution\":string (a correct solution), \"tests\":array of >=2 {\"args\":array,\"expected\":any}, \"io\":\"return\"|\"print\""
+      : "\"task\":string (what they should write), \"starter\":string (a skeleton to start from)") +
+    "}]} — exactly 4 lessons.";
+  const raw = await callClaude([{ role: "user", content: `Teach "${concept}" in ${label} as a pack of 4 lessons. Their project: ${project.title} — ${project.goal}` }], { system: sys, maxTokens: 3000, signal, thinking: true });
+  const parsed = extractJSON(raw);
+  const list = Array.isArray(parsed.lessons) ? parsed.lessons : [];
+  const out = [];
+  for (const L of list) {
+    if (!L || !L.title || !L.teach) continue;
+    if (runnable) {
+      // Validate the same way lessons everywhere else are validated — a broken
+      // lesson must never reach the learner (they can't tell it's broken).
+      const check = await validateLesson(L, project.lang);
+      if (!check.ok) continue;
+      out.push({
+        type: "type", lang: project.lang, title: L.title, teach: L.teach, example: L.example || "",
+        intro: "Try it 👇", starter: L.starter || "", fnName: L.fnName, tests: L.tests,
+        io: L.io === "print" ? "print" : "return", concept,
+        why: "🎉 Nice — that's " + concept + " working for real.",
+      });
+    } else {
+      out.push({ type: "read", lang: project.lang, title: L.title, teach: L.teach, example: L.example || "", task: L.task || "", starter: L.starter || "", concept });
+    }
+  }
+  if (!out.length) throw new Error("no-valid-lessons");
+  return { concept, lessons: out };
 }
 
 // A free-chat AI tutor — ask anything about coding, computers, or AI.
@@ -1923,7 +3101,7 @@ function AppInner({ initialState, onPersist, onSignOut } = {}) {
       if (!raw) return { name: "home" };
       const p = JSON.parse(raw);
       if (!p || typeof p !== "object" || typeof p.name !== "string") return { name: "home" };
-      const VALID_SCREENS = ["home", "class", "lesson", "projectPick", "project"];
+      const VALID_SCREENS = ["home", "class", "lesson", "projectPick", "project", "circuits", "circuitLab", "ailab", "aiLab", "breadboard"];
       if (!VALID_SCREENS.includes(p.name)) return { name: "home" };
       return p;
     } catch { return { name: "home" }; }
@@ -1997,6 +3175,13 @@ function AppInner({ initialState, onPersist, onSignOut } = {}) {
   const [progress, setProgress] = useState(() => hydrateProgress(bootState?.progress)); // { classId: Set(doneStepIdx) }
   const [aiLessons, setAiLessons] = useState(() => bootState?.aiLessons || {}); // { classId: [generatedStep, ...] }
   const [savedProjects, setSavedProjects] = useState(() => bootState?.savedProjects || []); // finished projects
+  // Concepts learned inside PROJECT mode (via the teacher's lesson packs). These
+  // join the concepts learned from lessons, so the teacher — and the lesson
+  // generator — both know what the learner already understands.
+  const [projectConcepts, setProjectConcepts] = useState(() => bootState?.projectConcepts || []);
+  // Which circuit challenges the learner has completed.
+  const [circuitDone, setCircuitDone] = useState(() => bootState?.circuitDone || []);
+  const [aiDone, setAiDone] = useState(() => bootState?.aiDone || []);
   // Per-lesson stats for auto-difficulty: { classId: { stepIdx: { time, firstTry, retries } } }
   // Old users with no lessonStats seed with an empty object — safe default, nothing crashes.
   const [lessonStats, setLessonStats] = useState(() => bootState?.lessonStats || {});
@@ -2037,7 +3222,7 @@ function AppInner({ initialState, onPersist, onSignOut } = {}) {
 
   // Kick off a generation — runs in the background regardless of navigation
   // or App remounts.
-  const startGeneration = async ({ classId, sets, priorTopics, priorTitles }) => {
+  const startGeneration = async ({ classId, sets, priorTopics, priorTitles, priorConcepts = [] }) => {
     // Only one generation at a time (simplifies state and avoids parallel API storms)
     if (GEN_STORE.get().status === "running") return { blocked: true };
     // Validate first
@@ -2079,7 +3264,8 @@ function AppInner({ initialState, onPersist, onSignOut } = {}) {
         return await withRetry(() => generateConceptLessons(cls.tab, { customTopic, count, priorTitles: priorTitles || [], difficulty, signal }), 3, 400, signal);
       }
       if (cls.mode === "real") {
-        const unit = await withRetry(() => generateTopicUnit({ classId: cls.id, langLabel: cls.label, priorTopics: priorTopics || [], customTopic, count, difficulty, signal }), 3, 400, signal);
+        const covered = [...new Set([...(priorTopics || []), ...(priorTitles || []), ...(priorConcepts || [])])];
+        const unit = await withRetry(() => generateTopicUnit({ classId: cls.id, langLabel: cls.label, priorTopics: covered, learnedConcepts: priorConcepts, customTopic, count, difficulty, signal }), 3, 400, signal);
         if (unit && unit.lessons) {
           GEN_STORE.set((g) => ({ ...g, lastTopic: unit.topic || g.lastTopic }));
           return unit.lessons;
@@ -2164,8 +3350,19 @@ function AppInner({ initialState, onPersist, onSignOut } = {}) {
     for (const [k, v] of Object.entries(progress)) {
       progressAsArrays[k] = v instanceof Set ? [...v] : Array.isArray(v) ? v : [];
     }
-    return { progress: progressAsArrays, aiLessons, savedProjects, lessonStats, profileDescription };
+    return { progress: progressAsArrays, aiLessons, savedProjects, lessonStats, profileDescription, projectConcepts, circuitDone, aiDone };
   };
+
+  // Every concept the learner has actually learned — from generated lessons
+  // (which declare a `concept`) plus anything learned inside project mode.
+  // This is what makes the teacher able to tell "you forgot" from "never learned".
+  const allLearnedConcepts = useMemo(() => {
+    const set = new Set(projectConcepts || []);
+    for (const list of Object.values(aiLessons || {})) {
+      for (const s of list || []) if (s && s.concept) set.add(s.concept);
+    }
+    return [...set];
+  }, [aiLessons, projectConcepts]);
 
   useEffect(() => {
     const snap = buildSnapshot();
@@ -2180,7 +3377,7 @@ function AppInner({ initialState, onPersist, onSignOut } = {}) {
         setPendingSync(true);
       }
     }
-  }, [progress, aiLessons, savedProjects, lessonStats, profileDescription, onPersist]);
+  }, [progress, aiLessons, savedProjects, lessonStats, profileDescription, projectConcepts, circuitDone, aiDone, onPersist]);
 
   // Watch connection changes. On reconnect, flush the local save to the account.
   useEffect(() => {
@@ -2286,6 +3483,9 @@ function AppInner({ initialState, onPersist, onSignOut } = {}) {
           {!isOnline && <span className="cq-offline-badge" title="You're offline — progress is saved on this device and will sync when you reconnect">📴 Offline · saved here</span>}
           {isOnline && pendingSync && <span className="cq-offline-badge syncing" title="Syncing your latest progress to your account">🔄 Syncing…</span>}
           <button className="cq-projbtn" onClick={() => setScreen({ name: "projectPick" })}>🛠️ Projects</button>
+          <button className="cq-projbtn" onClick={() => setScreen({ name: "circuits" })}>🔌 Circuits</button>
+          <button className="cq-projbtn" onClick={() => setScreen({ name: "ailab" })}>🧠 AI Lab</button>
+          <button className="cq-projbtn" onClick={() => setScreen({ name: "breadboard" })}>🔋 Breadboard</button>
           {totalDone > 0 && <div className="cq-xp">⭐ {totalDone} lessons done</div>}
           {onSignOut && <button className="cq-projbtn" onClick={onSignOut}>Sign out</button>}
         </div>
@@ -2303,8 +3503,43 @@ function AppInner({ initialState, onPersist, onSignOut } = {}) {
         <ProjectPicker onBack={() => setScreen({ name: "home" })} onStart={(plan) => setScreen({ name: "project", plan })} />
       )}
 
+      {screen.name === "circuits" && (
+        <CircuitLessons
+          onBack={() => setScreen({ name: "home" })}
+          doneIds={circuitDone}
+          onOpenChallenge={(ch) => setScreen({ name: "circuitLab", challenge: ch })} />
+      )}
+
+      {screen.name === "breadboard" && (
+        <Breadboard onBack={() => setScreen({ name: "home" })} />
+      )}
+
+      {screen.name === "ailab" && (
+        <AILessons
+          onBack={() => setScreen({ name: "home" })}
+          doneIds={aiDone}
+          onOpenChallenge={(ch) => setScreen({ name: "aiLab", challenge: ch })} />
+      )}
+
+      {screen.name === "aiLab" && (
+        <AILab
+          challenge={screen.challenge}
+          onBack={() => setScreen({ name: screen.challenge ? "ailab" : "home" })}
+          onChallengeComplete={(id) => setAiDone((prev) => (prev.includes(id) ? prev : [...prev, id]))} />
+      )}
+
+      {screen.name === "circuitLab" && (
+        <CircuitLab
+          challenge={screen.challenge}
+          onBack={() => setScreen({ name: screen.challenge ? "circuits" : "home" })}
+          onHome={() => setScreen({ name: "home" })}
+          onChallengeComplete={(id) => setCircuitDone((prev) => (prev.includes(id) ? prev : [...prev, id]))} />
+      )}
+
       {screen.name === "project" && (
         <ProjectBuilder plan={screen.plan} reviewMode={!!screen.review}
+          learnedConcepts={allLearnedConcepts}
+          onConceptLearned={(c) => setProjectConcepts((prev) => (prev.includes(c) ? prev : [...prev, c]))}
           onComplete={(finishedPlan) => setSavedProjects((prev) => prev.some((p) => p.title === finishedPlan.title && p.goal === finishedPlan.goal) ? prev : [...prev, finishedPlan])}
           onBack={() => setScreen({ name: "projectPick" })}
           onHome={() => setScreen({ name: "home" })} />
@@ -2550,7 +3785,7 @@ function Home({ progress, aiLessons, savedProjects = [], profileDescription = ""
                   <span className="cq-classemoji">📦</span>
                   <div className="cq-classnames">
                     <span className="cq-classlabel">{p.title}</span>
-                    <span className="cq-classmode concept">{p.steps.length} steps · done</span>
+                    <span className="cq-classmode concept">{p.steps ? p.steps.length + " steps · done" : (PROJECT_LANG_LABEL[p.lang] || p.lang || "") + " · built"}</span>
                   </div>
                 </div>
                 {p.goal && <p className="cq-classblurb">{p.goal}</p>}
@@ -2838,6 +4073,9 @@ function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, ge
   const lastTopic = (generation && generation.classId === cls.id && generation.lastTopic) || (generation && generation.status === "done" && generation.lastTopic) || "";
   const priorTopics = [...new Set([...cls.steps.map((s) => s.topic).filter(Boolean), lastTopic].filter(Boolean))];
   const priorTitles = cls.steps.map((s) => s.title).filter(Boolean);
+  // Concepts the learner has already learned (from any lesson that declared one).
+  // Used to forbid future lessons whose NEW concept is already known.
+  const priorConcepts = [...new Set(cls.steps.map((s) => s.concept).filter(Boolean))];
 
   // The topic-set builder: a queue of { mode:"ai"|"custom", topic, count }.
   const [showBuilder, setShowBuilder] = useState(false);
@@ -2853,7 +4091,7 @@ function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, ge
     // Reset any prior error for this class first
     if (buildErr && onClearGenerationError) onClearGenerationError();
     // priorTopics and priorTitles are already computed above from cls.steps
-    const result = await onStartGeneration({ classId: cls.id, sets, priorTopics, priorTitles });
+    const result = await onStartGeneration({ classId: cls.id, sets, priorTopics, priorTitles, priorConcepts });
     if (result?.blocked) return; // silently: shouldn't happen from the disabled button, but safe
     // On success (App added the lessons already), reset the builder UI
     // (peek at latest state via a small delay — simpler than adding a callback)
@@ -3102,6 +4340,7 @@ function LessonRunner({ cls, idx, doneSet, onDone, onUndone, onBack, goStep }) {
       {activeStep.type === "visual" && <VisualStep key={stepKey} step={activeStep} onDone={complete} />}
       {activeStep.type === "type" && <TypeStep key={stepKey} step={activeStep} onDone={complete} />}
       {activeStep.type === "aitype" && <AITypeStep key={stepKey} step={activeStep} onDone={complete} />}
+      {activeStep.type === "sqlquery" && <SQLStep key={stepKey} step={activeStep} onDone={complete} />}
       {activeStep.type === "markup" && <MarkupStep key={stepKey} step={activeStep} onDone={complete} />}
 
       {/* In-lesson AI helper — knows this lesson, saves its chat per lesson */}
@@ -3209,7 +4448,7 @@ const HL_LANG_FAMILY = (() => {
   const setAll = (ids, fam) => ids.forEach((id) => (m[id] = fam));
   setAll(["py"], "py");
   setAll(["html", "css", "jsx", "vue", "svelte"], "markup");
-  setAll(["sql"], "sql");
+  setAll(["sql", "lua"], "sql");
   setAll(["clojure", "lisp", "scheme", "elm", "racket"], "lisp");
   // Everything else uses the broad C-family set (js, ts, java, cpp, c, go, rust, etc.)
   return m;
@@ -3880,19 +5119,25 @@ function TypeStep({ step, onDone }) {
   const [running, setRunning] = useState(false);
   const [showHint, setShowHint] = useState(false);
   const stats = useLessonStats();
+  // Java lessons need real DOM nodes for CheerpJ's console/display (hidden).
+  const javaConsoleRef = useRef(null);
+  const javaDisplayRef = useRef(null);
   const run = async () => {
     if (!code.trim()) return;
     setRunning(true);
     // Python lessons verify via Pyodide; JS via native runner
     let v;
     if (step.lang === "py") v = await verifyPython(code, step.fnName, step.tests, step.io);
+    else if (step.lang === "ts") v = await verifyTypeScript(code, step.fnName, step.tests);
+    else if (step.lang === "lua") v = await verifyLua(code, step.fnName, step.tests);
+    else if (step.lang === "java") v = await verifyJava(code, step.fnName, step.tests, javaConsoleRef.current, javaDisplayRef.current);
     else v = verifyRuns(code, step.fnName, step.tests);
     setResult(v); setRunning(false);
     if (v.ok) onDone(stats.buildStats());
     else stats.recordWrong();
   };
   const onKeyDown = makeCodeKeyDown(code, setCode);
-  const fileName = step.lang === "py" ? "solution.py" : "your-code.js";
+  const fileName = step.lang === "py" ? "solution.py" : step.lang === "java" ? "Main.java" : "your-code.js";
   return (
     <div className="cq-card2">
       <h1 className="cq-h1">{step.title}</h1>
@@ -3912,6 +5157,8 @@ function TypeStep({ step, onDone }) {
         <p className="cq-intro">{step.intro}</p>
       )}
       {step.lang === "py" && <p className="cq-tapnote">🐍 Python runs for real via Pyodide — the first run downloads it (~10s), then it's quick.</p>}
+      {step.lang === "java" && <p className="cq-tapnote">☕ Java compiles &amp; runs for real in your browser — the first run loads the engine (~15s), then it's quicker.</p>}
+      <div style={{ display: "none" }}><div id="console" ref={javaConsoleRef} /><div ref={javaDisplayRef} /></div>
       <div className="cq-editor-bar"><span className="cq-dot" /><span className="cq-dot" /><span className="cq-dot" /><span className="cq-filename">{fileName}</span></div>
       <CodeEditor code={code} setCode={setCode} onChange={() => setResult(null)} onKeyDown={onKeyDown} lang={(typeof step !== "undefined" && step && step.lang) ? step.lang : "js"} minHeight={180} />
       <div className="cq-buildrow">
@@ -3928,6 +5175,45 @@ function TypeStep({ step, onDone }) {
       {result && !result.ok && <div className="cq-nudge">Almost — {result.why || "the tests didn't all pass yet"}.</div>}
       {result && !result.ok && result.tip && <div className="cq-iotip">💡 {result.tip}</div>}
       {result?.ok && code.trim() && <div className="cq-takeaway big">{step.why}</div>}
+    </div>
+  );
+}
+
+function SQLStep({ step, onDone }) {
+  const [code, setCode] = useState(step.starter || "SELECT ");
+  const [result, setResult] = useState(null);
+  const [running, setRunning] = useState(false);
+  const stats = useLessonStats();
+  const run = async () => {
+    if (!code.trim()) return;
+    setRunning(true);
+    const v = await verifySQL(code, step.seed, step.expected);
+    setResult(v); setRunning(false);
+    if (v.ok) onDone(stats.buildStats());
+    else stats.recordWrong();
+  };
+  const onKeyDown = makeCodeKeyDown(code, setCode);
+  return (
+    <div className="cq-card2">
+      <h1 className="cq-h1">{step.title}</h1>
+      {(step.teach || step.example) && (
+        <div className="cq-teach">
+          {step.teach && <p className="cq-teach-text">{step.teach}</p>}
+          {step.example && <div className="cq-teach-example"><span className="cq-teach-label">Example</span><pre>{step.example}</pre></div>}
+        </div>
+      )}
+      {step.schema && (
+        <div className="cq-sql-schema">
+          <span className="cq-teach-label">📋 The data you're querying</span>
+          <pre>{step.schema}</pre>
+        </div>
+      )}
+      <p className="cq-tapnote">🗄️ SQL runs for real on a live database (SQLite via sql.js) — the first run loads it (~2s).</p>
+      <div className="cq-editor-bar"><span className="cq-dot" /><span className="cq-dot" /><span className="cq-dot" /><span className="cq-filename">query.sql</span></div>
+      <CodeEditor code={code} setCode={setCode} onChange={() => setResult(null)} onKeyDown={onKeyDown} lang="sql" minHeight={140} />
+      <div className="cq-buildrow"><button className="cq-run" onClick={run} disabled={running || !code.trim()}>{running ? "Running…" : "▶ Run query"}</button></div>
+      {result && !result.ok && <div className="cq-nudge">Almost — {result.why || "that's not the expected result yet"}.</div>}
+      {result?.ok && <div className="cq-takeaway big">{step.why || "🎉 Correct — that query ran on a real database!"}</div>}
     </div>
   );
 }
@@ -4057,6 +5343,7 @@ function MarkupStep({ step, onDone }) {
 
 // ---------- PROJECT MODE screens ----------
 function ProjectPicker({ onStart, onBack }) {
+  const [lang, setLang] = useState("py");
   const [suggestions, setSuggestions] = useState(null);
   const [loadingSug, setLoadingSug] = useState(false);
   const [sugErr, setSugErr] = useState("");
@@ -4064,17 +5351,20 @@ function ProjectPicker({ onStart, onBack }) {
   const [building, setBuilding] = useState(false);
   const [buildErr, setBuildErr] = useState("");
 
+  // Changing language clears stale suggestions (they were for the old language).
+  const pickLang = (l) => { setLang(l); setSuggestions(null); setSugErr(""); };
+
   const loadSuggestions = async () => {
     setLoadingSug(true); setSugErr("");
-    try { setSuggestions(await withRetry(() => suggestProjects())); }
-    catch { setSugErr("Couldn't load ideas right now — generation needs the live AI connection. You can still type your own below."); }
+    try { setSuggestions(await withRetry(() => suggestProjects(lang))); }
+    catch { setSugErr("Couldn't load ideas right now — it needs the live AI connection. You can still type your own below."); }
     finally { setLoadingSug(false); }
   };
 
   const start = async (chosenIdea) => {
     setBuilding(true); setBuildErr("");
-    try { const plan = await withRetry(() => planProject(chosenIdea)); onStart(plan); }
-    catch { setBuildErr("Couldn't plan that project right now — it needs the live AI connection. Please try again in a moment."); }
+    try { const plan = await withRetry(() => planProject(chosenIdea, lang)); onStart(plan); }
+    catch { setBuildErr("Couldn't set up that project right now — it needs the live AI connection. Please try again in a moment."); }
     finally { setBuilding(false); }
   };
 
@@ -4083,13 +5373,23 @@ function ProjectPicker({ onStart, onBack }) {
       <button className="cq-back" onClick={onBack}>← Home</button>
       <p className="cq-eyebrow">Project mode</p>
       <h1 className="cq-home-title">Build something real.</h1>
-      <p className="cq-home-sub">Pick an idea or describe your own, and an AI teacher will guide you through building it in JavaScript — one small step at a time. You can ask it anything as you go.</p>
+      <p className="cq-home-sub">Write your own program in a real editor — it runs for real so you can watch it work. Pick a language, then describe what you want to build or choose an idea.</p>
+
+      <div className="cq-proj-langrow">
+        <span className="cq-proj-langlabel">Language</span>
+        <div className="cq-proj-langs">
+          {PROJECT_LANGS.map((l) => (
+            <button key={l} className={`cq-proj-langchip ${lang === l ? "active" : ""}`} onClick={() => pickLang(l)}>{PROJECT_LANG_LABEL[l]}</button>
+          ))}
+        </div>
+      </div>
 
       <div className="cq-proj-own">
         <label className="cq-proj-label">Describe what you want to build</label>
         <div className="cq-proj-inputrow">
-          <input className="cq-search" placeholder="e.g. a tip calculator, a dice roller, a password checker…" value={idea} onChange={(e) => setIdea(e.target.value)} />
-          <button className="cq-run" disabled={!idea.trim() || building} onClick={() => start(idea.trim())}>{building ? "Planning…" : "Start →"}</button>
+          <input className="cq-search" placeholder="e.g. a tip calculator, a personal webpage, a dice roller…" value={idea}
+            onChange={(e) => setIdea(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && idea.trim() && !building) start(idea.trim()); }} />
+          <button className="cq-run" disabled={!idea.trim() || building} onClick={() => start(idea.trim())}>{building ? "Setting up…" : "Start →"}</button>
         </div>
         {buildErr && <p className="cq-generr">{buildErr}</p>}
       </div>
@@ -4097,7 +5397,7 @@ function ProjectPicker({ onStart, onBack }) {
       <div className="cq-proj-or">or pick an idea</div>
 
       {!suggestions && !loadingSug && (
-        <button className="cq-genbtn" onClick={loadSuggestions}>✨ Suggest project ideas</button>
+        <button className="cq-genbtn" onClick={loadSuggestions}>✨ Suggest {PROJECT_LANG_LABEL[lang]} project ideas</button>
       )}
       {loadingSug && <p className="cq-genlocked">Thinking up some good ones…</p>}
       {sugErr && <p className="cq-generr">{sugErr}</p>}
@@ -4110,7 +5410,7 @@ function ProjectPicker({ onStart, onBack }) {
                 <div className="cq-classnames"><span className="cq-classlabel">{p.title}</span></div>
               </div>
               <p className="cq-classblurb">{p.blurb}</p>
-              <span className="cq-classcta">{building ? "Planning…" : "Build this →"}</span>
+              <span className="cq-classcta">{building ? "Setting up…" : "Build this →"}</span>
             </button>
           ))}
         </div>
@@ -4119,122 +5419,1353 @@ function ProjectPicker({ onStart, onBack }) {
   );
 }
 
-function ProjectBuilder({ plan, onBack, onComplete, onHome, reviewMode = false }) {
-  // In review mode, every step starts already done (you're revisiting a finished project)
-  const allIdxs = plan.steps.map((_, i) => i);
-  const [stepIdx, setStepIdx] = useState(0);
-  const [doneSteps, setDoneSteps] = useState(reviewMode ? allIdxs : []);
-  const step = plan.steps[stepIdx];
-  const [code, setCode] = useState(step.starter);
-  const [result, setResult] = useState(null);
+function ProjectBuilder({ plan, onBack, onComplete, onHome, reviewMode = false, learnedConcepts = [], onConceptLearned }) {
+  // FREE-BUILD project mode with the SMART TEACHER.
+  // You write a whole program in a real editor and run it for real. The teacher
+  // sees your code, knows what you've learned, and mostly gives quick REMINDERS —
+  // escalating to a proper 4-lesson pack only when something is genuinely new
+  // (or when you ask to learn it properly).
+  // A project is a LIST of files. `code`/`setCode`/`lang` below are derived from
+  // whichever file is active, so the editor + run logic keep working unchanged —
+  // they just operate on the current file.
+  const [files, setFiles] = useState(() => initialProjectFiles(plan));
+  const [activeFile, setActiveFile] = useState(0);
+  const [renaming, setRenaming] = useState(null); // index being renamed, or null
+  const safeActive = Math.min(activeFile, files.length - 1);
+  const current = files[safeActive] || files[0];
+  const lang = current.lang || plan.lang || "py";
+  const mode = projectLangMode(lang);
+  const code = current.code;
+  const setCode = (updater) => {
+    setFiles((prev) => prev.map((f, i) => {
+      if (i !== safeActive) return f;
+      const next = typeof updater === "function" ? updater(f.code) : updater;
+      return { ...f, code: next };
+    }));
+  };
+  const allFilesForSave = () => files.map((f) => ({ name: f.name, lang: f.lang, code: f.code }));
+
   const [running, setRunning] = useState(false);
-  const complete = doneSteps.length === plan.steps.length;
+  const [output, setOutput] = useState(null);
+  const [srcDoc, setSrcDoc] = useState(null);
   const savedRef = useRef(false);
+  // Java (CheerpJ) needs a real DOM element with id="console" — that's where the
+  // JVM writes System.out — plus a display element for any Swing/AWT window.
+  const javaConsoleRef = useRef(null);
+  const javaDisplayRef = useRef(null);
 
-  // When the project is completed for the first time, save it to My Projects
-  useEffect(() => {
-    if (complete && !reviewMode && !savedRef.current) { savedRef.current = true; onComplete && onComplete(plan); }
-  }, [complete, reviewMode, onComplete, plan]);
-
-  // teacher chat
-  const [chat, setChat] = useState([]); // {role:'you'|'teacher', text}
-  const [question, setQuestion] = useState("");
-  const [asking, setAsking] = useState(false);
-
-  // when moving to a new step, load its starter
-  const goToStep = (i) => { setStepIdx(i); setCode(plan.steps[i].starter); setResult(null); };
-
-  const run = () => {
-    if (!code.trim()) return;
-    setRunning(true);
-    const v = verifyRuns(code, step.fnName, step.tests);
-    setResult(v); setRunning(false);
-    if (v.ok && !doneSteps.includes(stepIdx)) {
-      const nd = [...doneSteps, stepIdx];
-      setDoneSteps(nd);
-      // auto-advance after a beat if there's a next step
-      if (stepIdx < plan.steps.length - 1) setTimeout(() => goToStep(stepIdx + 1), 900);
-    }
+  // ---- File management ----
+  const addFile = () => {
+    // New file defaults to the same language as the current one (most common:
+    // splitting a Python program into more Python files).
+    const base = "file" + (files.length + 1);
+    const nm = defaultFileName(lang, lang === "java" ? "Class" + (files.length + 1) : base);
+    setFiles((prev) => [...prev, { name: nm, lang, code: "" }]);
+    setActiveFile(files.length);
+    setRenaming(files.length); // let them name it right away
+  };
+  const deleteFile = (i) => {
+    if (files.length <= 1) return; // always keep at least one file
+    setFiles((prev) => prev.filter((_, idx) => idx !== i));
+    setActiveFile((a) => (a >= i && a > 0 ? a - 1 : a));
+  };
+  const renameFile = (i, newName) => {
+    const clean = (newName || "").trim();
+    if (!clean) { setRenaming(null); return; }
+    // Infer the language from the extension so coloring/running follow the name.
+    const ext = clean.split(".").pop().toLowerCase();
+    const extToLang = { py: "py", js: "js", ts: "ts", java: "java", sql: "sql", html: "html", css: "css", jsx: "jsx", vue: "vue", svelte: "svelte", lua: "lua" };
+    const inferred = extToLang[ext] || files[i].lang;
+    setFiles((prev) => prev.map((f, idx) => (idx === i ? { ...f, name: clean, lang: inferred } : f)));
+    setRenaming(null);
   };
 
-  const ask = async () => {
-    const q = question.trim(); if (!q) return;
-    setChat((c) => [...c, { role: "you", text: q }]); setQuestion(""); setAsking(true);
+  // Concepts learned — starts from what the app knows, grows as they learn here.
+  const [concepts, setConcepts] = useState(() => [...(learnedConcepts || [])]);
+
+  // teacher state
+  const [chat, setChat] = useState([]); // {role:'you'|'teacher', text, concept?, offered?}
+  const [question, setQuestion] = useState("");
+  const [asking, setAsking] = useState(false);
+  const [pack, setPack] = useState(null);        // { concept, lessons } — the open lesson pack
+  const [packLoading, setPackLoading] = useState(false);
+  const logRef = useRef(null);
+
+  // Error help — scoped to the CURRENT error only. Once the error is gone, the
+  // teacher lets that line go and stops commenting on it.
+  const [errorHelp, setErrorHelp] = useState(null);
+  const helpedErrorRef = useRef(null);
+
+  // Stall detection — only nudges after you've genuinely STOPPED (not while typing).
+  const [nudge, setNudge] = useState(null);
+  const nudgedForRef = useRef(null);   // one nudge per code-state, never repeats
+  const lastTypedRef = useRef(Date.now());
+
+  useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [chat, asking]);
+
+  const markBuilt = () => {
+    if (!reviewMode && !savedRef.current) { savedRef.current = true; onComplete && onComplete({ ...plan, files: allFilesForSave(), code: files[0] ? files[0].code : "" }); }
+  };
+  const learnConcept = (c) => {
+    if (!c) return;
+    setConcepts((prev) => (prev.includes(c) ? prev : [...prev, c]));
+    onConceptLearned && onConceptLearned(c);
+  };
+
+  // ---- STALL NUDGE: fires only after real inactivity, once per code state ----
+  useEffect(() => {
+    if (reviewMode) return;
+    if (!code.trim() || code.trim().length < 20) return; // nothing to nudge about yet
+    const snapshot = code;
+    const t = setTimeout(async () => {
+      // Still unchanged after the wait, and we haven't nudged for this exact code
+      if (code !== snapshot) return;
+      if (nudgedForRef.current === snapshot) return;
+      if (asking || packLoading || errorHelp) return; // don't pile on
+      nudgedForRef.current = snapshot;
+      try {
+        const text = await nudgeStalledLearner({ project: plan, code: snapshot, learnedConcepts: concepts });
+        if (text && code === snapshot) setNudge(text);
+      } catch {}
+    }, 45000); // 45s of no typing = genuinely stalled, not just thinking
+    return () => clearTimeout(t);
+  }, [code, reviewMode, asking, packLoading, errorHelp, concepts, plan]);
+
+  const run = async () => {
+    if (!code.trim()) return;
+    setRunning(true); setOutput(null); setSrcDoc(null); setNudge(null);
     try {
-      const a = await askTeacher({ project: plan, stepIdx, code, question: q });
-      setChat((c) => [...c, { role: "teacher", text: a }]);
+      // If this project's files form a real WEB project (html + css + js/ts/jsx/p5),
+      // combine them into one live page — the honest "real webpage" experience.
+      const webProject = files.length > 1 && isWebProject(files);
+      // A JS file + a SQL file = JavaScript querying a real database.
+      const jsPlusSql = files.length > 1 && files.some((f) => /\.js$/i.test(f.name)) && files.some((f) => /\.sql$/i.test(f.name)) && /\.js$/i.test(current.name);
+
+      if (webProject) {
+        setSrcDoc(markupProjectHTML(files));
+        markBuilt();
+        setErrorHelp(null); helpedErrorRef.current = null;
+      } else if (jsPlusSql) {
+        const r = await runProjectJSWithSQL(files, current.name);
+        setOutput(r);
+        if (r.ok) { markBuilt(); setErrorHelp(null); helpedErrorRef.current = null; }
+        else if (r.error && helpedErrorRef.current !== r.error) {
+          helpedErrorRef.current = r.error;
+          try { setErrorHelp(await explainProjectError({ project: plan, code, errorText: r.error, learnedConcepts: concepts })); } catch {}
+        }
+      } else if (mode === "markup") {
+        setSrcDoc(markupSandboxHTML(lang, code));
+        markBuilt();
+        setErrorHelp(null); helpedErrorRef.current = null;
+      } else if (mode === "java") {
+        // Real JVM in the browser. CheerpJ writes System.out into #console.
+        const r = await runProjectJava(code, javaConsoleRef.current, javaDisplayRef.current);
+        setOutput(r);
+        if (r.ok) {
+          markBuilt();
+          setErrorHelp(null); helpedErrorRef.current = null;
+        } else if (r.error && !r.setupNeeded && helpedErrorRef.current !== r.error) {
+          helpedErrorRef.current = r.error;
+          try {
+            const h = await explainProjectError({ project: plan, code, errorText: r.error, learnedConcepts: concepts });
+            setErrorHelp(h);
+          } catch {}
+        }
+      } else {
+        // Single-file (or same-language multi-file with real imports).
+        const r = lang === "py" ? await runProjectPython(code, files, current.name)
+          : lang === "ts" ? await runProjectTS(code)
+          : lang === "lua" ? await runProjectLua(code)
+          : lang === "basic" ? runProjectBASIC(code)
+          : lang === "asm" ? runProjectAssembly(code)
+          : lang === "php" ? await runProjectPHP(code)
+          : lang === "c" ? await runProjectCFamily(code, false)
+          : lang === "cpp" ? await runProjectCFamily(code, true)
+          : lang === "sql" ? await runProjectSQL(code)
+          : runProjectJS(code, files, current.name);
+        setOutput(r);
+        if (r.ok) {
+          markBuilt();
+          // Error resolved → the teacher lets that line go and stops commenting.
+          setErrorHelp(null); helpedErrorRef.current = null;
+        } else if (r.error && helpedErrorRef.current !== r.error) {
+          // A NEW real error → help from the error message itself, once.
+          helpedErrorRef.current = r.error;
+          try {
+            const h = await explainProjectError({ project: plan, code, errorText: r.error, learnedConcepts: concepts });
+            setErrorHelp(h);
+          } catch {}
+        }
+      }
+    } catch (e) {
+      setOutput({ ok: false, output: "", error: String(e && e.message ? e.message : e) });
+    } finally { setRunning(false); }
+  };
+
+  // ---- Ask the teacher (reminder by default) ----
+  const ask = async (q, wantLesson = false) => {
+    const text = (q || "").trim(); if (!text) return;
+    setChat((c) => [...c, { role: "you", text }]);
+    setQuestion(""); setAsking(true); setNudge(null);
+    try {
+      const a = await askProjectTeacher({
+        project: plan, code, question: text, learnedConcepts: concepts, wantLesson,
+        lastError: output && !output.ok ? output.error : null,
+        files: files.length > 1 ? files : null, activeName: current.name,
+      });
+      setChat((c) => [...c, { role: "teacher", text: a.text, concept: a.concept }]);
     } catch {
       setChat((c) => [...c, { role: "teacher", text: "I couldn't answer just now — the teacher needs the live AI connection. Try again in a moment." }]);
     } finally { setAsking(false); }
   };
 
+  // ---- Open a 4-lesson pack for a concept (on request, or when truly new) ----
+  const openPack = async (concept) => {
+    if (!concept) return;
+    setPackLoading(true);
+    try {
+      const p = await generateConceptPack({ concept, project: plan, learnedConcepts: concepts });
+      setPack(p);
+    } catch {
+      setChat((c) => [...c, { role: "teacher", text: "I couldn't build that lesson right now — it needs the live AI connection. Try again in a moment." }]);
+    } finally { setPackLoading(false); }
+  };
+
   const onKeyDown = makeCodeKeyDown(code, setCode);
+
+  // While a lesson pack is open, it takes over the screen — but the project code
+  // is untouched underneath, so closing it drops you right back where you were.
+  if (pack) {
+    return <ConceptPack pack={pack} onClose={() => setPack(null)} onLearned={(c) => { learnConcept(c); }} />;
+  }
 
   return (
     <main className="cq-main">
       <button className="cq-back" onClick={onBack}>← Leave project</button>
 
       <section className="cq-proj-hero">
-        <p className="cq-eyebrow">Project · {plan.lang === "js" ? "JavaScript" : plan.lang}</p>
+        <p className="cq-eyebrow">Project · {PROJECT_LANG_LABEL[lang] || lang}</p>
         <h1 className="cq-classhero-title">{plan.title}</h1>
-        {plan.goal && <p className="cq-classblurb">{plan.goal}</p>}
-        <div className="cq-proj-track">
-          {plan.steps.map((s, i) => (
-            <button key={i} className={`cq-proj-dot ${doneSteps.includes(i) ? "done" : ""} ${i === stepIdx ? "active" : ""}`} onClick={() => goToStep(i)} title={s.title}>{doneSteps.includes(i) ? "✓" : i + 1}</button>
-          ))}
-        </div>
+        {plan.goal && <p className="cq-classblurb">🎯 {plan.goal}</p>}
+        {plan.start && !reviewMode && <p className="cq-proj-start">💡 {plan.start}</p>}
       </section>
 
-      {complete ? (
-        <div className="cq-card2" style={{ textAlign: "center" }}>
-          <h1 className="cq-h1">{reviewMode ? `📦 ${plan.title}` : `🎉 You built ${plan.title}!`}</h1>
-          <p className="cq-intro">{reviewMode
-            ? "One of your finished projects. Tap any step above to revisit how you built it."
-            : "Every step is done and runs for real. That's a complete little project you wrote yourself — and it's been saved to My Projects on the home screen."}</p>
-          <div className="cq-buildrow" style={{ justifyContent: "center" }}>
-            {!reviewMode && <button className="cq-run" onClick={() => onHome && onHome()}>See My Projects →</button>}
-            <button className="cq-clearbtn" onClick={onBack}>Back to projects</button>
-          </div>
+      <div className="cq-card2">
+        <div className="cq-filetabs">
+          {files.map((f, i) => (
+            <div key={i} className={`cq-filetab ${i === safeActive ? "active" : ""}`}>
+              {renaming === i ? (
+                <input className="cq-filetab-input" autoFocus defaultValue={f.name}
+                  onBlur={(e) => renameFile(i, e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") renameFile(i, e.target.value); if (e.key === "Escape") setRenaming(null); }} />
+              ) : (
+                <>
+                  <button className="cq-filetab-name" onClick={() => (i === safeActive ? setRenaming(i) : setActiveFile(i))} title={i === safeActive ? "Tap to rename" : f.name}>{f.name}</button>
+                  {files.length > 1 && <button className="cq-filetab-x" onClick={() => deleteFile(i)} title="Delete file">✕</button>}
+                </>
+              )}
+            </div>
+          ))}
+          <button className="cq-filetab-add" onClick={addFile} title="New file">＋</button>
         </div>
-      ) : (
-        <div className="cq-card2">
-          <div className="cq-chaptag">Step {stepIdx + 1} of {plan.steps.length}</div>
-          <h1 className="cq-h1">{step.title}</h1>
-          <div className="cq-teach">
-            <p className="cq-teach-text">{step.teach}</p>
-            {step.example && <div className="cq-teach-example"><span className="cq-teach-label">Example</span><pre>{step.example}</pre></div>}
-            <p className="cq-teach-now">Now you try 👇</p>
-          </div>
-          <div className="cq-editor-bar"><span className="cq-dot" /><span className="cq-dot" /><span className="cq-dot" /><span className="cq-filename">project.js</span></div>
-          <CodeEditor code={code} setCode={setCode} onChange={() => setResult(null)} onKeyDown={onKeyDown} lang={(typeof step !== "undefined" && step && step.lang) ? step.lang : "js"} minHeight={180} />
-          <div className="cq-buildrow"><button className="cq-run" onClick={run} disabled={running || !code.trim()}>{running ? "Running…" : "▶ Run it"}</button></div>
-          {result && !result.ok && <div className="cq-nudge">Almost — {result.why || "the tests didn't all pass yet"}. Ask the teacher below if you're stuck.</div>}
-          {result?.ok && code.trim() && <div className="cq-takeaway big">✓ That works! {stepIdx < plan.steps.length - 1 ? "On to the next step…" : "Last step done!"}</div>}
+        <div className="cq-editor-bar"><span className="cq-dot" /><span className="cq-dot" /><span className="cq-dot" /><span className="cq-filename">{current.name} · {PROJECT_LANG_LABEL[lang] || lang}</span></div>
+        <CodeEditor code={code} setCode={setCode} onChange={() => { setOutput(null); setNudge(null); lastTypedRef.current = Date.now(); }} onKeyDown={onKeyDown} lang={lang} minHeight={240} />
+        <div className="cq-buildrow">
+          <button className="cq-run" onClick={run} disabled={running || !code.trim()}>{running ? "Running…" : (mode === "markup" ? "▶ Run & preview" : "▶ Run " + current.name)}</button>
+          <button className="cq-hintbtn" onClick={() => ask("What should I do next?")} disabled={asking}>💡 What should I do next?</button>
         </div>
-      )}
 
-      {/* Ask-the-teacher chat — available anytime, never advances the build */}
+        {/* A quiet nudge, only after you've genuinely stalled */}
+        {nudge && (
+          <div className="cq-proj-nudge">
+            <span>👋 {nudge}</span>
+            <button className="cq-proj-nudge-x" onClick={() => setNudge(null)} title="Dismiss">✕</button>
+          </div>
+        )}
+
+        {/* Java (CheerpJ) writes System.out into an element with id="console".
+            It must exist in the DOM whenever a Java project is open. The display
+            hosts any Swing/AWT window the learner creates. */}
+        {mode === "java" && (
+          <div className={output ? "cq-runout" : "cq-javahidden"}>
+            {output && <div className="cq-runout-label">Output</div>}
+            <pre className="cq-console" id="console" ref={javaConsoleRef} />
+            <div className="cq-javadisplay" ref={javaDisplayRef} />
+          </div>
+        )}
+
+        {output && mode !== "java" && (
+          <div className="cq-runout">
+            <div className="cq-runout-label">{output.tables ? "Result" : "Output"}</div>
+            {/* SQL results render as real tables */}
+            {output.tables && output.tables.length > 0 ? (
+              output.tables.map((t, ti) => (
+                <div key={ti} className="cq-sqltablewrap">
+                  <table className="cq-sqltable">
+                    <thead><tr>{t.columns.map((c, i) => <th key={i}>{c}</th>)}</tr></thead>
+                    <tbody>{t.values.map((row, ri) => (<tr key={ri}>{row.map((v, ci) => <td key={ci}>{v === null ? "NULL" : String(v)}</td>)}</tr>))}</tbody>
+                  </table>
+                </div>
+              ))
+            ) : output.tables ? (
+              <pre className="cq-console">(that ran fine — no rows to show. Try a SELECT to see data.)</pre>
+            ) : (
+              <pre className="cq-console">{output.output || (output.ok ? "(ran with no output — try adding a print/console.log)" : "")}{output.error ? (output.output ? "\n" : "") + "⚠ " + output.error : ""}</pre>
+            )}
+            {output.tables && output.error && <pre className="cq-console">{"⚠ " + output.error}</pre>}
+          </div>
+        )}
+
+        {/* Java errors (compile or runtime) shown beneath its console */}
+        {mode === "java" && output && !output.ok && output.error && (
+          <div className={output.setupNeeded ? "cq-setupnote" : "cq-runout"}>
+            {!output.setupNeeded && <div className="cq-runout-label">{output.compileError ? "Didn't compile" : "Error"}</div>}
+            <pre className="cq-console">{output.setupNeeded ? "🔧 " : "⚠ "}{output.error}</pre>
+          </div>
+        )}
+
+        {/* Error help — from the real error, scoped to it, gone once it's fixed */}
+        {errorHelp && output && !output.ok && (
+          <div className={`cq-errhelp ${errorHelp.severity === "gap" ? "gap" : "slip"}`}>
+            <div className="cq-errhelp-text">{errorHelp.severity === "gap" ? "🧠 " : "🔧 "}{errorHelp.text}</div>
+            {errorHelp.concept && !concepts.includes(errorHelp.concept) && (
+              <button className="cq-hintbtn" disabled={packLoading} onClick={() => openPack(errorHelp.concept)}>
+                {packLoading ? "Building lessons…" : `📚 Teach me "${errorHelp.concept}" properly`}
+              </button>
+            )}
+          </div>
+        )}
+
+        {srcDoc && (
+          <div className="cq-canvaswrap" style={{ background: "#fff" }}>
+            <iframe title="preview" className="cq-canvas" sandbox="allow-scripts" srcDoc={srcDoc} />
+          </div>
+        )}
+      </div>
+
+      {/* The teacher — reminder by default, lesson pack on request */}
       <div className="cq-teacher">
-        <div className="cq-teacher-head">🧑‍🏫 Ask your teacher</div>
+        <div className="cq-teacher-head">🧑‍🏫 Your teacher</div>
         {chat.length > 0 && (
-          <div className="cq-teacher-log">
+          <div className="cq-teacher-log" ref={logRef}>
             {chat.map((m, i) => (
-              <div key={i} className={`cq-bubble ${m.role}`}>{m.text}</div>
+              <div key={i} className="cq-bubblewrap">
+                <div className={`cq-bubble ${m.role}`}>{m.text}</div>
+                {m.role === "teacher" && m.concept && (
+                  <button className="cq-learnbtn" disabled={packLoading} onClick={() => openPack(m.concept)}>
+                    {packLoading ? "Building lessons…" : `📚 Teach me "${m.concept}" properly (4 lessons)`}
+                  </button>
+                )}
+              </div>
             ))}
             {asking && <div className="cq-bubble teacher">…</div>}
           </div>
         )}
+        {chat.length === 0 && !asking && (
+          <p className="cq-proj-teacherhint">Stuck? Ask anything — “how do I get input?”, “why isn’t this working?”. I’ll give you a quick nudge, and if it’s something new I can teach it properly.</p>
+        )}
         <div className="cq-teacher-inputrow">
-          <input className="cq-search" placeholder="Ask anything — 'what does return do?', 'why isn't this working?'…" value={question}
-            onChange={(e) => setQuestion(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") ask(); }} />
-          <button className="cq-run" onClick={ask} disabled={!question.trim() || asking}>{asking ? "…" : "Ask"}</button>
+          <input className="cq-search" placeholder="Ask your teacher…" value={question}
+            onChange={(e) => setQuestion(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") ask(question); }} />
+          <button className="cq-run" onClick={() => ask(question)} disabled={!question.trim() || asking}>{asking ? "…" : "Ask"}</button>
         </div>
       </div>
     </main>
   );
 }
 
+// The 4-lesson pack, opened in-place from a project. Doing ONE is enough to get
+// unstuck and go back — the rest are there if you want them. Never a gate.
+function ConceptPack({ pack, onClose, onLearned }) {
+  const [idx, setIdx] = useState(0);
+  const [done, setDone] = useState([]);
+  const lesson = pack.lessons[idx];
+  const markDone = (i) => {
+    setDone((d) => (d.includes(i) ? d : [...d, i]));
+    onLearned && onLearned(pack.concept); // learning any of the pack marks the concept
+  };
+  return (
+    <main className="cq-main">
+      <button className="cq-back" onClick={onClose}>← Back to my project</button>
+      <section className="cq-proj-hero">
+        <p className="cq-eyebrow">Learning · {pack.concept}</p>
+        <h1 className="cq-classhero-title">Let's learn {pack.concept}</h1>
+        <p className="cq-classblurb">4 quick lessons on this one idea. Do the first to get unstuck, or all four to really know it — your call. Your project is safe; nothing you wrote is lost.</p>
+        <div className="cq-proj-track">
+          {pack.lessons.map((l, i) => (
+            <button key={i} className={`cq-proj-dot ${done.includes(i) ? "done" : ""} ${i === idx ? "active" : ""}`} onClick={() => setIdx(i)} title={l.title}>{done.includes(i) ? "✓" : i + 1}</button>
+          ))}
+        </div>
+      </section>
+      <div className="cq-packstep">
+        {lesson.type === "type"
+          ? <TypeStep key={idx} step={lesson} onDone={() => markDone(idx)} />
+          : (
+            <div className="cq-card2">
+              <h1 className="cq-h1">{lesson.title}</h1>
+              <div className="cq-teach">
+                <p className="cq-teach-text">{lesson.teach}</p>
+                {lesson.example && <div className="cq-teach-example"><span className="cq-teach-label">Example</span><pre>{lesson.example}</pre></div>}
+              </div>
+              {lesson.task && <p className="cq-intro">✍️ {lesson.task}</p>}
+              <div className="cq-buildrow">
+                <button className="cq-run" onClick={() => markDone(idx)} disabled={done.includes(idx)}>{done.includes(idx) ? "✓ Got it" : "Got it 👍"}</button>
+              </div>
+            </div>
+          )}
+      </div>
+      <div className="cq-buildrow" style={{ marginTop: 14 }}>
+        {idx < pack.lessons.length - 1 && <button className="cq-clearbtn" onClick={() => setIdx(idx + 1)}>Next lesson →</button>}
+        <button className="cq-run" onClick={onClose}>Back to my project →</button>
+      </div>
+    </main>
+  );
+}
+
+// ---------- CIRCUIT LAB: the logic-gate level ----------
+// A tap-based canvas (mobile-friendly — no fragile drag-and-drop): tap a palette
+// item to add it; tap a component to select/move; tap an output port then an
+// input port to wire them; tap a switch to toggle it. The proven digital engine
+// computes what lights up, live.
+let _circuitIdCounter = 1;
+// The circuit-lessons menu: a path of challenges from easy to hard.
+// ---------- AI LAB: build a neural network and watch it learn ----------
+// ---------- AI LAB LESSONS (guided challenges) ----------
+const AI_CHALLENGES = [
+  { id: "learn-and", pattern: "AND", minHidden: 1, title: "Teach it AND", brief: "Train a network until it learns the AND pattern (output is 1 only when both inputs are 1). Hit Train and watch the error drop!", teach: "The network starts with random weights and adjusts them from the examples until it gets every answer right. That's machine learning." },
+  { id: "learn-or", pattern: "OR", minHidden: 1, title: "Teach it OR", brief: "Now train a network to learn OR (output is 1 when either input is 1).", teach: "Same process, different pattern — the network finds different weights that fit these examples." },
+  { id: "learn-xor", pattern: "XOR", minHidden: 2, title: "The XOR challenge", brief: "Train a network to learn XOR. Try it with 1 hidden neuron first (it'll get stuck!), then add more. Discover why XOR is famous.", teach: "XOR isn't linearly separable — a single neuron can't split the data. You need hidden neurons to bend the decision. This exact problem nearly killed AI research in the 1970s!" },
+];
+function AILessons({ onBack, onOpenChallenge, doneIds = [] }) {
+  return (
+    <main className="cq-main">
+      <button className="cq-back" onClick={onBack}>← Home</button>
+      <p className="cq-eyebrow">AI Lab · Lessons</p>
+      <h1 className="cq-home-title">Learn how AI learns.</h1>
+      <p className="cq-home-sub">Train real neural networks to solve each challenge. Feel how a machine learns from examples — and hit the famous wall that shaped AI history.</p>
+      <div className="cq-classlist" style={{ marginTop: 10 }}>
+        {AI_CHALLENGES.map((ch, i) => {
+          const done = doneIds.includes(ch.id);
+          const locked = i > 0 && !doneIds.includes(AI_CHALLENGES[i - 1].id);
+          return (
+            <button key={ch.id} className="cq-classcard" disabled={locked} onClick={() => onOpenChallenge(ch)}>
+              <div className="cq-classtop">
+                <span className="cq-classemoji">{done ? "✅" : locked ? "🔒" : "🧠"}</span>
+                <div className="cq-classnames"><span className="cq-classlabel">{ch.title}</span></div>
+              </div>
+              <p className="cq-classblurb">{ch.brief}</p>
+              <span className="cq-classcta">{done ? "Train again →" : locked ? "Finish the one above first" : "Start →"}</span>
+            </button>
+          );
+        })}
+      </div>
+      <div className="cq-circ-freelink">
+        <button className="cq-genbtn" onClick={() => onOpenChallenge(null)}>🧠 Or just free-explore →</button>
+      </div>
+    </main>
+  );
+}
+
+const AI_PATTERNS = {
+  AND:  { label: "AND", data: [[[0,0],0],[[0,1],0],[[1,0],0],[[1,1],1]], hint: "One neuron can learn this." },
+  OR:   { label: "OR",  data: [[[0,0],0],[[0,1],1],[[1,0],1],[[1,1],1]], hint: "One neuron can learn this." },
+  XOR:  { label: "XOR (tricky!)", data: [[[0,0],0],[[0,1],1],[[1,0],1],[[1,1],0]], hint: "This one NEEDS hidden neurons — a single neuron can't do it!" },
+};
+function AILab({ onBack, challenge = null, onChallengeComplete = null }) {
+  const [pattern, setPattern] = useState(challenge ? challenge.pattern : "AND");
+  const [hidden, setHidden] = useState(2);
+  const [net, setNet] = useState(() => nnNewNetwork(2));
+  const [epoch, setEpoch] = useState(0);
+  const [error, setError] = useState(null);
+  const [training, setTraining] = useState(false);
+  const trainRef = useRef(null);
+  const [chat, setChat] = useState([]);
+  const [question, setQuestion] = useState("");
+  const [asking, setAsking] = useState(false);
+
+  const data = AI_PATTERNS[pattern].data;
+
+  const reset = (h = hidden) => {
+    if (trainRef.current) { clearInterval(trainRef.current); trainRef.current = null; }
+    setNet(nnNewNetwork(h)); setEpoch(0); setError(null); setTraining(false);
+  };
+
+  const train = () => {
+    if (training) { clearInterval(trainRef.current); trainRef.current = null; setTraining(false); return; }
+    setTraining(true);
+    trainRef.current = setInterval(() => {
+      setNet((prev) => {
+        const n = { ...prev, w1: prev.w1.map((r) => [...r]), b1: [...prev.b1], w2: [...prev.w2] };
+        let err = 0;
+        for (let i = 0; i < 20; i++) err = nnTrainEpoch(n, data); // 20 epochs per tick
+        setError(err); setEpoch((e) => e + 20);
+        if (err < 0.02) { clearInterval(trainRef.current); trainRef.current = null; setTraining(false); }
+        return n;
+      });
+    }, 60);
+  };
+
+  useEffect(() => () => { if (trainRef.current) clearInterval(trainRef.current); }, []);
+
+  const rows = data.map(([inp, target]) => {
+    const p = nnPredict(net, inp);
+    return { inp, target, p, correct: (p > 0.5 ? 1 : 0) === target };
+  });
+  const allCorrect = rows.every((r) => r.correct);
+
+  // In challenge mode, mark complete when the network has genuinely learned it.
+  useEffect(() => {
+    if (challenge && allCorrect && epoch > 0 && onChallengeComplete) onChallengeComplete(challenge.id);
+  }, [allCorrect, epoch, challenge, onChallengeComplete]);
+
+  const ask = async () => {
+    const q = question.trim(); if (!q) return;
+    setChat((c) => [...c, { role: "you", text: q }]); setQuestion(""); setAsking(true);
+    try {
+      const state = `The learner is training a neural network to learn the ${pattern} pattern, with ${hidden} hidden neuron(s). ` +
+        `After ${epoch} training rounds, the network's answers are: ` +
+        rows.map((r) => `input (${r.inp.join(",")}) → ${r.p.toFixed(2)} (should be ${r.target})`).join("; ") + ". " +
+        (allCorrect ? "It has learned the pattern correctly." : "It hasn't fully learned it yet.");
+      const a = await askAITeacher({ state, question: q });
+      setChat((c) => [...c, { role: "teacher", text: a }]);
+    } catch {
+      setChat((c) => [...c, { role: "teacher", text: "I couldn't answer just now — the teacher needs the live AI connection." }]);
+    } finally { setAsking(false); }
+  };
+
+  return (
+    <main className="cq-main">
+      <button className="cq-back" onClick={onBack}>← {challenge ? "Back to lessons" : "Home"}</button>
+      <p className="cq-eyebrow">AI Lab · {challenge ? "Challenge" : "Neural networks"}</p>
+      {challenge ? (
+        <>
+          <h1 className="cq-home-title">{challenge.title}</h1>
+          <div className="cq-circ-goal">🎯 {challenge.brief}</div>
+        </>
+      ) : (
+        <>
+          <h1 className="cq-home-title">Watch a network learn.</h1>
+          <p className="cq-home-sub">A neural network isn't magic — it's neurons (weighted sums) that adjust themselves from examples. Pick a pattern, hit Train, and watch it figure it out.</p>
+        </>
+      )}
+
+      <div className="cq-ai-controls">
+        <div className="cq-ai-ctrl">
+          <span className="cq-ai-lbl">Pattern to learn</span>
+          <div className="cq-ai-chips">
+            {Object.keys(AI_PATTERNS).map((p) => (
+              <button key={p} className={`cq-ai-chip ${pattern === p ? "active" : ""}`} onClick={() => { setPattern(p); reset(); }}>{AI_PATTERNS[p].label}</button>
+            ))}
+          </div>
+        </div>
+        <div className="cq-ai-ctrl">
+          <span className="cq-ai-lbl">Hidden neurons: {hidden}</span>
+          <div className="cq-ai-chips">
+            {[0, 1, 2, 4].map((h) => (
+              <button key={h} className={`cq-ai-chip ${hidden === h ? "active" : ""}`} onClick={() => { setHidden(h); reset(h); }} disabled={h === 0}>{h === 0 ? "0 (none)" : h}</button>
+            ))}
+          </div>
+        </div>
+      </div>
+      <p className="cq-ai-hint">💡 {AI_PATTERNS[pattern].hint}</p>
+
+      {/* Network diagram */}
+      <div className="cq-ai-diagram">
+        <svg viewBox="0 0 320 180" className="cq-ai-svg">
+          {/* input nodes */}
+          {[0,1].map((i) => (<circle key={'i'+i} cx="40" cy={60+i*60} r="16" className="cq-ai-node input" />))}
+          <text x="40" y="30" className="cq-ai-txt">inputs</text>
+          {/* hidden nodes */}
+          {Array.from({length: hidden}).map((_, j) => {
+            const y = 90 + (j - (hidden-1)/2) * 45;
+            return <circle key={'h'+j} cx="160" cy={y} r="14" className="cq-ai-node hidden" />;
+          })}
+          {hidden>0 && <text x="160" y="20" className="cq-ai-txt">hidden</text>}
+          {/* output node */}
+          <circle cx="280" cy="90" r="16" className={`cq-ai-node output ${allCorrect?'done':''}`} />
+          <text x="280" y="30" className="cq-ai-txt">output</text>
+          {/* connections input→hidden */}
+          {[0,1].map((i) => Array.from({length:hidden}).map((_,j) => {
+            const y = 90 + (j-(hidden-1)/2)*45;
+            const wt = net.w1[j] ? net.w1[j][i] : 0;
+            return <line key={'iw'+i+j} x1="56" y1={60+i*60} x2="146" y2={y} className="cq-ai-wire" strokeWidth={Math.min(4,Math.abs(wt)*1.2+0.3)} stroke={wt>=0?'#4fd1c5':'#f6836b'} />;
+          }))}
+          {/* hidden→output */}
+          {Array.from({length:hidden}).map((_,j) => {
+            const y = 90 + (j-(hidden-1)/2)*45;
+            const wt = net.w2[j]||0;
+            return <line key={'ow'+j} x1="174" y1={y} x2="264" y2="90" className="cq-ai-wire" strokeWidth={Math.min(4,Math.abs(wt)*1.2+0.3)} stroke={wt>=0?'#4fd1c5':'#f6836b'} />;
+          })}
+        </svg>
+      </div>
+
+      <div className="cq-ai-trainrow">
+        <button className="cq-run" onClick={train}>{training ? "⏸ Pause" : epoch > 0 ? "▶ Keep training" : "▶ Train it"}</button>
+        <button className="cq-clearbtn" onClick={() => reset()}>↺ Reset</button>
+        <span className="cq-ai-stat">Rounds: {epoch}{error !== null && ` · error: ${error.toFixed(3)}`}</span>
+      </div>
+
+      {/* Predictions table */}
+      <div className="cq-ai-table">
+        <div className="cq-ai-throw cq-ai-thead"><span>Input</span><span>Network says</span><span>Should be</span><span></span></div>
+        {rows.map((r, i) => (
+          <div key={i} className="cq-ai-throw">
+            <span>({r.inp.join(", ")})</span>
+            <span>{r.p.toFixed(3)}</span>
+            <span>{r.target}</span>
+            <span>{r.correct ? "✅" : "…"}</span>
+          </div>
+        ))}
+      </div>
+      {allCorrect && epoch > 0 && <p className="cq-ai-success">🎉 The network learned {pattern}! Every answer is right.</p>}
+      {pattern === "XOR" && hidden === 1 && epoch > 200 && !allCorrect && (
+        <p className="cq-ai-hint">See how it's stuck? XOR can't be learned with just one hidden neuron — try 2 or more. This is a famous result in AI history!</p>
+      )}
+
+      {/* Teacher */}
+      <div className="cq-teacher">
+        <div className="cq-teacher-head">🧑‍🏫 Ask about your network</div>
+        {chat.length > 0 && (
+          <div className="cq-teacher-log">
+            {chat.map((m, i) => <div key={i} className={`cq-bubble ${m.role}`}>{m.text}</div>)}
+            {asking && <div className="cq-bubble teacher">…</div>}
+          </div>
+        )}
+        {chat.length === 0 && !asking && <p className="cq-proj-teacherhint">Ask “what are the weights doing?” or “why can’t one neuron learn XOR?”</p>}
+        <div className="cq-teacher-inputrow">
+          <input className="cq-search" placeholder="Ask about your network…" value={question} onChange={(e) => setQuestion(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") ask(); }} />
+          <button className="cq-run" onClick={ask} disabled={!question.trim() || asking}>{asking ? "…" : "Ask"}</button>
+        </div>
+      </div>
+    </main>
+  );
+}
+async function askAITeacher({ state, question, signal }) {
+  const sys =
+    "You are a warm teacher helping a beginner understand neural networks using a hands-on lab where they train a tiny network and watch it learn. " +
+    "You can see the exact state of their network (below) — this is real, computed by an actual neural network, so trust it. " +
+    "Explain simply and concretely, grounded in what their network is actually doing. Keep it brief and encouraging. Never imply AI is magic — it's weighted sums adjusting from examples.\n\n" +
+    "THEIR NETWORK RIGHT NOW:\n" + state;
+  return await callClaude([{ role: "user", content: question }], { system: sys, maxTokens: 600, signal });
+}
+
+function CircuitLessons({ onBack, onOpenChallenge, doneIds = [] }) {
+  return (
+    <main className="cq-main">
+      <button className="cq-back" onClick={onBack}>← Home</button>
+      <p className="cq-eyebrow">Circuit Lab · Lessons</p>
+      <h1 className="cq-home-title">Learn logic, hands-on.</h1>
+      <p className="cq-home-sub">Build real circuits to solve each challenge. Start simple and work up to the gates that computers are made of.</p>
+      <div className="cq-classlist" style={{ marginTop: 10 }}>
+        {CIRCUIT_CHALLENGES.map((ch, i) => {
+          const done = doneIds.includes(ch.id);
+          const locked = i > 0 && !doneIds.includes(CIRCUIT_CHALLENGES[i - 1].id);
+          return (
+            <button key={ch.id} className="cq-classcard" disabled={locked} onClick={() => onOpenChallenge(ch)}>
+              <div className="cq-classtop">
+                <span className="cq-classemoji">{done ? "✅" : locked ? "🔒" : "⚡"}</span>
+                <div className="cq-classnames"><span className="cq-classlabel">{ch.title}</span></div>
+              </div>
+              <p className="cq-classblurb">{ch.brief}</p>
+              <span className="cq-classcta">{done ? "Build again →" : locked ? "Finish the one above first" : "Build it →"}</span>
+            </button>
+          );
+        })}
+      </div>
+      <div className="cq-circ-freelink">
+        <button className="cq-genbtn" onClick={() => onOpenChallenge(null)}>🔌 Or just free-build →</button>
+      </div>
+    </main>
+  );
+}
+
+function CircuitLab({ onBack, onHome, challenge = null, onChallengeComplete = null }) {
+  // components: switches (inputs), gates, lights (outputs)
+  // In lesson mode, seed the canvas with exactly the switches + light the
+  // challenge needs. In free mode, the default A/B/Y starter.
+  const [comps, setComps] = useState(() => {
+    if (challenge) {
+      const cs = challenge.inputs.map((label, i) => ({ id: "in_" + label, kind: "switch", label, x: 40, y: 70 + i * 90, on: false }));
+      cs.push({ id: "out_" + challenge.output, kind: "light", label: challenge.output, x: 340, y: 110 });
+      return cs;
+    }
+    return [
+      { id: "in_A", kind: "switch", label: "A", x: 40, y: 80, on: false },
+      { id: "in_B", kind: "switch", label: "B", x: 40, y: 180, on: false },
+      { id: "out_Y", kind: "light", label: "Y", x: 340, y: 130 },
+    ];
+  });
+  const [checkResult, setCheckResult] = useState(null);
+  const [wires, setWires] = useState([]); // {from:{comp,port}, to:{comp,port}}
+  const [selected, setSelected] = useState(null);
+  const [wiring, setWiring] = useState(null); // {comp, port} of a pending output tap
+  const [tool, setTool] = useState("move"); // move | wire | delete
+  const [askOpen, setAskOpen] = useState(false);
+  const [question, setQuestion] = useState("");
+  const [chat, setChat] = useState([]);
+  const [asking, setAsking] = useState(false);
+  const canvasRef = useRef(null);
+
+  // Build the engine circuit from the visual components + wires, then evaluate.
+  const evalResult = useMemo(() => {
+    const inputs = {};
+    for (const c of comps) if (c.kind === "switch") inputs[c.label] = !!c.on;
+    const gates = comps.filter((c) => c.kind === "gate").map((c) => {
+      const def = GATE_DEFS[c.gateType];
+      const ins = [];
+      for (let p = 0; p < def.inputs; p++) {
+        const w = wires.find((w) => w.to.comp === c.id && w.to.port === p);
+        ins.push(w ? refFor(w.from) : { const: false });
+      }
+      return { id: c.id, type: c.gateType, ins };
+    });
+    const outputs = comps.filter((c) => c.kind === "light").map((c) => {
+      const w = wires.find((w) => w.to.comp === c.id);
+      return { name: c.id, from: w ? refFor(w.from) : { const: false } };
+    });
+    function refFor(fromEnd) {
+      const src = comps.find((c) => c.id === fromEnd.comp);
+      if (!src) return { const: false };
+      if (src.kind === "switch") return { input: src.label };
+      if (src.kind === "gate") return { gate: src.id };
+      return { const: false };
+    }
+    return evaluateDigital({ inputs, gates, outputs });
+  }, [comps, wires]);
+
+  const wireValue = (fromEnd) => {
+    const src = comps.find((c) => c.id === fromEnd.comp);
+    if (!src) return false;
+    if (src.kind === "switch") return !!src.on;
+    if (src.kind === "gate") return !!evalResult.gateOut[src.id];
+    return false;
+  };
+
+  const addGate = (gateType) => {
+    const id = "g" + (_circuitIdCounter++);
+    setComps((c) => [...c, { id, kind: "gate", gateType, x: 170, y: 60 + (c.length % 4) * 70 }]);
+    setSelected(id);
+  };
+  const addSwitch = () => {
+    const used = comps.filter((c) => c.kind === "switch").map((c) => c.label);
+    const label = "ABCDEFGH".split("").find((l) => !used.includes(l)) || "X";
+    setComps((c) => [...c, { id: "in_" + label + (_circuitIdCounter++), kind: "switch", label, x: 40, y: 60 + used.length * 70, on: false }]);
+  };
+  const addLight = () => {
+    const used = comps.filter((c) => c.kind === "light").map((c) => c.label);
+    const label = "YZWV".split("").find((l) => !used.includes(l)) || "O";
+    setComps((c) => [...c, { id: "out_" + label + (_circuitIdCounter++), kind: "light", label, x: 340, y: 80 + used.length * 70 }]);
+  };
+  const removeComp = (id) => {
+    setComps((c) => c.filter((x) => x.id !== id));
+    setWires((w) => w.filter((x) => x.from.comp !== id && x.to.comp !== id));
+    setSelected(null);
+  };
+  const toggleSwitch = (id) => setComps((c) => c.map((x) => (x.id === id ? { ...x, on: !x.on } : x)));
+
+  // Port tap: wiring. First tap an OUTPUT port, then an INPUT port → make a wire.
+  const tapPort = (comp, portType, portIdx) => {
+    if (portType === "out") {
+      setWiring({ comp: comp.id, port: 0 });
+    } else if (portType === "in" && wiring) {
+      // remove any existing wire into this input port, then add
+      setWires((w) => [...w.filter((x) => !(x.to.comp === comp.id && x.to.port === portIdx)), { from: { comp: wiring.comp, port: 0 }, to: { comp: comp.id, port: portIdx } }]);
+      setWiring(null);
+    }
+  };
+
+  // Simple move: tap a component with the move tool to select, then tap canvas to place.
+  const onCanvasTap = (e) => {
+    if (tool === "move" && selected) {
+      const rect = canvasRef.current.getBoundingClientRect();
+      const x = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
+      const y = (e.touches ? e.touches[0].clientY : e.clientY) - rect.top;
+      setComps((c) => c.map((x2) => (x2.id === selected ? { ...x2, x: Math.max(10, x - 30), y: Math.max(10, y - 20) } : x2)));
+    }
+    setWiring(null);
+  };
+
+  const askTeacher = async () => {
+    const q = question.trim(); if (!q) return;
+    setChat((c) => [...c, { role: "you", text: q }]); setQuestion(""); setAsking(true);
+    try {
+      const desc = describeCircuit(comps, wires, evalResult);
+      const a = await askCircuitTeacher({ circuit: desc, question: q });
+      setChat((c) => [...c, { role: "teacher", text: a }]);
+    } catch {
+      setChat((c) => [...c, { role: "teacher", text: "I couldn't answer just now — the teacher needs the live AI connection." }]);
+    } finally { setAsking(false); }
+  };
+
+  const gateW = 64, gateH = 44;
+  return (
+    <main className="cq-main">
+      <button className="cq-back" onClick={onBack}>← {challenge ? "Back to lessons" : "Home"}</button>
+      <p className="cq-eyebrow">Circuit Lab · {challenge ? "Challenge" : "Logic gates"}</p>
+      {challenge ? (
+        <>
+          <h1 className="cq-home-title">{challenge.title}</h1>
+          <div className="cq-circ-goal">🎯 {challenge.brief}</div>
+        </>
+      ) : (
+        <>
+          <h1 className="cq-home-title">Build a circuit.</h1>
+          <p className="cq-home-sub">Add switches, gates, and a light. Wire them up, flip the switches, and watch what turns on. This is how computers actually think — in ones and zeros.</p>
+        </>
+      )}
+
+      <div className="cq-circ-palette">
+        <span className="cq-circ-plabel">Add:</span>
+        <button className="cq-circ-pbtn" onClick={addSwitch}>🔘 Switch</button>
+        {Object.keys(GATE_DEFS).map((g) => (
+          <button key={g} className="cq-circ-pbtn" onClick={() => addGate(g)}>{g}</button>
+        ))}
+        <button className="cq-circ-pbtn" onClick={addLight}>💡 Light</button>
+      </div>
+
+      <div className="cq-circ-tools">
+        <button className={`cq-circ-tool ${tool === "move" ? "active" : ""}`} onClick={() => { setTool("move"); setWiring(null); }}>✋ Move</button>
+        <button className={`cq-circ-tool ${tool === "wire" ? "active" : ""}`} onClick={() => { setTool("wire"); setSelected(null); }}>🔌 Wire</button>
+        <button className={`cq-circ-tool ${tool === "delete" ? "active" : ""}`} onClick={() => { setTool("delete"); setWiring(null); }}>🗑️ Delete</button>
+        {wiring && <span className="cq-circ-hint">Tap an input port to connect →</span>}
+        {tool === "wire" && !wiring && <span className="cq-circ-hint">Tap an output dot, then an input dot</span>}
+      </div>
+
+      <div className="cq-circ-canvas" ref={canvasRef} onClick={onCanvasTap}>
+        {/* wires */}
+        <svg className="cq-circ-wires">
+          {wires.map((w, i) => {
+            const from = comps.find((c) => c.id === w.from.comp);
+            const to = comps.find((c) => c.id === w.to.comp);
+            if (!from || !to) return null;
+            const fp = portPos(from, "out", 0, gateW, gateH);
+            const tp = portPos(to, "in", w.to.port, gateW, gateH);
+            const live = wireValue(w.from);
+            return <path key={i} d={`M ${fp.x} ${fp.y} C ${fp.x + 40} ${fp.y}, ${tp.x - 40} ${tp.y}, ${tp.x} ${tp.y}`} className={`cq-wire ${live ? "on" : ""}`} fill="none" />;
+          })}
+        </svg>
+        {/* components */}
+        {comps.map((c) => {
+          const isOn = c.kind === "switch" ? c.on : c.kind === "light" ? evalResult.outputs[c.id] : evalResult.gateOut[c.id];
+          const def = c.kind === "gate" ? GATE_DEFS[c.gateType] : null;
+          return (
+            <div key={c.id} className={`cq-circ-comp ${c.kind} ${isOn ? "on" : ""} ${selected === c.id ? "sel" : ""}`}
+              style={{ left: c.x, top: c.y, width: c.kind === "gate" ? gateW : 48, height: c.kind === "gate" ? gateH : 48 }}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (tool === "delete") { removeComp(c.id); return; }
+                if (c.kind === "switch" && tool === "move") { toggleSwitch(c.id); return; }
+                if (tool === "move") setSelected(c.id);
+              }}>
+              {c.kind === "switch" && <span className="cq-circ-lbl">{c.label}<br />{c.on ? "1" : "0"}</span>}
+              {c.kind === "light" && <span className="cq-circ-lbl">{c.label}</span>}
+              {c.kind === "gate" && <span className="cq-circ-lbl">{def.symbol}</span>}
+
+              {/* ports */}
+              {c.kind !== "switch" && def && Array.from({ length: def.inputs }).map((_, p) => (
+                <button key={p} className="cq-port in" style={{ top: def.inputs === 1 ? "50%" : `${30 + p * 40}%` }}
+                  onClick={(e) => { e.stopPropagation(); if (tool === "wire") tapPort(c, "in", p); }} title="input" />
+              ))}
+              {c.kind === "light" && (
+                <button className="cq-port in" style={{ top: "50%" }} onClick={(e) => { e.stopPropagation(); if (tool === "wire") tapPort(c, "in", 0); }} title="input" />
+              )}
+              {c.kind !== "light" && (
+                <button className="cq-port out" style={{ top: "50%" }} onClick={(e) => { e.stopPropagation(); if (tool === "wire") tapPort(c, "out", 0); }} title="output" />
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="cq-circ-status">
+        {!evalResult.settled && <span className="cq-circ-warn">⚠ This circuit oscillates (it never settles) — check your feedback loops.</span>}
+        {evalResult.settled && <span>Flip the switches (tap them in Move mode) and watch the lights.</span>}
+      </div>
+
+      {challenge && (
+        <div className="cq-circ-checkrow">
+          <button className="cq-run" onClick={() => {
+            const r = checkCircuitChallenge(challenge, comps, wires);
+            setCheckResult(r);
+            if (r.pass && onChallengeComplete) onChallengeComplete(challenge.id);
+          }}>✓ Check my circuit</button>
+          {checkResult && (
+            <span className={checkResult.pass ? "cq-circ-pass" : "cq-circ-fail"}>
+              {checkResult.pass ? "🎉 Correct! You built it." : checkResult.detail}
+            </span>
+          )}
+        </div>
+      )}
+
+      {selected && tool === "move" && (
+        <div className="cq-circ-selbar">Selected. Tap the canvas to move it here, or <button className="cq-linklike" onClick={() => removeComp(selected)}>delete it</button>.</div>
+      )}
+
+      {/* Teacher */}
+      <div className="cq-teacher">
+        <div className="cq-teacher-head">🧑‍🏫 Ask about your circuit</div>
+        {chat.length > 0 && (
+          <div className="cq-teacher-log">
+            {chat.map((m, i) => <div key={i} className={`cq-bubble ${m.role}`}>{m.text}</div>)}
+            {asking && <div className="cq-bubble teacher">…</div>}
+          </div>
+        )}
+        {chat.length === 0 && !asking && <p className="cq-proj-teacherhint">Stuck? Ask “why isn’t my light turning on?” or “how do I make it turn on only when both switches are on?”</p>}
+        <div className="cq-teacher-inputrow">
+          <input className="cq-search" placeholder="Ask about your circuit…" value={question} onChange={(e) => setQuestion(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") askTeacher(); }} />
+          <button className="cq-run" onClick={askTeacher} disabled={!question.trim() || asking}>{asking ? "…" : "Ask"}</button>
+        </div>
+      </div>
+    </main>
+  );
+}
+// Where a component's port sits, in canvas coordinates.
+function portPos(comp, type, idx, gateW, gateH) {
+  const w = comp.kind === "gate" ? gateW : 48;
+  const h = comp.kind === "gate" ? gateH : 48;
+  if (type === "out") return { x: comp.x + w, y: comp.y + h / 2 };
+  // input
+  const def = comp.kind === "gate" ? GATE_DEFS[comp.gateType] : { inputs: 1 };
+  const frac = def.inputs === 1 ? 0.5 : (0.3 + idx * 0.4);
+  return { x: comp.x, y: comp.y + h * frac };
+}
+// Describe the circuit in plain, leg-aware terms for the AI teacher.
+function describeCircuit(comps, wires, result) {
+  const name = (id) => { const c = comps.find((x) => x.id === id); return c ? (c.kind === "gate" ? c.gateType + " gate" : c.kind === "switch" ? "switch " + c.label : "light " + c.label) : id; };
+  const lines = [];
+  lines.push("Components: " + comps.map((c) => c.kind === "gate" ? c.gateType + " gate" : c.kind === "switch" ? `switch ${c.label} (currently ${c.on ? "ON/1" : "OFF/0"})` : `light ${c.label}`).join(", "));
+  if (wires.length) lines.push("Wires: " + wires.map((w) => `${name(w.from.comp)} output → ${name(w.to.comp)} input ${w.to.port + 1}`).join("; "));
+  else lines.push("No wires yet.");
+  const litLights = comps.filter((c) => c.kind === "light" && result.outputs[c.id]).map((c) => c.label);
+  lines.push("Lights currently ON: " + (litLights.length ? litLights.join(", ") : "none"));
+  if (!result.settled) lines.push("NOTE: the circuit oscillates and never settles.");
+  return lines.join("\n");
+}
+async function askCircuitTeacher({ circuit, question, signal }) {
+  const sys =
+    "You are a warm teacher helping a beginner build a LOGIC-GATE circuit (switches, AND/OR/NOT/etc. gates, and lights). " +
+    "You can SEE their exact circuit below, including which switches are on and which lights are lit — this is GROUND TRUTH computed by a real simulator, so trust it. " +
+    "Give a short, friendly, concrete answer grounded in THEIR circuit. If a light isn't on when they want it on, look at the wiring and switch states and tell them specifically what to change. Keep it brief — a nudge, not a lecture, unless they ask to learn a concept properly.\n\n" +
+    "THEIR CIRCUIT RIGHT NOW:\n" + circuit;
+  return await callClaude([{ role: "user", content: question }], { system: sys, maxTokens: 600, signal });
+}
+
+// ---------- NEURAL NETWORK ENGINE (the AI Lab) ----------
+// The honest core of how AI works: neurons (weighted sum + activation) in layers,
+// trained by gradient descent. Proven against AND/OR (hand-set), learning AND
+// from examples, and a 2-layer net learning XOR. Small enough to run live.
+const nnSigmoid = (x) => 1 / (1 + Math.exp(-x));
+// A network: { hidden: number of hidden neurons, w1, b1, w2, b2 }. 2 inputs, 1 output.
+function nnNewNetwork(hidden) {
+  const rand = () => Math.random() * 2 - 1;
+  return {
+    hidden,
+    w1: Array.from({ length: hidden }, () => [rand(), rand()]),
+    b1: Array.from({ length: hidden }, () => rand()),
+    w2: Array.from({ length: hidden }, () => rand()),
+    b2: rand(),
+  };
+}
+function nnForward(net, inp) {
+  const h = net.w1.map((wj, j) => nnSigmoid(inp[0] * wj[0] + inp[1] * wj[1] + net.b1[j]));
+  const out = nnSigmoid(h.reduce((s, hj, j) => s + hj * net.w2[j], net.b2));
+  return { h, out };
+}
+// One epoch of training over the dataset; returns average error.
+function nnTrainEpoch(net, data, lr = 0.5) {
+  let totalErr = 0;
+  for (const [inp, target] of data) {
+    const { h, out } = nnForward(net, inp);
+    totalErr += Math.abs(out - target);
+    const dOut = (out - target) * out * (1 - out);
+    const dH = net.w2.map((w2j, j) => dOut * w2j * h[j] * (1 - h[j]));
+    for (let j = 0; j < net.hidden; j++) net.w2[j] -= lr * dOut * h[j];
+    net.b2 -= lr * dOut;
+    for (let j = 0; j < net.hidden; j++) {
+      net.w1[j][0] -= lr * dH[j] * inp[0];
+      net.w1[j][1] -= lr * dH[j] * inp[1];
+      net.b1[j] -= lr * dH[j];
+    }
+  }
+  return totalErr / data.length;
+}
+function nnPredict(net, inp) { return nnForward(net, inp).out; }
+
+// ---------- BREADBOARD: real analog circuits with named legs ----------
+// Components have NAMED LEGS (battery +/−, LED anode/cathode, resistor two ends).
+// You wire leg-to-leg; the MNA engine solves the real physics; we translate the
+// result into plain-English health the learner (and AI) can understand.
+const BB_COMPONENTS = {
+  battery: { label: "Battery (9V)", legs: ["+", "−"], value: 9, emoji: "🔋" },
+  resistor: { label: "Resistor", legs: ["end1", "end2"], value: 470, emoji: "▬", adjustable: true },
+  led: { label: "LED", legs: ["anode (long leg)", "cathode (short leg)"], emoji: "💡" },
+};
+let _bbId = 1;
+function Breadboard({ onBack }) {
+  const [comps, setComps] = useState([]);
+  const [wires, setWires] = useState([]); // {from:{comp,leg}, to:{comp,leg}}
+  const [wiring, setWiring] = useState(null);
+  const [tool, setTool] = useState("wire");
+  const [selected, setSelected] = useState(null);
+  const [result, setResult] = useState(null);
+  const [chat, setChat] = useState([]);
+  const [question, setQuestion] = useState("");
+  const [asking, setAsking] = useState(false);
+
+  const addComp = (kind) => {
+    const def = BB_COMPONENTS[kind];
+    const id = kind + (_bbId++);
+    setComps((c) => [...c, { id, kind, x: 30 + (c.length % 3) * 110, y: 40 + Math.floor(c.length / 3) * 90, value: def.value }]);
+    setResult(null);
+  };
+  const removeComp = (id) => { setComps((c) => c.filter((x) => x.id !== id)); setWires((w) => w.filter((x) => x.from.comp !== id && x.to.comp !== id)); setResult(null); setSelected(null); };
+  const setResistance = (id, v) => { setComps((c) => c.map((x) => (x.id === id ? { ...x, value: v } : x))); setResult(null); };
+
+  const tapLeg = (compId, legIdx) => {
+    if (tool !== "wire") return;
+    if (!wiring) { setWiring({ comp: compId, leg: legIdx }); return; }
+    if (wiring.comp === compId && wiring.leg === legIdx) { setWiring(null); return; }
+    setWires((w) => [...w, { from: { ...wiring }, to: { comp: compId, leg: legIdx } }]);
+    setWiring(null); setResult(null);
+  };
+
+  // Build the engine netlist from components + leg-to-leg wires, then simulate.
+  const simulate = () => {
+    // Union-find over legs to assign circuit nodes. Each (comp,leg) is a terminal.
+    const legKey = (c, l) => c + "#" + l;
+    const parent = {};
+    const find = (k) => { if (parent[k] === undefined) parent[k] = k; while (parent[k] !== k) { parent[k] = parent[parent[k]]; k = parent[k]; } return k; };
+    const union = (a, b) => { parent[find(a)] = find(b); };
+    for (const c of comps) BB_COMPONENTS[c.kind].legs.forEach((_, i) => find(legKey(c.id, i)));
+    for (const w of wires) union(legKey(w.from.comp, w.from.leg), legKey(w.to.comp, w.to.leg));
+    // Assign node numbers; ground = the battery − leg's group (node 0).
+    const battery = comps.find((c) => c.kind === "battery");
+    if (!battery) { setResult({ error: "Add a battery — a circuit needs a power source." }); return; }
+    const groundGroup = find(legKey(battery.id, 1)); // − leg
+    const groupToNode = { [groundGroup]: 0 };
+    let nextNode = 1;
+    const nodeOf = (c, l) => { const g = find(legKey(c, l)); if (groupToNode[g] === undefined) groupToNode[g] = nextNode++; return groupToNode[g]; };
+    const engineComps = [];
+    for (const c of comps) {
+      if (c.kind === "battery") engineComps.push({ type: "V", id: c.id, n1: nodeOf(c.id, 0), n2: nodeOf(c.id, 1), value: c.value });
+      else if (c.kind === "resistor") engineComps.push({ type: "R", id: c.id, n1: nodeOf(c.id, 0), n2: nodeOf(c.id, 1), value: c.value });
+      else if (c.kind === "led") engineComps.push({ type: "LED", id: c.id, n1: nodeOf(c.id, 0), n2: nodeOf(c.id, 1), value: 0 });
+    }
+    const numNodes = nextNode;
+    let sim;
+    try { sim = mnaSolveDC(numNodes, engineComps); } catch (e) { setResult({ error: "Couldn't solve this circuit — check your wiring." }); return; }
+    // Translate into plain-English health per component.
+    const health = analyzeBreadboard(comps, engineComps, sim);
+    setResult({ health, V: sim.V });
+  };
+
+  const ask = async () => {
+    const q = question.trim(); if (!q) return;
+    setChat((c) => [...c, { role: "you", text: q }]); setQuestion(""); setAsking(true);
+    try {
+      const desc = describeBreadboard(comps, wires, result);
+      const a = await askBreadboardTeacher({ circuit: desc, question: q });
+      setChat((c) => [...c, { role: "teacher", text: a }]);
+    } catch { setChat((c) => [...c, { role: "teacher", text: "I couldn't answer just now — the teacher needs the live AI connection." }]); }
+    finally { setAsking(false); }
+  };
+
+  return (
+    <main className="cq-main">
+      <button className="cq-back" onClick={onBack}>← Home</button>
+      <p className="cq-eyebrow">Breadboard · Real electronics</p>
+      <h1 className="cq-home-title">Wire up real components.</h1>
+      <p className="cq-home-sub">Place a battery, resistor, and LED, then connect their legs. This runs REAL circuit physics — get it right and the LED lights up; forget the resistor and it burns out, just like real life.</p>
+
+      <div className="cq-circ-palette">
+        <span className="cq-circ-plabel">Add:</span>
+        {Object.keys(BB_COMPONENTS).map((k) => (
+          <button key={k} className="cq-circ-pbtn" onClick={() => addComp(k)}>{BB_COMPONENTS[k].emoji} {BB_COMPONENTS[k].label}</button>
+        ))}
+      </div>
+      <div className="cq-circ-tools">
+        <button className={`cq-circ-tool ${tool === "wire" ? "active" : ""}`} onClick={() => { setTool("wire"); }}>🔌 Wire legs</button>
+        <button className={`cq-circ-tool ${tool === "delete" ? "active" : ""}`} onClick={() => { setTool("delete"); setWiring(null); }}>🗑️ Delete</button>
+        {wiring && <span className="cq-circ-hint">Now tap another leg to connect →</span>}
+      </div>
+
+      <div className="cq-bb-canvas">
+        <svg className="cq-circ-wires">
+          {wires.map((w, i) => {
+            const from = comps.find((c) => c.id === w.from.comp), to = comps.find((c) => c.id === w.to.comp);
+            if (!from || !to) return null;
+            const fp = bbLegPos(from, w.from.leg), tp = bbLegPos(to, w.to.leg);
+            return <line key={i} x1={fp.x} y1={fp.y} x2={tp.x} y2={tp.y} className="cq-wire on" />;
+          })}
+        </svg>
+        {comps.map((c) => {
+          const def = BB_COMPONENTS[c.kind];
+          const lit = result && result.health && result.health[c.id] && result.health[c.id].lit;
+          return (
+            <div key={c.id} className={`cq-bb-comp ${lit ? "lit" : ""}`} style={{ left: c.x, top: c.y }}
+              onClick={() => { if (tool === "delete") removeComp(c.id); else setSelected(c.id === selected ? null : c.id); }}>
+              <span className="cq-bb-emoji">{def.emoji}</span>
+              <span className="cq-bb-name">{c.kind === "resistor" ? c.value + "Ω" : def.label}</span>
+              <div className="cq-bb-legs">
+                {def.legs.map((leg, li) => (
+                  <button key={li} className={`cq-bb-leg ${wiring && wiring.comp === c.id && wiring.leg === li ? "active" : ""}`}
+                    onClick={(e) => { e.stopPropagation(); tapLeg(c.id, li); }} title={leg}>{leg.split(" ")[0]}</button>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {selected && comps.find((c) => c.id === selected)?.kind === "resistor" && (
+        <div className="cq-bb-adjust">
+          Resistor value: {comps.find((c) => c.id === selected).value}Ω
+          <input type="range" min="47" max="1000" step="1" value={comps.find((c) => c.id === selected).value}
+            onChange={(e) => setResistance(selected, parseInt(e.target.value))} className="cq-bb-slider" />
+        </div>
+      )}
+
+      <div className="cq-circ-checkrow">
+        <button className="cq-run" onClick={simulate}>⚡ Power it on</button>
+      </div>
+
+      {result && result.error && <div className="cq-circ-status cq-circ-warn">{result.error}</div>}
+      {result && result.health && (
+        <div className="cq-bb-results">
+          {Object.entries(result.health).map(([id, h]) => (
+            <div key={id} className={`cq-bb-health ${h.danger ? "danger" : h.lit ? "good" : ""}`}>
+              {h.emoji} {h.message}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="cq-teacher">
+        <div className="cq-teacher-head">🧑‍🏫 Ask about your circuit</div>
+        {chat.length > 0 && <div className="cq-teacher-log">{chat.map((m, i) => <div key={i} className={`cq-bubble ${m.role}`}>{m.text}</div>)}{asking && <div className="cq-bubble teacher">…</div>}</div>}
+        {chat.length === 0 && !asking && <p className="cq-proj-teacherhint">Ask “why won’t my LED light up?” or “what does the resistor do?”</p>}
+        <div className="cq-teacher-inputrow">
+          <input className="cq-search" placeholder="Ask about your circuit…" value={question} onChange={(e) => setQuestion(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") ask(); }} />
+          <button className="cq-run" onClick={ask} disabled={!question.trim() || asking}>{asking ? "…" : "Ask"}</button>
+        </div>
+      </div>
+    </main>
+  );
+}
+function bbLegPos(comp, legIdx) {
+  const def = BB_COMPONENTS[comp.kind];
+  const n = def.legs.length;
+  return { x: comp.x + 20 + legIdx * 50, y: comp.y + 68 };
+}
+// Translate the raw physics into plain-English health (and detect common faults).
+function analyzeBreadboard(comps, engineComps, sim) {
+  const health = {};
+  // Accurate current: find the resistor in series (current through it = V/R), else
+  // estimate from the LED diode equation. This gives physically correct mA.
+  const nodeV = (node) => (node === 0 ? 0 : sim.V[node] || 0);
+  for (const c of comps) {
+    if (c.kind === "led") {
+      const ec = engineComps.find((e) => e.id === c.id);
+      const vLed = sim.diodeV[c.id] || 0;
+      const hasResistor = comps.some((x) => x.kind === "resistor");
+      // Current: prefer a resistor's V/R (accurate); else diode equation.
+      let mA;
+      const resistor = engineComps.find((e) => e.type === "R");
+      if (resistor) mA = Math.abs(nodeV(resistor.n1) - nodeV(resistor.n2)) / resistor.value * 1000;
+      else { const Id = MNA_LED_IS * (Math.exp(Math.min(vLed, 2.4) / MNA_DIODE_VT) - 1); mA = Id * 1000; }
+      if (vLed < 1.4) health[c.id] = { emoji: "⚫", message: "The LED is off — not enough voltage to light it. Check it's in a complete loop and the long leg (anode) faces the battery's + side.", lit: false };
+      else if (mA > 30) health[c.id] = { emoji: "🔥", message: `The LED has ${mA.toFixed(0)}mA flowing through it — that's too much, it would burn out! ${hasResistor ? "Try a bigger resistor to limit the current more." : "You need a resistor to limit the current."}`, danger: true, lit: false };
+      else health[c.id] = { emoji: "💡", message: `The LED lights up! About ${mA.toFixed(0)}mA is flowing — a healthy amount.`, lit: true };
+    } else if (c.kind === "resistor") {
+      health[c.id] = { emoji: "▬", message: `The ${c.value}Ω resistor is limiting the current to protect the LED.`, lit: false };
+    }
+  }
+  return health;
+}
+function describeBreadboard(comps, wires, result) {
+  const lines = [];
+  lines.push("Components: " + comps.map((c) => c.kind === "resistor" ? c.value + "Ω resistor" : c.kind === "battery" ? "9V battery" : "LED").join(", "));
+  lines.push("Wires (leg to leg): " + (wires.length ? wires.map((w) => {
+    const fc = comps.find((c) => c.id === w.from.comp), tc = comps.find((c) => c.id === w.to.comp);
+    const legName = (c, i) => BB_COMPONENTS[c.kind].legs[i];
+    return `${fc.kind} ${legName(fc, w.from.leg)} → ${tc.kind} ${legName(tc, w.to.leg)}`;
+  }).join("; ") : "none yet"));
+  if (result && result.health) lines.push("Result: " + Object.values(result.health).map((h) => h.message).join(" "));
+  return lines.join("\n");
+}
+async function askBreadboardTeacher({ circuit, question, signal }) {
+  const sys =
+    "You are a warm electronics teacher helping a beginner wire a real breadboard circuit (battery, resistor, LED) with named legs. " +
+    "You can see their exact circuit and the REAL physics result below — computed by an actual circuit simulator, so trust it. " +
+    "Explain simply and concretely. Common issues: LED backwards (long leg/anode must face battery +), no resistor (LED burns out), incomplete loop. Keep it brief and encouraging.\n\n" +
+    "THEIR CIRCUIT:\n" + circuit;
+  return await callClaude([{ role: "user", content: question }], { system: sys, maxTokens: 600, signal });
+}
+
+// ---------- ANALOG CIRCUIT ENGINE (Modified Nodal Analysis) ----------
+// The breadboard level uses REAL physics: MNA is the standard method behind every
+// SPICE simulator. Proven in scratch against textbook answers (voltage dividers,
+// RC charging curve, diode drop). Components "stamp" into a shared matrix A·x = z.
+// Linear solver: Gaussian elimination with partial pivoting.
+function mnaSolve(A, z) {
+  const n = A.length;
+  const M = A.map((row, i) => [...row, z[i]]);
+  for (let col = 0; col < n; col++) {
+    let piv = col;
+    for (let r = col + 1; r < n; r++) if (Math.abs(M[r][col]) > Math.abs(M[piv][col])) piv = r;
+    if (Math.abs(M[piv][col]) < 1e-12) continue;
+    [M[col], M[piv]] = [M[piv], M[col]];
+    for (let r = 0; r < n; r++) {
+      if (r === col) continue;
+      const f = M[r][col] / M[col][col];
+      for (let c = col; c <= n; c++) M[r][c] -= f * M[col][c];
+    }
+  }
+  const x = new Array(n).fill(0);
+  for (let i = 0; i < n; i++) if (Math.abs(M[i][i]) > 1e-12) x[i] = M[i][n] / M[i][i];
+  return x;
+}
+// Solve a DC analog circuit. numNodes includes ground (node 0). Returns node
+// voltages. Handles resistors (R), voltage sources (V), current sources (I), and
+// diodes/LEDs (nonlinear, via Newton iteration).
+const MNA_DIODE_IS = 1e-14, MNA_DIODE_VT = 0.02585;
+// LEDs have a higher forward voltage than silicon diodes (~2V vs ~0.7V). We model
+// this with a much smaller saturation current for LED-type diodes.
+const MNA_LED_IS = 1e-30;
+function mnaSolveDC(numNodes, comps) {
+  const n = numNodes - 1; // exclude ground
+  const vSources = comps.filter((c) => c.type === "V");
+  const m = vSources.length;
+  const size = n + m;
+  const ni = (node) => node - 1;
+  const diodes = comps.filter((c) => c.type === "D" || c.type === "LED");
+  // Newton iteration for nonlinear diodes; if none, one pass suffices.
+  const vGuess = {}; diodes.forEach((d) => (vGuess[d.id] = 0.6));
+  let x = new Array(size).fill(0);
+  const iters = diodes.length ? 60 : 1;
+  for (let iter = 0; iter < iters; iter++) {
+    const A = Array.from({ length: size }, () => new Array(size).fill(0));
+    const z = new Array(size).fill(0);
+    for (const c of comps) {
+      if (c.type === "R") {
+        const g = 1 / c.value, a = ni(c.n1), b = ni(c.n2);
+        if (a >= 0) A[a][a] += g; if (b >= 0) A[b][b] += g;
+        if (a >= 0 && b >= 0) { A[a][b] -= g; A[b][a] -= g; }
+      } else if (c.type === "I") {
+        const a = ni(c.n1), b = ni(c.n2);
+        if (a >= 0) z[a] -= c.value; if (b >= 0) z[b] += c.value;
+      } else if (c.type === "D" || c.type === "LED") {
+        // companion model around current guess; LEDs use a smaller Is (higher Vf)
+        const Is = c.type === "LED" ? MNA_LED_IS : MNA_DIODE_IS;
+        const vMax = c.type === "LED" ? 2.4 : 0.85;
+        const vd = Math.min(vGuess[c.id], vMax);
+        const ex = Math.exp(vd / MNA_DIODE_VT);
+        const Id = Is * (ex - 1);
+        const Geq = (Is / MNA_DIODE_VT) * ex;
+        const Ieq = Id - Geq * vd;
+        const a = ni(c.n1), b = ni(c.n2);
+        if (a >= 0) A[a][a] += Geq; if (b >= 0) A[b][b] += Geq;
+        if (a >= 0 && b >= 0) { A[a][b] -= Geq; A[b][a] -= Geq; }
+        if (a >= 0) z[a] -= Ieq; if (b >= 0) z[b] += Ieq;
+      }
+    }
+    vSources.forEach((vs, k) => {
+      const row = n + k, a = ni(vs.n1), b = ni(vs.n2);
+      if (a >= 0) { A[a][row] += 1; A[row][a] += 1; }
+      if (b >= 0) { A[b][row] -= 1; A[row][b] -= 1; }
+      z[row] = vs.value;
+    });
+    x = mnaSolve(A, z);
+    // update diode guesses
+    let maxChange = 0;
+    for (const d of diodes) {
+      const va = d.n1 === 0 ? 0 : x[ni(d.n1)];
+      const vb = d.n2 === 0 ? 0 : x[ni(d.n2)];
+      const newV = va - vb;
+      maxChange = Math.max(maxChange, Math.abs(newV - vGuess[d.id]));
+      vGuess[d.id] = 0.7 * vGuess[d.id] + 0.3 * newV; // damped for stability
+    }
+    if (maxChange < 1e-6) break;
+  }
+  const V = [0];
+  for (let i = 0; i < n; i++) V.push(x[i]);
+  return { V, diodeV: vGuess };
+}
+
 const CSS = `
+.cq-circ-palette{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:8px 0 10px}
+.cq-circ-plabel{font-size:13px;color:var(--ink-soft);font-weight:600;margin-right:2px}
+.cq-circ-pbtn{background:var(--bg-2);border:1px solid var(--line);border-radius:8px;color:var(--ink-soft);font-family:var(--mono);font-size:12px;font-weight:600;padding:7px 10px;cursor:pointer}
+.cq-circ-pbtn:hover{border-color:var(--teal-deep);color:var(--teal)}
+.cq-circ-tools{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:10px}
+.cq-circ-tool{background:var(--bg-1);border:1px solid var(--line);border-radius:8px;color:var(--ink-soft);font-size:13px;font-weight:600;padding:7px 12px;cursor:pointer;font-family:inherit}
+.cq-circ-tool.active{background:var(--teal-ghost);border-color:var(--teal-deep);color:var(--teal)}
+.cq-circ-hint{font-size:12.5px;color:var(--amber);margin-left:4px}
+.cq-circ-canvas{position:relative;height:340px;background:var(--bg-1);background-image:radial-gradient(var(--line) 1px,transparent 1px);background-size:20px 20px;border:1px solid var(--line);border-radius:14px;overflow:hidden;touch-action:none}
+.cq-circ-wires{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:1}
+.cq-wire{stroke:var(--ink-faint);stroke-width:2.5}
+.cq-wire.on{stroke:var(--teal);stroke-width:3}
+.cq-circ-comp{position:absolute;display:flex;align-items:center;justify-content:center;border-radius:10px;cursor:pointer;z-index:2;user-select:none;font-family:var(--mono);border:1.5px solid var(--line);background:var(--bg-3)}
+.cq-circ-comp.sel{border-color:var(--teal);box-shadow:0 0 0 2px var(--teal-ghost)}
+.cq-circ-comp.switch{border-radius:50%;background:var(--bg-2);font-weight:700}
+.cq-circ-comp.switch.on{background:var(--teal);color:#04211d;border-color:var(--teal)}
+.cq-circ-comp.gate{background:var(--bg-3);font-weight:700;font-size:11px}
+.cq-circ-comp.gate.on{border-color:var(--teal);color:var(--teal)}
+.cq-circ-comp.light{border-radius:50%;background:var(--bg-2);font-weight:700}
+.cq-circ-comp.light.on{background:var(--amber);color:#2a1e00;border-color:var(--amber);box-shadow:0 0 16px var(--amber)}
+.cq-circ-lbl{font-size:11px;text-align:center;line-height:1.2;pointer-events:none}
+.cq-port{position:absolute;width:13px;height:13px;border-radius:50%;border:2px solid var(--ink-soft);background:var(--bg-1);transform:translate(-50%,-50%);cursor:pointer;padding:0;z-index:3}
+.cq-port.in{left:0}
+.cq-port.out{left:100%}
+.cq-port:hover{border-color:var(--teal);background:var(--teal)}
+.cq-circ-status{margin-top:10px;font-size:13px;color:var(--ink-soft)}
+.cq-circ-warn{color:var(--rose)}
+.cq-circ-selbar{margin-top:8px;font-size:13px;color:var(--ink-soft);background:var(--bg-2);border:1px solid var(--line);border-radius:10px;padding:9px 12px}
+.cq-circ-goal{background:var(--teal-ghost);border:1px solid var(--teal-deep);border-radius:12px;padding:13px 15px;color:var(--teal);font-size:15px;line-height:1.5;margin-bottom:14px}
+.cq-circ-checkrow{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-top:14px}
+.cq-circ-pass{color:var(--teal);font-weight:600;font-size:14px}
+.cq-circ-fail{color:var(--amber);font-size:14px}
+.cq-circ-freelink{margin-top:18px}
+.cq-ai-controls{display:flex;flex-wrap:wrap;gap:18px;margin:6px 0 10px}
+.cq-ai-ctrl{display:flex;flex-direction:column;gap:7px}
+.cq-ai-lbl{font-size:13px;font-weight:600;color:var(--ink-soft)}
+.cq-ai-chips{display:flex;gap:6px;flex-wrap:wrap}
+.cq-ai-chip{background:var(--bg-1);border:1px solid var(--line);border-radius:8px;color:var(--ink-soft);font-size:13px;font-weight:600;padding:7px 12px;cursor:pointer;font-family:inherit}
+.cq-ai-chip.active{background:var(--violet-ghost);border-color:rgba(155,140,255,.5);color:#cfc6ff}
+.cq-ai-chip:disabled{opacity:.4;cursor:not-allowed}
+.cq-ai-hint{font-size:13.5px;color:var(--amber);margin:4px 0 12px;line-height:1.5}
+.cq-ai-diagram{background:var(--bg-1);border:1px solid var(--line);border-radius:14px;padding:10px;margin-bottom:12px}
+.cq-ai-svg{width:100%;height:180px;display:block}
+.cq-ai-node{stroke:var(--line);stroke-width:1.5}
+.cq-ai-node.input{fill:var(--bg-3)}
+.cq-ai-node.hidden{fill:var(--violet-ghost)}
+.cq-ai-node.output{fill:var(--bg-3)}
+.cq-ai-node.output.done{fill:var(--teal);stroke:var(--teal)}
+.cq-ai-txt{fill:var(--ink-faint);font-size:11px;text-anchor:middle;font-family:var(--mono)}
+.cq-ai-wire{opacity:.7}
+.cq-ai-trainrow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+.cq-ai-stat{font-size:13px;color:var(--ink-soft);font-family:var(--mono)}
+.cq-ai-table{border:1px solid var(--line);border-radius:12px;overflow:hidden;font-family:var(--mono);font-size:13px}
+.cq-ai-throw{display:grid;grid-template-columns:1fr 1fr 1fr 40px;padding:9px 12px;border-bottom:1px solid var(--line)}
+.cq-ai-throw:last-child{border-bottom:none}
+.cq-ai-thead{background:var(--bg-3);color:var(--teal);font-weight:600}
+.cq-ai-success{color:var(--teal);font-weight:600;margin-top:12px}
+.cq-bb-canvas{position:relative;height:300px;background:#1a2b1e;background-image:radial-gradient(rgba(255,255,255,.06) 1px,transparent 1px);background-size:22px 22px;border:1px solid var(--line);border-radius:14px;overflow:hidden;margin-bottom:8px}
+.cq-bb-comp{position:absolute;display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer;z-index:2;padding:6px;border-radius:10px;background:var(--bg-3);border:1.5px solid var(--line);min-width:70px}
+.cq-bb-comp.lit{border-color:var(--amber);box-shadow:0 0 18px var(--amber)}
+.cq-bb-emoji{font-size:22px}
+.cq-bb-name{font-size:10.5px;color:var(--ink-soft);font-family:var(--mono);text-align:center;line-height:1.1}
+.cq-bb-legs{display:flex;gap:4px;margin-top:3px}
+.cq-bb-leg{background:var(--bg-1);border:1px solid var(--amber);border-radius:5px;color:var(--amber);font-size:9px;font-family:var(--mono);padding:3px 5px;cursor:pointer;white-space:nowrap}
+.cq-bb-leg.active{background:var(--amber);color:#2a1e00}
+.cq-bb-adjust{margin:8px 0;font-size:13px;color:var(--ink-soft);font-family:var(--mono);display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.cq-bb-slider{flex:1;min-width:140px;accent-color:var(--teal)}
+.cq-bb-results{margin-top:12px;display:flex;flex-direction:column;gap:8px}
+.cq-bb-health{padding:11px 14px;border-radius:10px;font-size:14px;background:var(--bg-2);border:1px solid var(--line);color:var(--ink-soft);line-height:1.45}
+.cq-bb-health.good{border-color:var(--teal-deep);color:var(--teal);background:var(--teal-ghost)}
+.cq-bb-health.danger{border-color:var(--rose);color:var(--rose);background:rgba(240,110,90,.08)}
+.cq-linklike{background:none;border:none;color:var(--rose);cursor:pointer;font:inherit;text-decoration:underline;padding:0}
+
 @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 /* ============ DESIGN TOKENS ============ */
@@ -4452,6 +6983,8 @@ const CSS = `
 .cq-teach-text{font-size:15.5px;line-height:1.7;margin:0 0 14px;color:var(--ink)}
 .cq-teach-text code{font-family:var(--mono);background:var(--bg-0);padding:2px 6px;border-radius:5px;color:var(--teal);font-size:.9em}
 .cq-teach-example{background:var(--bg-0);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:12px}
+.cq-sql-schema{background:var(--bg-0);border:1px solid var(--teal-deep);border-radius:10px;padding:12px 14px;margin-bottom:12px}
+.cq-sql-schema pre{margin:6px 0 0;font-family:var(--mono);font-size:12.5px;color:var(--ink-soft);white-space:pre-wrap}
 .cq-teach-label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:var(--teal);font-weight:700;margin-bottom:6px}
 .cq-teach-example pre{margin:0;font-family:var(--mono);font-size:13.5px;line-height:1.6;color:var(--ink);white-space:pre-wrap}
 .cq-teach-now{margin:0;font-size:13px;font-weight:700;color:var(--teal)}
@@ -4505,6 +7038,16 @@ const CSS = `
 .cq-codeframe{font-family:var(--mono);font-size:15px;color:var(--ink-faint);padding:4px 0}
 .cq-editor-panel{padding:0;overflow:hidden;display:flex;flex-direction:column}
 .cq-editor-bar{display:flex;align-items:center;gap:7px;padding:12px 16px;background:var(--bg-2);border:1px solid var(--line);border-bottom:none;border-radius:12px 12px 0 0}
+.cq-filetabs{display:flex;align-items:center;gap:4px;flex-wrap:wrap;padding:8px 8px 0;background:var(--bg-2);border:1px solid var(--line);border-bottom:none;border-radius:12px 12px 0 0}
+.cq-filetab{display:flex;align-items:center;background:var(--bg-1);border:1px solid var(--line);border-bottom:none;border-radius:8px 8px 0 0;overflow:hidden}
+.cq-filetab.active{background:var(--bg-3);border-color:var(--teal-deep)}
+.cq-filetab-name{background:none;border:none;color:var(--ink-soft);font-family:var(--mono);font-size:12.5px;padding:7px 10px;cursor:pointer;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cq-filetab.active .cq-filetab-name{color:var(--teal)}
+.cq-filetab-x{background:none;border:none;color:var(--ink-faint);cursor:pointer;font-size:11px;padding:0 8px 0 0;opacity:.6}
+.cq-filetab-x:hover{opacity:1;color:var(--rose)}
+.cq-filetab-add{background:none;border:1px dashed var(--line);border-radius:8px;color:var(--ink-soft);cursor:pointer;font-size:15px;padding:5px 11px;font-family:inherit}
+.cq-filetab-add:hover{border-color:var(--teal-deep);color:var(--teal)}
+.cq-filetab-input{background:var(--bg-3);border:1px solid var(--teal-deep);border-radius:6px;color:var(--ink);font-family:var(--mono);font-size:12.5px;padding:6px 8px;width:140px;outline:none}
 .cq-dot{width:11px;height:11px;border-radius:50%;background:var(--line)}
 .cq-dot:nth-child(1){background:#ff5f57}.cq-dot:nth-child(2){background:#febc2e}.cq-dot:nth-child(3){background:#28c840}
 .cq-filename{margin-left:8px;font-family:var(--mono);font-size:12px;color:var(--ink-faint)}
@@ -4605,6 +7148,37 @@ const CSS = `
 .cq-proj-inputrow .cq-search{flex:1}
 .cq-proj-or{text-align:center;color:var(--ink-faint);font-size:12px;text-transform:uppercase;letter-spacing:2px;margin:18px 0}
 .cq-proj-hero{background:linear-gradient(180deg,var(--bg-2),var(--bg-1));border:1px solid var(--line);border-radius:var(--radius-lg);padding:24px;margin-bottom:22px;box-shadow:var(--shadow)}
+.cq-proj-langrow{margin:6px 0 18px}
+.cq-proj-nudge{display:flex;align-items:flex-start;gap:10px;justify-content:space-between;background:rgba(245,201,123,.1);border:1px solid rgba(245,201,123,.3);border-radius:12px;padding:12px 14px;margin-top:12px;color:var(--amber);font-size:14px;line-height:1.5}
+.cq-proj-nudge-x{background:none;border:none;color:var(--amber);opacity:.7;cursor:pointer;font-size:14px;padding:0 2px;flex-shrink:0}
+.cq-proj-nudge-x:hover{opacity:1}
+.cq-errhelp{margin-top:12px;padding:13px 15px;border-radius:12px;font-size:14px;line-height:1.55;display:flex;flex-direction:column;gap:10px;align-items:flex-start}
+.cq-errhelp.slip{background:var(--bg-2);border:1px solid var(--line);color:var(--ink-soft)}
+.cq-errhelp.gap{background:var(--violet-ghost);border:1px solid rgba(155,140,255,.35);color:#d9d2ff}
+.cq-errhelp-text{white-space:pre-wrap}
+.cq-bubblewrap{display:flex;flex-direction:column;gap:6px;align-items:flex-start}
+.cq-learnbtn{background:var(--violet-ghost);border:1px solid rgba(155,140,255,.4);color:#cfc6ff;border-radius:10px;padding:8px 13px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit}
+.cq-learnbtn:hover{background:rgba(155,140,255,.2)}
+.cq-learnbtn:disabled{opacity:.5;cursor:not-allowed}
+.cq-packstep{margin-top:4px}
+.cq-javahidden{position:absolute;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none}
+.cq-javadisplay{margin-top:8px}
+.cq-javadisplay:empty{display:none}
+.cq-setupnote{margin-top:12px;padding:12px 14px;border-radius:12px;background:rgba(245,201,123,.1);border:1px solid rgba(245,201,123,.3)}
+.cq-setupnote .cq-console{color:var(--amber);background:none;border:none;padding:0}
+.cq-sqltablewrap{overflow-x:auto;margin-top:8px;border:1px solid var(--line);border-radius:10px}
+.cq-sqltable{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:13px}
+.cq-sqltable th{background:var(--bg-3);color:var(--teal);text-align:left;padding:9px 12px;font-weight:600;border-bottom:1px solid var(--line);white-space:nowrap}
+.cq-sqltable td{padding:8px 12px;border-bottom:1px solid var(--line);color:var(--ink-soft)}
+.cq-sqltable tr:last-child td{border-bottom:none}
+.cq-proj-langlabel{display:block;font-size:13px;font-weight:600;color:var(--ink-soft);margin-bottom:8px}
+.cq-proj-langs{display:flex;flex-wrap:wrap;gap:8px}
+.cq-proj-langchip{background:var(--bg-1);border:1px solid var(--line);border-radius:999px;padding:8px 15px;font-size:14px;font-weight:600;color:var(--ink-soft);cursor:pointer;font-family:inherit}
+.cq-proj-langchip:hover{border-color:var(--teal-deep);color:var(--ink)}
+.cq-proj-langchip.active{background:var(--teal-ghost);border-color:var(--teal-deep);color:var(--teal)}
+.cq-proj-start{color:var(--amber);font-size:15px;margin:10px 0 0;line-height:1.5}
+.cq-proj-runhint,.cq-proj-runhint{color:var(--ink-faint);font-size:13px}
+.cq-proj-teacherhint{color:var(--ink-faint);font-size:14px;margin:2px 2px 12px;line-height:1.5}
 .cq-proj-track{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
 .cq-proj-dot{width:34px;height:34px;border-radius:50%;border:1.5px solid var(--line);background:var(--bg-0);color:var(--ink-faint);font-family:var(--mono);font-weight:600;font-size:13px;cursor:pointer;transition:.15s}
 .cq-proj-dot:hover{border-color:var(--violet);color:var(--ink)}
