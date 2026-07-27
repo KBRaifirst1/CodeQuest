@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useMemo, useSyncExternalStore } fro
 // Build marker — check this in the browser console to confirm which version is
 // actually running: type  window.__CQ_VERSION  in DevTools. If it's not the
 // value below, your browser/Vercel is serving an older bundle.
-const CQ_VERSION = "2026-07-12-v73-card-size-revert";
+const CQ_VERSION = "2026-07-12-v74-touches-everywhere";
 if (typeof window !== "undefined") {
   window.__CQ_VERSION = CQ_VERSION;
   try { console.log("%cCodeQuest build: " + CQ_VERSION, "color:#3ac9e0;font-weight:bold"); } catch {}
@@ -7997,7 +7997,9 @@ const CSS = `
 .cq-classcta.soon{color:var(--ink-faint)}
 
 /* ============ CLASS HERO ============ */
-.cq-classhero{background:linear-gradient(180deg,var(--bg-2),var(--bg-1));border:1px solid var(--line);border-radius:var(--radius-lg);padding:28px;margin-bottom:26px;box-shadow:var(--shadow)}
+.cq-classhero{position:relative;overflow:hidden;background:linear-gradient(165deg,var(--bg-2),var(--bg-1) 75%);border:1px solid var(--line);border-radius:var(--radius-lg);padding:28px;margin-bottom:26px;box-shadow:var(--shadow)}
+.cq-classhero::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:linear-gradient(180deg,var(--neon),var(--magenta));opacity:.8;box-shadow:0 0 8px -1px var(--neon)}
+.cq-classhero::after{content:"";position:absolute;top:-45%;right:-15%;width:300px;height:300px;background:radial-gradient(circle,var(--neon-ghost),transparent 65%);opacity:.5;pointer-events:none}
 .cq-classhero-top{display:flex;align-items:center;gap:16px;margin-bottom:20px}
 .cq-classhero-emoji{font-size:42px}
 .cq-classhero-title{font-family:var(--display);font-size:28px;font-weight:600;letter-spacing:-.6px;margin:0 0 7px}
@@ -8020,7 +8022,10 @@ const CSS = `
 .cq-chapter-name{font-family:var(--display);font-size:17px;font-weight:600;margin:0;letter-spacing:-.2px}
 .cq-chapter-count{font-size:11.5px;color:var(--ink-faint);font-family:var(--mono);background:var(--bg-0);padding:3px 9px;border-radius:99px}
 .cq-lessonrows{display:flex;flex-direction:column;gap:8px}
-.cq-lessonrow{display:flex;align-items:center;gap:13px;background:var(--bg-2);border:1px solid var(--line-soft);border-radius:var(--radius-sm);padding:13px 16px;cursor:pointer;transition:border-color .15s,transform .15s,background .15s;color:inherit;font-family:inherit;text-align:left}
+.cq-lessonrow{position:relative;display:flex;align-items:center;gap:13px;background:var(--bg-2);border:1px solid var(--line-soft);border-radius:var(--radius-sm);padding:13px 16px;cursor:pointer;transition:border-color .15s,transform .15s,background .15s,box-shadow .15s;color:inherit;font-family:inherit;text-align:left;overflow:hidden}
+.cq-lessonrow::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:linear-gradient(180deg,var(--neon),var(--magenta));opacity:0;transition:opacity .15s}
+.cq-lessonrow:hover{border-color:var(--neon-deep);transform:translateX(2px);box-shadow:0 0 18px -12px var(--neon)}
+.cq-lessonrow:hover::before{opacity:.9}
 .cq-lessonrow.dragging{opacity:.5;border-color:var(--violet)}
 .cq-lessonrow.droptarget{border-color:var(--violet);border-style:dashed;background:rgba(139,92,246,.08)}
 .cq-draghandle{color:var(--muted);font-size:18px;cursor:grab;user-select:none;line-height:1;touch-action:none;padding:4px 2px}
@@ -8270,7 +8275,9 @@ const CSS = `
 .cq-proj-inputrow{display:flex;gap:10px}
 .cq-proj-inputrow .cq-search{flex:1}
 .cq-proj-or{text-align:center;color:var(--ink-faint);font-size:12px;text-transform:uppercase;letter-spacing:2px;margin:18px 0}
-.cq-proj-hero{background:linear-gradient(180deg,var(--bg-2),var(--bg-1));border:1px solid var(--line);border-radius:var(--radius-lg);padding:24px;margin-bottom:22px;box-shadow:var(--shadow)}
+.cq-proj-hero{position:relative;overflow:hidden;background:linear-gradient(165deg,var(--bg-2),var(--bg-1) 75%);border:1px solid var(--line);border-radius:var(--radius-lg);padding:24px;margin-bottom:22px;box-shadow:var(--shadow)}
+.cq-proj-hero::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:linear-gradient(180deg,var(--neon),var(--magenta));opacity:.8;box-shadow:0 0 8px -1px var(--neon)}
+.cq-proj-hero::after{content:"";position:absolute;top:-40%;right:-15%;width:280px;height:280px;background:radial-gradient(circle,var(--neon-ghost),transparent 65%);opacity:.5;pointer-events:none}
 .cq-proj-langrow{margin:6px 0 18px}
 .cq-proj-nudge{display:flex;align-items:flex-start;gap:10px;justify-content:space-between;background:rgba(245,201,123,.1);border:1px solid rgba(245,201,123,.3);border-radius:12px;padding:12px 14px;margin-top:12px;color:var(--amber);font-size:14px;line-height:1.5}
 .cq-proj-nudge-x{background:none;border:none;color:var(--amber);opacity:.7;cursor:pointer;font-size:14px;padding:0 2px;flex-shrink:0}
@@ -8296,7 +8303,8 @@ const CSS = `
 .cq-sqltable tr:last-child td{border-bottom:none}
 .cq-proj-langlabel{display:block;font-size:13px;font-weight:600;color:var(--ink-soft);margin-bottom:8px}
 .cq-proj-langs{display:flex;flex-wrap:wrap;gap:8px}
-.cq-proj-langchip{background:var(--bg-1);border:1px solid var(--line);border-radius:999px;padding:8px 15px;font-size:14px;font-weight:600;color:var(--ink-soft);cursor:pointer;font-family:inherit}
+.cq-proj-langchip{background:var(--bg-1);border:1px solid var(--line);border-radius:999px;padding:8px 15px;font-size:14px;font-weight:600;color:var(--ink-soft);cursor:pointer;font-family:inherit;transition:.15s}
+.cq-proj-langchip:hover{border-color:var(--neon);color:var(--neon-bright);box-shadow:0 0 14px -6px var(--neon)}
 .cq-proj-langchip:hover{border-color:var(--teal-deep);color:var(--ink)}
 .cq-proj-langchip.active{background:var(--teal-ghost);border-color:var(--teal-deep);color:var(--teal)}
 .cq-proj-start{color:var(--amber);font-size:15px;margin:10px 0 0;line-height:1.5}
