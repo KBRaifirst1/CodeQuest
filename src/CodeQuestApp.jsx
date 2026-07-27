@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useMemo, useSyncExternalStore } fro
 // Build marker — check this in the browser console to confirm which version is
 // actually running: type  window.__CQ_VERSION  in DevTools. If it's not the
 // value below, your browser/Vercel is serving an older bundle.
-const CQ_VERSION = "2026-07-12-v63-palette-consistency";
+const CQ_VERSION = "2026-07-12-v71-card-polish";
 if (typeof window !== "undefined") {
   window.__CQ_VERSION = CQ_VERSION;
   try { console.log("%cCodeQuest build: " + CQ_VERSION, "color:#3ac9e0;font-weight:bold"); } catch {}
@@ -1486,6 +1486,8 @@ async function validateLesson(L, classId) {
     return { ok: true };
   } else if (classId === "php") {
     return { ok: true }; // php-wasm runs in-browser only; live check when learner runs
+  } else if (classId === "ruby") {
+    return { ok: true }; // ruby.wasm runs in-browser only; live check when learner runs
   } else if (classId === "py") {
     const v = await verifyPython(L.solution, L.fnName, L.tests, L.io);
     if (!v.ok) return { ok: false, reason: "author solution fails its own tests" };
@@ -1984,6 +1986,87 @@ async function runProjectPHP(code) {
   }
 }
 
+// Run Ruby for real via ruby.wasm (the official CRuby compiled to WebAssembly).
+// Loads the ESM VM from a CDN and evaluates the code, capturing $stdout.
+// First load downloads the Ruby runtime (~20MB), like the other WASM languages.
+let _rubyVM = null;
+async function runProjectRuby(code) {
+  let vm;
+  try {
+    if (!_rubyVM) {
+      const { DefaultRubyVM } = await import(/* @vite-ignore */ "https://cdn.jsdelivr.net/npm/@ruby/wasm-wasi@2.9.4/dist/browser/+esm");
+      const response = await fetch("https://cdn.jsdelivr.net/npm/@ruby/4.0-wasm-wasi@2.9.4/dist/ruby+stdlib.wasm");
+      const module = await WebAssembly.compileStreaming(response);
+      const { vm: rvm } = await DefaultRubyVM(module);
+      _rubyVM = rvm;
+    }
+    vm = _rubyVM;
+  } catch (e) {
+    return { ok: false, output: "", error: "Couldn't load the Ruby engine: " + (e && e.message ? e.message : e) };
+  }
+  try {
+    // Capture stdout by redirecting $stdout to a StringIO, run the user code,
+    // then read what was printed. This is the standard ruby.wasm capture pattern.
+    const wrapped = `
+require "stringio"
+$__buf = StringIO.new
+$__old = $stdout
+$stdout = $__buf
+begin
+${code.split("\n").map((l) => "  " + l).join("\n")}
+rescue => e
+  $stdout = $__old
+  $__buf.string + "\\nRUBYERR:" + e.message
+else
+  $stdout = $__old
+  $__buf.string
+end
+`;
+    const result = vm.eval(wrapped);
+    const s = result.toString();
+    if (s.includes("RUBYERR:")) {
+      const [out, err] = s.split("RUBYERR:");
+      return { ok: false, output: out.replace(/\n$/, ""), error: err.trim() };
+    }
+    return { ok: true, output: s.replace(/\n$/, "") };
+  } catch (e) {
+    return { ok: false, output: "", error: String(e && e.message ? e.message : e) };
+  }
+}
+
+// Real lesson checker for Ruby: define the learner's function, then call it with
+// each test's args and print the result, comparing to expected. Same harness
+// pattern proven for C/C++/PHP.
+async function verifyRuby(code, fnName, tests) {
+  const calls = tests.map((t, i) => {
+    const args = t.args.map((a) => JSON.stringify(a)).join(", ");
+    return `  __r = ${fnName}(${args})\n  puts "CQ${i}:" + __r.inspect`;
+  }).join("\n");
+  const harness = `${code}\n\n${calls.replace(/^/gm, "")}`;
+  let r;
+  try { r = await runProjectRuby(harness); }
+  catch (e) { return { ok: false, error: String(e && e.message ? e.message : e) }; }
+  if (!r.ok) return { ok: false, error: r.error || "Ruby error" };
+  const lines = (r.output || "").split("\n");
+  const results = [];
+  for (let i = 0; i < tests.length; i++) {
+    const line = lines.find((l) => l.startsWith("CQ" + i + ":"));
+    const got = line ? line.slice(("CQ" + i + ":").length) : "";
+    const want = rubyInspect(tests[i].expected);
+    results.push({ args: tests[i].args, expected: tests[i].expected, got, pass: got.trim() === want.trim() });
+  }
+  return { ok: true, results };
+}
+// Mirror Ruby's .inspect formatting for expected values so comparisons match.
+function rubyInspect(v) {
+  if (typeof v === "string") return '"' + v + '"';
+  if (Array.isArray(v)) return "[" + v.map(rubyInspect).join(", ") + "]";
+  if (v === null) return "nil";
+  if (v === true) return "true";
+  if (v === false) return "false";
+  return String(v);
+}
+
 // Run C or C++ for real via the Wasmer JS SDK's in-browser clang. This compiles
 // the source to a WASIX executable and runs it — a real compiler in the browser.
 // NOTE: needs cross-origin isolation (COOP/COEP headers) for SharedArrayBuffer,
@@ -2350,9 +2433,9 @@ const LANGUAGE_CATALOG = [
   { id: "js", label: "JavaScript", emoji: "🟨", mode: "real", blurb: "The language of the web — runs in every browser." },
   { id: "py", label: "Python", emoji: "🐍", mode: "real", blurb: "Famous for being readable. Great first or second language." },
   { id: "ts", label: "TypeScript", emoji: "🔷", mode: "real", blurb: "JavaScript with type-safety. Popular for big apps." },
-  { id: "html", label: "HTML", emoji: "📄", mode: "markup", blurb: "The skeleton of every web page — structure and content." },
-  { id: "css", label: "CSS", emoji: "🎨", mode: "markup", blurb: "Makes web pages beautiful — colors, layout, and style." },
-  { id: "jsx", label: "React (JSX)", emoji: "⚛️", mode: "markup", blurb: "Build interactive UIs with components — the modern web standard." },
+  { id: "html", label: "HTML", emoji: "📄", mode: "real", blurb: "The skeleton of every web page — structure and content." },
+  { id: "css", label: "CSS", emoji: "🎨", mode: "real", blurb: "Makes web pages beautiful — colors, layout, and style." },
+  { id: "jsx", label: "React (JSX)", emoji: "⚛️", mode: "real", blurb: "Build interactive UIs with components — the modern web standard." },
   { id: "vue", label: "Vue", emoji: "💚", mode: "markup", blurb: "A friendly framework for building web interfaces." },
   { id: "svelte", label: "Svelte", emoji: "🧡", mode: "markup", blurb: "Write less code — a fresh take on building web UIs." },
   { id: "java", label: "Java", emoji: "☕", mode: "real", blurb: "Powers big apps and Android." },
@@ -2361,7 +2444,7 @@ const LANGUAGE_CATALOG = [
   { id: "csharp", label: "C#", emoji: "🎯", mode: "ai", blurb: "Microsoft's language for apps and Unity games." },
   { id: "go", label: "Go", emoji: "🐹", mode: "ai", blurb: "Simple and fast, built by Google for servers." },
   { id: "rust", label: "Rust", emoji: "🦀", mode: "ai", blurb: "Memory-safe and fast — loved by developers." },
-  { id: "ruby", label: "Ruby", emoji: "💎", mode: "ai", blurb: "Elegant and friendly, famous for web apps." },
+  { id: "ruby", label: "Ruby", emoji: "💎", mode: "real", blurb: "Elegant and friendly, famous for web apps." },
   { id: "swift", label: "Swift", emoji: "🕊️", mode: "ai", blurb: "Apple's language for iPhone and Mac apps." },
   { id: "kotlin", label: "Kotlin", emoji: "🟣", mode: "ai", blurb: "A modern, cleaner way to build Android apps." },
   { id: "php", label: "PHP", emoji: "🐘", mode: "real", blurb: "Runs a huge share of the web's back-ends." },
@@ -2927,22 +3010,86 @@ const VISUAL_STARTERS = {
 // Build a visual lesson step for a language, or null if it has no graphics.
 
 // ---------- Web/markup lessons (HTML, CSS, JSX, Vue, Svelte) ----------
+
+// REAL grading for HTML/CSS/JSX: render the learner's code into a hidden iframe,
+// then run deterministic assertions against the actual rendered DOM and computed
+// styles. This is a genuine test (not AI judgment) — the same way front-end tests
+// work. Returns { verdict, checks:[{label,met}] }.
+async function gradeMarkupReal(kind, code, realChecks) {
+  return new Promise((resolve) => {
+    if (!realChecks || !realChecks.length) { resolve(null); return; }
+    // Build a document for the learner's code (reuse the same sandbox builder the
+    // live preview uses, so what they see is what we grade).
+    let html;
+    try { html = markupSandboxHTML(kind, code); } catch { resolve({ verdict: "fail", checks: realChecks.map((c) => ({ label: c.label, met: false })), feedback: "Your code couldn't render — check for typos." }); return; }
+    const iframe = document.createElement("iframe");
+    iframe.setAttribute("sandbox", "allow-scripts allow-same-origin");
+    iframe.style.cssText = "position:absolute;width:800px;height:600px;left:-9999px;top:-9999px;border:0;";
+    let settled = false;
+    const finish = (win) => {
+      if (settled) return; settled = true;
+      let checks;
+      try {
+        const doc = win.document;
+        const style = (sel) => { const el = doc.querySelector(sel); return el ? win.getComputedStyle(el) : null; };
+        const ctx = { doc, win, style, code, css: kind === "css" ? code : "" };
+        checks = realChecks.map((c) => { let met = false; try { met = !!c.test(ctx); } catch { met = false; } return { label: c.label, met }; });
+      } catch {
+        checks = realChecks.map((c) => ({ label: c.label, met: false }));
+      }
+      try { document.body.removeChild(iframe); } catch {}
+      const passed = checks.every((c) => c.met);
+      resolve({ verdict: passed ? "pass" : "fail", checks, real: true });
+    };
+    iframe.onload = () => {
+      // give scripts (JSX/Babel/Vue) a moment to render, then grade
+      const win = iframe.contentWindow;
+      setTimeout(() => finish(win), kind === "jsx" || kind === "vue" || kind === "svelte" ? 350 : 40);
+    };
+    document.body.appendChild(iframe);
+    iframe.srcdoc = html;
+    // safety timeout
+    setTimeout(() => { if (!settled && iframe.contentWindow) finish(iframe.contentWindow); }, 2500);
+  });
+}
+
+// Small helpers the checks use, kept text-based so grading is reliable across browsers.
+function cssHasRule(css, selector, prop, valRe) {
+  const re = new RegExp(selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*\\{([^}]*)\\}", "i");
+  const m = (css || "").match(re); if (!m) return false;
+  const pm = m[1].match(new RegExp(prop + "\\s*:\\s*([^;]+)", "i"));
+  if (!pm) return false;
+  return valRe ? valRe.test(pm[1].trim()) : true;
+}
+
 const MARKUP_LESSONS = {
   html: [
     { title: "Your first HTML", teach: "HTML uses tags like <h1> (a big heading) and <p> (a paragraph) to structure content. Tags usually come in pairs: an opening <p> and a closing </p>.",
       example: "<h1>Title</h1>\n<p>A paragraph of text.</p>",
       starter: "<h1>My Page</h1>\n<p>Write a sentence about yourself here.</p>\n",
       checks: ["Has an <h1> heading", "Has a <p> paragraph with text"],
+      realChecks: [
+        { label: "Has an <h1> heading", test: ({ doc }) => doc.querySelector("h1") },
+        { label: "Has a <p> paragraph with text", test: ({ doc }) => { const p = doc.querySelector("p"); return p && p.textContent.trim().length > 0; } },
+      ],
       why: "That's a real web page structure — headings and paragraphs are the backbone of HTML!" },
     { title: "Lists and links", teach: "A <ul> makes a bulleted list, with each item in <li> tags. An <a href=\"...\"> makes a clickable link.",
       example: '<ul>\n  <li>First</li>\n  <li>Second</li>\n</ul>\n<a href="https://example.com">A link</a>',
       starter: '<ul>\n  <li>Add three</li>\n  <li>list items</li>\n</ul>\n<a href="https://example.com">Click me</a>\n',
       checks: ["Has a <ul> with at least 2 <li> items", "Has an <a> link with href"],
+      realChecks: [
+        { label: "Has a <ul> with at least 2 <li> items", test: ({ doc }) => { const ul = doc.querySelector("ul"); return ul && ul.querySelectorAll("li").length >= 2; } },
+        { label: "Has an <a> link with a real href", test: ({ doc }) => { const a = doc.querySelector("a"); return a && (a.getAttribute("href") || "").trim().length > 0; } },
+      ],
       why: "Lists and links — now your pages can organize info and connect to others!" },
     { title: "Images and structure", teach: "An <img src=\"...\"> shows an image. A <div> groups content into a block you can style later.",
       example: '<div>\n  <h2>A section</h2>\n  <img src="https://picsum.photos/200" alt="random">\n</div>',
       starter: '<div>\n  <h2>My favorite thing</h2>\n  <img src="https://picsum.photos/200" alt="a picture">\n</div>\n',
       checks: ["Has a <div> wrapping content", "Has an <img> with src and alt"],
+      realChecks: [
+        { label: "Has a <div> wrapping content", test: ({ doc }) => { const d = doc.querySelector("div"); return d && d.children.length > 0; } },
+        { label: "Has an <img> with both src and alt", test: ({ doc }) => { const img = doc.querySelector("img"); return img && (img.getAttribute("src") || "").length > 0 && img.hasAttribute("alt"); } },
+      ],
       why: "Images and divs — the building blocks of real layouts!" },
   ],
   css: [
@@ -2950,16 +3097,28 @@ const MARKUP_LESSONS = {
       example: ".box {\n  background: skyblue;\n  color: white;\n}",
       starter: ".box {\n  background: coral;\n  color: white;\n  padding: 20px;\n}\n",
       checks: ["Styles .box with a background color", "Sets a text color"],
+      realChecks: [
+        { label: "Gives .box a background color", test: ({ css, style }) => cssHasRule(css, ".box", "background") || cssHasRule(css, ".box", "background-color") || (style(".box") && style(".box").backgroundColor && style(".box").backgroundColor !== "rgba(0, 0, 0, 0)") },
+        { label: "Sets a text color on .box", test: ({ css }) => cssHasRule(css, ".box", "color") },
+      ],
       why: "You styled an element — color is the first step to beautiful pages!" },
     { title: "Size and spacing", teach: "`width` and `height` set an element's size. `padding` adds space inside it, `margin` adds space outside. `border` draws a line around it.",
       example: ".box {\n  width: 150px;\n  height: 150px;\n  border: 3px solid navy;\n}",
       starter: ".box {\n  width: 150px;\n  height: 150px;\n  background: gold;\n  border: 4px solid darkorange;\n}\n",
       checks: ["Sets a width and height on .box", "Adds a border"],
+      realChecks: [
+        { label: "Sets both width and height on .box", test: ({ css }) => cssHasRule(css, ".box", "width") && cssHasRule(css, ".box", "height") },
+        { label: "Adds a border to .box", test: ({ css }) => cssHasRule(css, ".box", "border") },
+      ],
       why: "Sizing and borders — you're controlling the box model, the heart of CSS layout!" },
     { title: "Make a button pretty", teach: "You can style any element. Round corners with `border-radius`, and remove the default look. `cursor: pointer` makes it feel clickable.",
       example: ".btn {\n  background: purple;\n  color: white;\n  border-radius: 8px;\n}",
       starter: ".btn {\n  background: mediumseagreen;\n  color: white;\n  border: none;\n  border-radius: 10px;\n  padding: 12px 24px;\n  cursor: pointer;\n}\n",
       checks: ["Styles .btn with background and color", "Uses border-radius for rounded corners"],
+      realChecks: [
+        { label: "Styles .btn with background and color", test: ({ css }) => (cssHasRule(css, ".btn", "background") || cssHasRule(css, ".btn", "background-color")) && cssHasRule(css, ".btn", "color") },
+        { label: "Uses border-radius for rounded corners", test: ({ css }) => cssHasRule(css, ".btn", "border-radius") },
+      ],
       why: "A custom button — real UI styling right there!" },
   ],
   jsx: [
@@ -2967,11 +3126,21 @@ const MARKUP_LESSONS = {
       example: 'const App = () => <h1>Hello!</h1>;\nReactDOM.createRoot(document.getElementById("root")).render(<App />);',
       starter: 'const App = () => <h1>Hello from React!</h1>;\n\nReactDOM.createRoot(document.getElementById("root")).render(<App />);\n',
       checks: ["Defines a component returning JSX", "Renders it with ReactDOM into #root"],
+      realChecks: [
+        { label: "Defines a component (uses JSX)", test: ({ code }) => /=>\s*[\s\S]*<[A-Za-z]/.test(code) || /function\s+\w+\s*\([^)]*\)\s*\{[\s\S]*return\s*[\s\S]*</.test(code) },
+        { label: "Renders visible output into the page", test: ({ doc }) => { const root = doc.getElementById("root"); return root && root.textContent.trim().length > 0; } },
+        { label: "Renders a heading element", test: ({ doc }) => { const root = doc.getElementById("root"); return root && root.querySelector("h1,h2,h3"); } },
+      ],
       why: "Your first React component rendered live — this is how modern web apps are built!" },
     { title: "Props and multiple elements", teach: "Components can take props (inputs). Wrap multiple elements in a fragment <>...</> or a <div>. Use {curly braces} to insert values.",
       example: 'const Greet = ({name}) => <p>Hi, {name}!</p>;\nconst App = () => <div><h1>Welcome</h1><Greet name="Sam" /></div>;',
       starter: 'const Greet = ({ name }) => <p>Hi, {name}!</p>;\n\nconst App = () => (\n  <div>\n    <h1>Welcome</h1>\n    <Greet name="Sam" />\n  </div>\n);\n\nReactDOM.createRoot(document.getElementById("root")).render(<App />);\n',
       checks: ["A component accepts and uses a prop", "Renders multiple elements together"],
+      realChecks: [
+        { label: "Defines a component that takes a prop", test: ({ code }) => /\(\s*\{\s*\w+/.test(code) || /\(\s*props\s*\)/.test(code) },
+        { label: "Renders multiple elements", test: ({ doc }) => { const root = doc.getElementById("root"); return root && root.querySelectorAll("*").length >= 2; } },
+        { label: "Shows text from a prop value", test: ({ doc }) => { const root = doc.getElementById("root"); return root && root.textContent.trim().length > 3; } },
+      ],
       why: "Props let components reuse and compose — the superpower of React!" },
   ],
   vue: [
@@ -3008,7 +3177,7 @@ function markupStepsFor(langId) {
     type: "markup", kind: langId, lang: langId,
     chapter: "★ Build for the web",
     title: L.title, teach: L.teach, example: L.example,
-    starter: L.starter, checks: L.checks, why: L.why,
+    starter: L.starter, checks: L.checks, realChecks: L.realChecks, why: L.why,
   }));
 }
 
@@ -3103,7 +3272,7 @@ const chaptersOf = (cls) => {
   return order.map((name) => ({ name, stepIdxs: map[name] }));
 };
 const resumeIdx = (cls, doneSet) => { for (let i = 0; i < cls.steps.length; i++) if (!doneSet.has(i)) return i; return Math.max(0, cls.steps.length - 1); };
-const modeLabel = (mode) => mode === "real" ? "real test grading" : mode === "concept" ? "think like a coder" : "AI-guided";
+const modeLabel = (mode) => mode === "real" ? "real test grading" : mode === "sql" ? "real query grading" : mode === "markup" ? "live preview" : mode === "concept" ? "think like a coder" : "AI-guided";
 
 // ---------- Module-level generation store ----------
 // Generation state lives OUTSIDE React because the parent auth wrapper remounts
@@ -3122,18 +3291,53 @@ const modeLabel = (mode) => mode === "real" ? "real test grading" : mode === "co
 // survives all of that. Falls back to sessionStorage, then a no-op, so it never
 // throws in a locked-down environment.
 const CQ_STORE = (() => {
+  let cached;
   const pick = () => {
-    try { if (typeof localStorage !== "undefined") { localStorage.setItem("__cq_t", "1"); localStorage.removeItem("__cq_t"); return localStorage; } } catch {}
-    try { if (typeof sessionStorage !== "undefined") return sessionStorage; } catch {}
-    return null;
+    if (cached !== undefined) return cached;
+    try { if (typeof localStorage !== "undefined") { localStorage.setItem("__cq_t", "1"); localStorage.removeItem("__cq_t"); cached = localStorage; return cached; } } catch {}
+    try { if (typeof sessionStorage !== "undefined") { cached = sessionStorage; return cached; } } catch {}
+    cached = null; return cached;
   };
-  const store = pick();
   return {
-    get(k) { try { return store ? store.getItem(k) : null; } catch { return null; } },
-    set(k, v) { try { if (store) store.setItem(k, v); } catch {} },
-    remove(k) { try { if (store) store.removeItem(k); } catch {} },
+    get(k) { try { const s = pick(); return s ? s.getItem(k) : null; } catch { return null; } },
+    set(k, v) { try { const s = pick(); if (s) s.setItem(k, v); } catch {} },
+    remove(k) { try { const s = pick(); if (s) s.removeItem(k); } catch {} },
   };
 })();
+
+// ===== Lab saves: name/reload lab creations, plus an auto-save per lab =====
+// Each lab (circuits, ailab, breadboard) serializes its own state to a plain
+// object. Saves are stored in localStorage under a per-lab index so they survive
+// reloads and tab-switches. There's a running "autosave" slot per lab (so you come
+// back to where you left off) plus any number of explicitly named saves.
+const LAB_SAVE = {
+  idxKey: (lab) => `cq_labsaves_${lab}`,       // JSON array of {id, name, ts}
+  itemKey: (lab, id) => `cq_labsave_${lab}_${id}`,
+  autoKey: (lab) => `cq_labauto_${lab}`,
+  list(lab) {
+    try { return JSON.parse(CQ_STORE.get(this.idxKey(lab)) || "[]"); } catch { return []; }
+  },
+  save(lab, name, state) {
+    const id = "s" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+    const idx = this.list(lab);
+    idx.unshift({ id, name: name || "Untitled", ts: Date.now() });
+    CQ_STORE.set(this.idxKey(lab), JSON.stringify(idx.slice(0, 30))); // cap 30 per lab
+    CQ_STORE.set(this.itemKey(lab, id), JSON.stringify(state));
+    return id;
+  },
+  load(lab, id) {
+    try { return JSON.parse(CQ_STORE.get(this.itemKey(lab, id))); } catch { return null; }
+  },
+  remove(lab, id) {
+    CQ_STORE.set(this.idxKey(lab), JSON.stringify(this.list(lab).filter((s) => s.id !== id)));
+    CQ_STORE.remove(this.itemKey(lab, id));
+  },
+  rename(lab, id, name) {
+    CQ_STORE.set(this.idxKey(lab), JSON.stringify(this.list(lab).map((s) => s.id === id ? { ...s, name } : s)));
+  },
+  saveAuto(lab, state) { try { CQ_STORE.set(this.autoKey(lab), JSON.stringify(state)); } catch {} },
+  loadAuto(lab) { try { return JSON.parse(CQ_STORE.get(this.autoKey(lab))); } catch { return null; } },
+};
 
 const GEN_STORE = {
   state: { classId: null, sets: null, status: "idle", error: "", lastTopic: "" },
@@ -3735,6 +3939,7 @@ export default function App(props) {
 // ---------- HOME ----------
 function Home({ progress, aiLessons, savedProjects = [], profileDescription = "", onSaveProfileDescription, onOpenClass, onOpenProjects, onOpenSavedProject }) {
   const [query, setQuery] = useState("");
+  const [sortMode, setSortMode] = useState("default"); // default | grading | alpha
   // Persist Coding/AI/Hardware selection across Home unmounts (navigating into a
   // class and back would otherwise reset it to coding). sessionStorage keeps it
   // per-tab, cleared on tab close.
@@ -3898,6 +4103,15 @@ function Home({ progress, aiLessons, savedProjects = [], profileDescription = ""
         </div>
       )}
 
+      {tab === "coding" && (
+        <div className="cq-sortbar">
+          <span className="cq-sortlbl">Organize by:</span>
+          <button className={`cq-sortbtn ${sortMode === "default" ? "on" : ""}`} onClick={() => setSortMode("default")}>Default</button>
+          <button className={`cq-sortbtn ${sortMode === "grading" ? "on" : ""}`} onClick={() => setSortMode("grading")}>Grading type</button>
+          <button className={`cq-sortbtn ${sortMode === "alpha" ? "on" : ""}`} onClick={() => setSortMode("alpha")}>A–Z</button>
+        </div>
+      )}
+
       {(() => {
         const q = query.trim().toLowerCase();
         const matches = (cls) => !q || cls.label.toLowerCase().includes(q) || cls.blurb.toLowerCase().includes(q);
@@ -3953,10 +4167,36 @@ function Home({ progress, aiLessons, savedProjects = [], profileDescription = ""
         if (generalShown === false && langsShown.length === 0) {
           return <div className="cq-noresults">No language called “{query}” here yet. We only show languages that can be taught well — try another name.</div>;
         }
+
+        // Sort/organize modes.
+        if (sortMode === "grading") {
+          // Group by how lessons are graded, so real-test languages are together.
+          const groupOf = (m) => (m === "real" || m === "sql") ? "real" : m === "markup" ? "markup" : "ai";
+          const groups = {
+            real: { label: "Real test grading — your code runs and is checked", items: [] },
+            markup: { label: "Live preview — you see your real rendered result", items: [] },
+            ai: { label: "AI-guided — explained and reviewed by AI", items: [] },
+          };
+          langsShown.forEach((c) => groups[groupOf(c.mode)].items.push(c));
+          Object.values(groups).forEach((g) => g.items.sort((a, b) => a.label.localeCompare(b.label)));
+          return (
+            <>
+              {generalShown && (<><div className="cq-section-label">Start here</div><div className="cq-classlist" style={{ marginBottom: 28 }}>{renderCard(general)}</div></>)}
+              {["real", "markup", "ai"].map((k) => groups[k].items.length > 0 && (
+                <React.Fragment key={k}>
+                  <div className="cq-section-label">{groups[k].label} <span className="cq-section-count">({groups[k].items.length})</span></div>
+                  <div className="cq-classlist" style={{ marginBottom: 28 }}>{groups[k].items.map(renderCard)}</div>
+                </React.Fragment>
+              ))}
+            </>
+          );
+        }
+
+        const ordered = sortMode === "alpha" ? [...langsShown].sort((a, b) => a.label.localeCompare(b.label)) : langsShown;
         return (
           <>
             {generalShown && (<><div className="cq-section-label">Start here</div><div className="cq-classlist" style={{ marginBottom: 28 }}>{renderCard(general)}</div></>)}
-            {langsShown.length > 0 && (<><div className="cq-section-label">{q ? `${langsShown.length} language${langsShown.length > 1 ? "s" : ""}` : "Languages"}</div><div className="cq-classlist">{langsShown.map(renderCard)}</div></>)}
+            {ordered.length > 0 && (<><div className="cq-section-label">{q ? `${ordered.length} language${ordered.length > 1 ? "s" : ""}` : "Languages"}</div><div className="cq-classlist">{ordered.map(renderCard)}</div></>)}
           </>
         );
       })()}
@@ -4216,6 +4456,7 @@ function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, ge
           )}
           <button className="cq-genbtn" onClick={buildCourse} disabled={courseBusy}>{courseBusy ? "Building your course…" : `Build my ${cls.label} class`}</button>
           {cls.mode === "ai" && <p className="cq-buildcourse-note">Note: {cls.label} can't run in the browser, so these lessons are AI-judged (great for learning, not a real test runner).</p>}
+          {cls.mode === "markup" && <p className="cq-buildcourse-note">Note: {cls.label} renders live in a preview so you see your real result — there's no pass/fail test to run, so these lessons are guided by what you build and see.</p>}
           {courseErr && <p className="cq-generr">{courseErr}</p>}
         </div>
       </main>
@@ -5222,6 +5463,7 @@ function TypeStep({ step, onDone }) {
     else if (step.lang === "c") v = await verifyCFamily(code, step.fnName, step.tests, false);
     else if (step.lang === "cpp") v = await verifyCFamily(code, step.fnName, step.tests, true);
     else if (step.lang === "php") v = await verifyPHP(code, step.fnName, step.tests);
+    else if (step.lang === "ruby") v = await verifyRuby(code, step.fnName, step.tests);
     else v = verifyRuns(code, step.fnName, step.tests);
     setResult(v); setRunning(false);
     if (v.ok) onDone(stats.buildStats());
@@ -5382,14 +5624,22 @@ function MarkupStep({ step, onDone }) {
     if (!code.trim()) return;
     setRunning(true);
     try {
-      // Reuse the AI code reviewer, framed for markup.
-      const r = await gradeAICode({ ...step, langLabel: step.lang }, code);
-      setResult(r);
-      if (r.verdict === "pass") onDone(stats.buildStats());
-      else stats.recordWrong();
+      if (step.realChecks && step.realChecks.length) {
+        // Real, deterministic grading: render and inspect the actual DOM.
+        const r = await gradeMarkupReal(step.kind || step.lang, code, step.realChecks);
+        setResult(r);
+        if (r && r.verdict === "pass") onDone(stats.buildStats());
+        else stats.recordWrong();
+      } else {
+        // No machine-checkable spec (Vue/Svelte): AI review over the live preview.
+        const r = await gradeAICode({ ...step, langLabel: step.lang }, code);
+        setResult(r);
+        if (r.verdict === "pass") onDone(stats.buildStats());
+        else stats.recordWrong();
+      }
     } catch {
       stats.recordWrong();
-      setResult({ verdict: "fail", feedback: "Couldn't reach the reviewer — try again.", checks: [] });
+      setResult({ verdict: "fail", feedback: "Couldn't run the check — try again.", checks: [] });
     } finally { setRunning(false); }
   };
 
@@ -5422,7 +5672,7 @@ function MarkupStep({ step, onDone }) {
 
       {result && (
         <div className="cq-results" style={{ padding: "12px 0 0" }}>
-          <div className={`cq-verdict-badge ${result.verdict}`}>{result.verdict === "pass" ? "✓ AI says: looks good" : "✗ AI says: not yet"}<span className="cq-verdict-note">AI-judged · preview is real</span></div>
+          <div className={`cq-verdict-badge ${result.verdict}`}>{result.verdict === "pass" ? (result.real ? "✓ Passed" : "✓ AI says: looks good") : (result.real ? "✗ Not yet" : "✗ AI says: not yet")}<span className="cq-verdict-note">{result.real ? "real test · checked your rendered result" : "AI-judged · preview is real"}</span></div>
           {result.checks?.map((c, i) => (<div key={i} className={`cq-testrow ${c.met ? "pass" : "fail"}`}><span className="cq-test-icon">{c.met ? "✓" : "✗"}</span><span className="cq-test-detail">{c.label}</span></div>))}
           {result.feedback && <p className="cq-ai-feedback">{result.feedback}</p>}
           {result.verdict === "pass" && <div className="cq-takeaway" style={{ marginTop: 12 }}>{step.why}</div>}
@@ -6046,6 +6296,55 @@ function AIClassifyView({ points, net }) {
     </div>
   );
 }
+// Reusable save/reload bar for the Labs. `lab` is the storage key ("circuits" |
+// "ailab" | "breadboard"); `getState` serializes the current lab; `onLoad` restores
+// a saved state. Handles named saves + a saved-list you can reopen.
+function LabSaveBar({ lab, getState, onLoad }) {
+  const [saves, setSaves] = useState(() => LAB_SAVE.list(lab));
+  const [open, setOpen] = useState(false);
+  const [naming, setNaming] = useState(false);
+  const [name, setName] = useState("");
+  const [flash, setFlash] = useState("");
+
+  const refresh = () => setSaves(LAB_SAVE.list(lab));
+  const doSave = () => {
+    const st = getState();
+    LAB_SAVE.save(lab, name.trim() || "Untitled", st);
+    setName(""); setNaming(false); refresh();
+    setFlash("Saved"); setTimeout(() => setFlash(""), 1500);
+  };
+  const doLoad = (id) => { const st = LAB_SAVE.load(lab, id); if (st) onLoad(st); setOpen(false); };
+  const doDelete = (id, e) => { e.stopPropagation(); LAB_SAVE.remove(lab, id); refresh(); };
+
+  return (
+    <div className="cq-labsave">
+      {!naming ? (
+        <button className="cq-labsave-btn" onClick={() => setNaming(true)}>💾 Save</button>
+      ) : (
+        <span className="cq-labsave-naming">
+          <input className="cq-search" autoFocus placeholder="Name this creation…" value={name}
+            onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") doSave(); if (e.key === "Escape") setNaming(false); }} />
+          <button className="cq-labsave-btn primary" onClick={doSave}>Save</button>
+          <button className="cq-labsave-btn" onClick={() => setNaming(false)}>Cancel</button>
+        </span>
+      )}
+      <button className="cq-labsave-btn" onClick={() => { refresh(); setOpen((o) => !o); }}>📂 My saves{saves.length ? ` (${saves.length})` : ""}</button>
+      {flash && <span className="cq-labsave-flash">{flash}</span>}
+      {open && (
+        <div className="cq-labsave-menu">
+          {saves.length === 0 && <div className="cq-labsave-empty">No saves yet. Build something and hit Save.</div>}
+          {saves.map((s) => (
+            <div key={s.id} className="cq-labsave-item" onClick={() => doLoad(s.id)}>
+              <span className="cq-labsave-name">{s.name}</span>
+              <span className="cq-labsave-date">{new Date(s.ts).toLocaleDateString()}</span>
+              <button className="cq-labsave-del" onClick={(e) => doDelete(s.id, e)} title="Delete">✕</button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 function AILab({ onBack, challenge = null, onChallengeComplete = null }) {
   const [task, setTask] = useState("gates"); // gates | logic3 | classify
   const taskDef = AI_TASKS[task];
@@ -6088,6 +6387,24 @@ function AILab({ onBack, challenge = null, onChallengeComplete = null }) {
     if (trainRef.current) { clearInterval(trainRef.current); trainRef.current = null; }
     setNet(nnNewNetwork(h, nIn)); setEpoch(0); setError(null); setTraining(false);
   };
+
+  // Save/reload the whole AI setup (free mode only — challenges are fixed).
+  const serialize = () => ({ task, pattern, shape, points, hidden, useCustom, customTargets, net });
+  const restore = (st) => {
+    if (!st) return;
+    if (trainRef.current) { clearInterval(trainRef.current); trainRef.current = null; }
+    if (st.task) setTask(st.task);
+    if (st.pattern) setPattern(st.pattern);
+    if (st.shape) setShape(st.shape);
+    if (st.points) setPoints(st.points);
+    if (typeof st.hidden === "number") setHidden(st.hidden);
+    if (typeof st.useCustom === "boolean") setUseCustom(st.useCustom);
+    if (st.customTargets) setCustomTargets(st.customTargets);
+    if (st.net) setNet(st.net);
+    setEpoch(0); setError(null); setTraining(false);
+  };
+  useEffect(() => { if (!challenge) { const a = LAB_SAVE.loadAuto("ailab"); if (a) restore(a); } }, []);
+  useEffect(() => { if (!challenge) LAB_SAVE.saveAuto("ailab", { task, pattern, shape, points, hidden, useCustom, customTargets, net }); }, [task, pattern, shape, points, hidden, useCustom, customTargets, net, challenge]);
 
   // Switch task: pick a valid default pattern/shape and rebuild the net for its input count.
   const switchTask = (tk) => {
@@ -6159,6 +6476,7 @@ function AILab({ onBack, challenge = null, onChallengeComplete = null }) {
         <>
           <h1 className="cq-home-title">Watch a network learn.</h1>
           <p className="cq-home-sub">A neural network isn't magic — it's neurons (weighted sums) that adjust themselves from examples. Pick a pattern (or make your own!), hit Train, and watch it figure it out — or set the weights yourself.</p>
+          <LabSaveBar lab="ailab" getState={serialize} onLoad={restore} />
           <div className="cq-lab-goalrow">
             <span className="cq-lab-goallbl">🎯 Building toward something?</span>
             <input className="cq-search" placeholder="e.g. teach it to fire only when inputs differ" value={goal} onChange={(e) => setGoal(e.target.value)} />
@@ -6501,6 +6819,16 @@ function CircuitLab({ onBack, onHome, challenge = null, onChallengeComplete = nu
   const [goal, setGoal] = useState(""); // creative mode: what the learner wants to build
   const canvasRef = useRef(null);
 
+  // Save/reload only in free-build mode (challenges seed their own fixed setup).
+  const serialize = () => ({ comps, wires });
+  const restore = (st) => {
+    if (!st) return;
+    setComps(st.comps || []); setWires(st.wires || []);
+    setSelected(null); setWiring(null); setCheckResult(null);
+  };
+  useEffect(() => { if (!challenge) { const a = LAB_SAVE.loadAuto("circuits"); if (a) restore(a); } }, []);
+  useEffect(() => { if (!challenge) LAB_SAVE.saveAuto("circuits", { comps, wires }); }, [comps, wires, challenge]);
+
   // Build the engine circuit from the visual components + wires, then evaluate.
   const evalResult = useMemo(() => {
     const inputs = {};
@@ -6606,6 +6934,7 @@ function CircuitLab({ onBack, onHome, challenge = null, onChallengeComplete = nu
         <>
           <h1 className="cq-home-title">Build a circuit.</h1>
           <p className="cq-home-sub">Add switches, gates, and a light. Wire them up, flip the switches, and watch what turns on. This is how computers actually think — in ones and zeros.</p>
+          <LabSaveBar lab="circuits" getState={serialize} onLoad={restore} />
           <div className="cq-lab-goalrow">
             <span className="cq-lab-goallbl">🎯 Building toward something?</span>
             <input className="cq-search" placeholder="e.g. light on only when both switches are on" value={goal} onChange={(e) => setGoal(e.target.value)} />
@@ -6854,6 +7183,18 @@ function Breadboard({ onBack }) {
   const [selected, setSelected] = useState(null);
   const [goal, setGoal] = useState("");
   const [result, setResult] = useState(null);
+
+  // Serialize the whole workspace so it can be saved and restored.
+  const serialize = () => ({ boards, comps, jumpers, wires });
+  const restore = (st) => {
+    if (!st) return;
+    setBoards(st.boards || []); setComps(st.comps || []); setJumpers(st.jumpers || []); setWires(st.wires || []);
+    setResult(null); setSelected(null); setWiring(null);
+  };
+  // Auto-load the last session on first mount.
+  useEffect(() => { const a = LAB_SAVE.loadAuto("breadboard"); if (a) restore(a); }, []);
+  // Auto-save whenever the workspace changes (so you come back to it).
+  useEffect(() => { LAB_SAVE.saveAuto("breadboard", { boards, comps, jumpers, wires }); }, [boards, comps, jumpers, wires]);
   const [chat, setChat] = useState([]);
   const [question, setQuestion] = useState("");
   const [asking, setAsking] = useState(false);
@@ -6869,7 +7210,9 @@ function Breadboard({ onBack }) {
     const def = BB_COMPONENTS[kind];
     const n = comps.length;
     const bx = 60 + (n % 4) * 140, by = 60 + Math.floor(n / 4) * 90;
-    const legs = def.legs.map((_, i) => ({ x: bx + i * 46, y: by }));
+    const legs = kind === "pot"
+      ? [{ x: bx, y: by + 14 }, { x: bx + 24, y: by - 14 }, { x: bx + 48, y: by + 14 }] // end1, wiper(top-center), end2
+      : def.legs.map((_, i) => ({ x: bx + i * 46, y: by }));
     setComps((c) => [...c, { id: kind + (_tbId++), kind, legs, value: def.value, on: false, cx: bx, cy: by, wiper: def.wiper }]);
     setResult(null); setPlacing(null); setTool("wire");
   };
@@ -6995,6 +7338,8 @@ function Breadboard({ onBack }) {
       <h1 className="cq-home-title">Electronics workspace.</h1>
       <p className="cq-home-sub">Add components and wire them together — tap two leg dots to connect them. Or add a breadboard to plug into if you want one. Power it on and watch real physics: get it right and the LED lights; forget a resistor and it burns out.</p>
 
+      <LabSaveBar lab="breadboard" getState={serialize} onLoad={restore} />
+
       <div className="cq-lab-goalrow">
         <span className="cq-lab-goallbl">🎯 Building toward something?</span>
         <input className="cq-search" placeholder="e.g. a switch that turns an LED on" value={goal} onChange={(e) => setGoal(e.target.value)} />
@@ -7099,15 +7444,17 @@ function Breadboard({ onBack }) {
             const def = BB_COMPONENTS[c.kind];
             const h = litOf(c.id);
             if (!c.legs[0]) return null;
-            const p0 = legXY(c, 0), p1 = c.legs[1] ? legXY(c, 1) : p0;
-            const midx = (p0.x + p1.x) / 2, midy = (p0.y + p1.y) / 2;
+            const legPts = c.legs.map((_, i) => legXY(c, i));
+            const p0 = legPts[0], p1 = c.legs[1] ? legPts[1] : p0;
+            // Body sits at the centroid of ALL legs (so a 3-leg pot is centered, no orphan leg).
+            const midx = legPts.reduce((s, p) => s + p.x, 0) / legPts.length;
+            const midy = legPts.reduce((s, p) => s + p.y, 0) / legPts.length;
             const lit = h && h.lit, danger = h && h.danger;
             const onBody = () => { if (tool === "delete") removeComp(c.id); else setSelected(c.id === selected ? null : c.id); };
             return (
               <g key={c.id} className="cq-tb-comp">
-                {/* leg wires from body to leg endpoints */}
-                <line x1={p0.x} y1={p0.y} x2={midx} y2={midy} className="cq-tb-leg" />
-                <line x1={p1.x} y1={p1.y} x2={midx} y2={midy} className="cq-tb-leg" />
+                {/* a leg wire from every leg to the body center */}
+                {legPts.map((lp, i) => <line key={"lw" + i} x1={lp.x} y1={lp.y} x2={midx} y2={midy} className="cq-tb-leg" />)}
                 {/* body */}
                 <g onClick={onBody}
                   onPointerDown={(e) => {
@@ -7426,6 +7773,21 @@ const CSS = `
 .cq-ai-wire{opacity:.7}
 .cq-ai-trainrow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px}
 .cq-lab-goalrow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0 4px}
+.cq-labsave{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:14px 0;position:relative}
+.cq-labsave-btn{background:var(--bg-2);border:1px solid var(--line);color:var(--ink-soft);padding:8px 14px;border-radius:10px;font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;transition:.15s}
+.cq-labsave-btn:hover{border-color:var(--neon);color:var(--ink)}
+.cq-labsave-btn.primary{background:var(--neon);color:#04121a;border-color:var(--neon)}
+.cq-labsave-naming{display:inline-flex;align-items:center;gap:8px}
+.cq-labsave-naming .cq-search{width:200px}
+.cq-labsave-flash{font-size:13px;color:var(--neon);font-weight:600}
+.cq-labsave-menu{position:absolute;top:100%;left:0;margin-top:6px;background:var(--bg-2);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);z-index:30;min-width:280px;max-height:320px;overflow-y:auto;padding:6px}
+.cq-labsave-empty{padding:14px;color:var(--ink-soft);font-size:13px;text-align:center}
+.cq-labsave-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;cursor:pointer;transition:.12s}
+.cq-labsave-item:hover{background:var(--bg-3)}
+.cq-labsave-name{flex:1;font-size:14px;font-weight:600;color:var(--ink)}
+.cq-labsave-date{font-size:11px;color:var(--ink-faint);font-family:var(--mono)}
+.cq-labsave-del{background:none;border:none;color:var(--ink-faint);cursor:pointer;font-size:13px;padding:2px 6px;border-radius:6px}
+.cq-labsave-del:hover{color:var(--rose);background:rgba(255,107,168,.1)}
 .cq-lab-goallbl{font-size:13px;color:var(--ink-soft);font-weight:600;flex-shrink:0}
 .cq-lab-goalrow .cq-search{flex:1;min-width:200px}
 .cq-lab-goalnote{font-size:12.5px;color:var(--teal);margin:2px 0 10px}
@@ -7455,7 +7817,8 @@ const CSS = `
 .cq-ai-thead{background:var(--bg-3);color:var(--teal);font-weight:600}
 .cq-ai-success{color:var(--teal);font-weight:600;margin-top:12px}
 .cq-bb-canvas{position:relative;height:300px;background:#1a2b1e;background-image:radial-gradient(rgba(255,255,255,.06) 1px,transparent 1px);background-size:22px 22px;border:1px solid var(--line);border-radius:14px;overflow:hidden;margin-bottom:8px}
-.cq-bb-comp{position:absolute;display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer;z-index:2;padding:6px;border-radius:10px;background:var(--bg-3);border:1.5px solid var(--line);min-width:70px}
+.cq-bb-comp{position:absolute;display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer;z-index:2}
+.cq-tb-comp,.cq-tb-comp *{outline:none}
 .cq-bb-comp.lit{border-color:var(--led-color,var(--neon));box-shadow:0 0 20px -2px var(--led-color,var(--neon))}
 .cq-bb-comp.danger{border-color:var(--rose);box-shadow:0 0 20px -4px var(--rose)}
 .cq-bb-emoji{font-size:22px}
@@ -7576,12 +7939,18 @@ const CSS = `
 .cq-home-title{font-family:var(--display);font-size:38px;font-weight:600;letter-spacing:-1.2px;margin:0 0 14px;line-height:1.04;color:var(--ink);text-shadow:0 0 24px rgba(58,201,224,.12)}
 .cq-home-sub{color:var(--ink-soft);font-size:15.5px;line-height:1.6;margin:0;max-width:600px}
 .cq-home-sub b{color:var(--ink);font-weight:600}
-.cq-classlist{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:22px}
-.cq-section-label{font-size:11px;text-transform:uppercase;letter-spacing:2px;color:var(--ink-faint);font-weight:700;margin:0 0 18px}
+.cq-classlist{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:28px}
+.cq-section-label{font-size:11px;text-transform:uppercase;letter-spacing:2.5px;color:var(--ink-faint);font-weight:700;margin:8px 0 22px}
 .cq-tabs{display:flex;gap:8px;margin-bottom:22px;background:var(--bg-0);padding:6px;border-radius:14px;border:1px solid var(--line)}
 .cq-tab{flex:1;background:none;border:none;color:var(--ink-soft);padding:11px;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;transition:.15s}
 .cq-tab.on{background:var(--violet);color:#fff;box-shadow:0 6px 16px -8px var(--violet)}
 .cq-searchwrap{position:relative;display:flex;align-items:center;margin-bottom:28px}
+.cq-sortbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:-14px 0 24px}
+.cq-sortlbl{font-size:13px;color:var(--ink-soft);margin-right:2px}
+.cq-sortbtn{background:var(--bg-2);border:1px solid var(--line);color:var(--ink-soft);padding:6px 14px;border-radius:999px;font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;transition:.15s}
+.cq-sortbtn:hover{border-color:var(--neon);color:var(--ink)}
+.cq-sortbtn.on{background:var(--neon-ghost);border-color:var(--neon);color:var(--neon-bright)}
+.cq-section-count{color:var(--ink-faint);font-weight:400}
 .cq-searchicon{position:absolute;left:16px;font-size:15px;opacity:.7;pointer-events:none}
 .cq-search{width:100%;padding:14px 44px;border-radius:var(--radius);background:var(--bg-1);border:1px solid var(--line);color:var(--ink);font-size:15px;font-family:inherit;transition:border-color .15s}
 .cq-search:focus{outline:none;border-color:var(--teal)}
@@ -7598,25 +7967,30 @@ const CSS = `
 .cq-resumehero-bar{width:200px;max-width:48vw;height:8px;background:var(--bg-0);border-radius:99px;overflow:hidden;border:1px solid var(--line-soft)}
 .cq-resumehero-fill{height:100%;background:linear-gradient(90deg,var(--teal-deep),var(--teal));border-radius:99px;transition:width .6s}
 .cq-resumehero-cta{font-weight:700;color:var(--teal);font-size:15px;white-space:nowrap}
-.cq-classcard{position:relative;text-align:left;background:linear-gradient(180deg,var(--bg-2),var(--bg-1));border:1px solid var(--line);border-radius:var(--radius);padding:26px;cursor:pointer;transition:transform .18s cubic-bezier(.2,.7,.3,1),border-color .18s,box-shadow .18s;color:inherit;font-family:inherit;display:flex;flex-direction:column;gap:14px;overflow:hidden}
-.cq-classcard::before{content:'';position:absolute;inset:0 0 auto 0;height:2px;background:linear-gradient(90deg,var(--teal),transparent);opacity:0;transition:opacity .2s}
-.cq-classcard:hover:not(:disabled){transform:translateY(-4px);border-color:var(--line);box-shadow:var(--shadow)}
-.cq-classcard:hover:not(:disabled)::before{opacity:1}
+.cq-classcard{position:relative;text-align:left;background:linear-gradient(165deg,var(--bg-2),var(--bg-1) 70%);border:1px solid var(--line);border-radius:var(--radius);padding:30px 30px 28px;cursor:pointer;transition:transform .2s cubic-bezier(.2,.7,.3,1),border-color .2s,box-shadow .2s;color:inherit;font-family:inherit;display:flex;flex-direction:column;gap:16px;overflow:hidden}
+.cq-classcard::before{content:'';position:absolute;left:0;top:0;bottom:0;width:2px;background:linear-gradient(180deg,var(--neon),var(--magenta));opacity:.5;transition:opacity .2s,box-shadow .2s}
+.cq-classcard::after{content:'';position:absolute;top:-40%;right:-30%;width:220px;height:220px;background:radial-gradient(circle,var(--neon-ghost),transparent 70%);opacity:.4;pointer-events:none;transition:opacity .25s}
+.cq-classcard:hover:not(:disabled){transform:translateY(-5px);border-color:var(--neon-deep);box-shadow:0 18px 40px -20px rgba(0,0,0,.7),0 0 24px -14px var(--neon)}
+.cq-classcard:hover:not(:disabled)::before{opacity:1;box-shadow:0 0 12px var(--neon)}
+.cq-classcard:hover:not(:disabled)::after{opacity:.85}
 .cq-classcard.soon{opacity:.55;cursor:default}
-.cq-classtop{display:flex;align-items:center;gap:13px}
-.cq-classemoji{font-size:30px;filter:saturate(1.1)}
+.cq-classtop{display:flex;align-items:center;gap:15px;margin-bottom:2px}
+.cq-classemoji{font-size:30px;filter:saturate(1.15) drop-shadow(0 0 10px rgba(58,201,224,.25))}
 .cq-classnames{display:flex;flex-direction:column;gap:4px;flex:1}
-.cq-classlabel{font-family:var(--display);font-weight:600;font-size:19px;letter-spacing:-.3px}
+.cq-classlabel{font-family:var(--display);font-weight:600;font-size:20px;letter-spacing:-.3px}
 .cq-classmode{font-size:9.5px;text-transform:uppercase;letter-spacing:.6px;font-weight:700;padding:3px 8px;border-radius:6px;align-self:flex-start}
 .cq-classmode.real{background:var(--teal-ghost);color:var(--teal)}
+.cq-classmode.sql{background:var(--teal-ghost);color:var(--teal)}
+.cq-classmode.markup{background:var(--neon-ghost);color:var(--neon-bright)}
 .cq-classmode.ai{background:var(--amber-ghost);color:var(--amber)}
 .cq-classmode.concept{background:var(--violet-ghost);color:var(--violet)}
 .cq-classpct{font-family:var(--mono);font-size:13px;color:var(--ink-faint);font-weight:600}
 .cq-classblurb{color:var(--ink-soft);font-size:13px;line-height:1.55;margin:0;flex:1}
 .cq-classbar{height:7px;background:var(--bg-0);border-radius:99px;overflow:hidden;border:1px solid var(--line-soft)}
 .cq-classbar.big{height:11px}
-.cq-classbar-fill{height:100%;background:linear-gradient(90deg,var(--teal-deep),var(--teal));border-radius:99px;transition:width .6s cubic-bezier(.2,.7,.3,1)}
-.cq-classcta{font-size:13px;font-weight:600;color:var(--teal);display:inline-flex;align-items:center;gap:4px}
+.cq-classbar-fill{height:100%;background:linear-gradient(90deg,var(--teal-deep),var(--teal));border-radius:99px;transition:width .6s cubic-bezier(.2,.7,.3,1);box-shadow:0 0 10px -2px var(--neon)}
+.cq-classcta{font-size:13px;font-weight:600;color:var(--teal);display:inline-flex;align-items:center;gap:4px;text-shadow:0 0 10px rgba(58,201,224,.35);transition:gap .2s}
+.cq-classcard:hover:not(:disabled) .cq-classcta{gap:8px}
 .cq-classcta.soon{color:var(--ink-faint)}
 
 /* ============ CLASS HERO ============ */
