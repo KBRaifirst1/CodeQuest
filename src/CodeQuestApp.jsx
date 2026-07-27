@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useMemo, useSyncExternalStore } fro
 // Build marker — check this in the browser console to confirm which version is
 // actually running: type  window.__CQ_VERSION  in DevTools. If it's not the
 // value below, your browser/Vercel is serving an older bundle.
-const CQ_VERSION = "2026-07-12-v72-perimeter-hover";
+const CQ_VERSION = "2026-07-12-v73-card-size-revert";
 if (typeof window !== "undefined") {
   window.__CQ_VERSION = CQ_VERSION;
   try { console.log("%cCodeQuest build: " + CQ_VERSION, "color:#3ac9e0;font-weight:bold"); } catch {}
@@ -7941,7 +7941,7 @@ const CSS = `
 .cq-home-title{font-family:var(--display);font-size:38px;font-weight:600;letter-spacing:-1.2px;margin:0 0 14px;line-height:1.04;color:var(--ink);text-shadow:0 0 24px rgba(58,201,224,.12)}
 .cq-home-sub{color:var(--ink-soft);font-size:15.5px;line-height:1.6;margin:0;max-width:600px}
 .cq-home-sub b{color:var(--ink);font-weight:600}
-.cq-classlist{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:28px}
+.cq-classlist{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:22px}
 .cq-section-label{font-size:11px;text-transform:uppercase;letter-spacing:2.5px;color:var(--ink-faint);font-weight:700;margin:8px 0 22px}
 .cq-tabs{display:flex;gap:8px;margin-bottom:22px;background:var(--bg-0);padding:6px;border-radius:14px;border:1px solid var(--line)}
 .cq-tab{flex:1;background:none;border:none;color:var(--ink-soft);padding:11px;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;transition:.15s}
@@ -7969,7 +7969,7 @@ const CSS = `
 .cq-resumehero-bar{width:200px;max-width:48vw;height:8px;background:var(--bg-0);border-radius:99px;overflow:hidden;border:1px solid var(--line-soft)}
 .cq-resumehero-fill{height:100%;background:linear-gradient(90deg,var(--teal-deep),var(--teal));border-radius:99px;transition:width .6s}
 .cq-resumehero-cta{font-weight:700;color:var(--teal);font-size:15px;white-space:nowrap}
-.cq-classcard{position:relative;text-align:left;background:linear-gradient(165deg,var(--bg-2),var(--bg-1) 70%);border:1px solid var(--line);border-radius:var(--radius);padding:30px 30px 28px;cursor:pointer;transition:transform .2s cubic-bezier(.2,.7,.3,1),border-color .2s,box-shadow .2s;color:inherit;font-family:inherit;display:flex;flex-direction:column;gap:16px;overflow:hidden}
+.cq-classcard{position:relative;text-align:left;background:linear-gradient(165deg,var(--bg-2),var(--bg-1) 70%);border:1px solid var(--line);border-radius:var(--radius);padding:26px;cursor:pointer;transition:transform .2s cubic-bezier(.2,.7,.3,1),border-color .2s,box-shadow .2s;color:inherit;font-family:inherit;display:flex;flex-direction:column;gap:14px;overflow:hidden}
 .cq-classcard::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:linear-gradient(180deg,var(--neon),var(--magenta));opacity:.85;box-shadow:0 0 8px -1px var(--neon);transition:opacity .2s}.cq-perim{content:'';position:absolute;inset:0;border-radius:var(--radius);padding:1.5px;background:linear-gradient(135deg,var(--neon),var(--magenta),var(--neon));-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;opacity:0;transition:opacity .25s;pointer-events:none}
 .cq-classcard::after{content:'';position:absolute;top:-45%;right:-30%;width:260px;height:260px;background:radial-gradient(circle,var(--neon-ghost),transparent 65%);opacity:.7;pointer-events:none;transition:opacity .25s}
 .cq-classcard:hover:not(:disabled){transform:translateY(-6px);border-color:transparent;box-shadow:0 20px 46px -20px rgba(0,0,0,.75),0 0 34px -10px var(--neon)}
@@ -7977,10 +7977,10 @@ const CSS = `
 .cq-classcard:hover:not(:disabled) .cq-perim{opacity:1}
 .cq-classcard:hover:not(:disabled)::after{opacity:1}
 .cq-classcard.soon{opacity:.55;cursor:default}
-.cq-classtop{display:flex;align-items:center;gap:15px;margin-bottom:2px;position:relative;z-index:1}
+.cq-classtop{display:flex;align-items:center;gap:13px;position:relative;z-index:1}
 .cq-classemoji{font-size:30px;filter:saturate(1.15) drop-shadow(0 0 10px rgba(58,201,224,.25))}
 .cq-classnames{display:flex;flex-direction:column;gap:4px;flex:1}
-.cq-classlabel{font-family:var(--display);font-weight:600;font-size:20px;letter-spacing:-.3px}
+.cq-classlabel{font-family:var(--display);font-weight:600;font-size:19px;letter-spacing:-.3px}
 .cq-classmode{font-size:9.5px;text-transform:uppercase;letter-spacing:.6px;font-weight:700;padding:3px 8px;border-radius:6px;align-self:flex-start}
 .cq-classmode.real{background:var(--teal-ghost);color:var(--teal)}
 .cq-classmode.sql{background:var(--teal-ghost);color:var(--teal)}
