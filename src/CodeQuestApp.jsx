@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useMemo, useSyncExternalStore } fro
 // Build marker — check this in the browser console to confirm which version is
 // actually running: type  window.__CQ_VERSION  in DevTools. If it's not the
 // value below, your browser/Vercel is serving an older bundle.
-const CQ_VERSION = "2026-07-12-v71-card-polish";
+const CQ_VERSION = "2026-07-12-v72-perimeter-hover";
 if (typeof window !== "undefined") {
   window.__CQ_VERSION = CQ_VERSION;
   try { console.log("%cCodeQuest build: " + CQ_VERSION, "color:#3ac9e0;font-weight:bold"); } catch {}
@@ -4124,6 +4124,7 @@ function Home({ progress, aiLessons, savedProjects = [], profileDescription = ""
           const started = done > 0;
           return (
             <button key={cls.id} className="cq-classcard" onClick={() => onOpenClass(cls.id)}>
+              <span className="cq-perim" aria-hidden="true" />
               <div className="cq-classtop">
                 <span className="cq-classemoji">{cls.emoji}</span>
                 <div className="cq-classnames">
@@ -6698,6 +6699,7 @@ function LabsHub({ onBack, onOpen, circuitDone = [], aiDone = [] }) {
       <div className="cq-classlist" style={{ marginTop: 10 }}>
         {labs.map((lab) => (
           <button key={lab.id} className="cq-classcard" onClick={() => onOpen(lab.id)}>
+            <span className="cq-perim" aria-hidden="true" />
             <div className="cq-classtop">
               <span className="cq-classemoji">{lab.emoji}</span>
               <div className="cq-classnames">
@@ -7968,13 +7970,14 @@ const CSS = `
 .cq-resumehero-fill{height:100%;background:linear-gradient(90deg,var(--teal-deep),var(--teal));border-radius:99px;transition:width .6s}
 .cq-resumehero-cta{font-weight:700;color:var(--teal);font-size:15px;white-space:nowrap}
 .cq-classcard{position:relative;text-align:left;background:linear-gradient(165deg,var(--bg-2),var(--bg-1) 70%);border:1px solid var(--line);border-radius:var(--radius);padding:30px 30px 28px;cursor:pointer;transition:transform .2s cubic-bezier(.2,.7,.3,1),border-color .2s,box-shadow .2s;color:inherit;font-family:inherit;display:flex;flex-direction:column;gap:16px;overflow:hidden}
-.cq-classcard::before{content:'';position:absolute;left:0;top:0;bottom:0;width:2px;background:linear-gradient(180deg,var(--neon),var(--magenta));opacity:.5;transition:opacity .2s,box-shadow .2s}
-.cq-classcard::after{content:'';position:absolute;top:-40%;right:-30%;width:220px;height:220px;background:radial-gradient(circle,var(--neon-ghost),transparent 70%);opacity:.4;pointer-events:none;transition:opacity .25s}
-.cq-classcard:hover:not(:disabled){transform:translateY(-5px);border-color:var(--neon-deep);box-shadow:0 18px 40px -20px rgba(0,0,0,.7),0 0 24px -14px var(--neon)}
-.cq-classcard:hover:not(:disabled)::before{opacity:1;box-shadow:0 0 12px var(--neon)}
-.cq-classcard:hover:not(:disabled)::after{opacity:.85}
+.cq-classcard::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:linear-gradient(180deg,var(--neon),var(--magenta));opacity:.85;box-shadow:0 0 8px -1px var(--neon);transition:opacity .2s}.cq-perim{content:'';position:absolute;inset:0;border-radius:var(--radius);padding:1.5px;background:linear-gradient(135deg,var(--neon),var(--magenta),var(--neon));-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;opacity:0;transition:opacity .25s;pointer-events:none}
+.cq-classcard::after{content:'';position:absolute;top:-45%;right:-30%;width:260px;height:260px;background:radial-gradient(circle,var(--neon-ghost),transparent 65%);opacity:.7;pointer-events:none;transition:opacity .25s}
+.cq-classcard:hover:not(:disabled){transform:translateY(-6px);border-color:transparent;box-shadow:0 20px 46px -20px rgba(0,0,0,.75),0 0 34px -10px var(--neon)}
+.cq-classcard:hover:not(:disabled)::before{opacity:0}
+.cq-classcard:hover:not(:disabled) .cq-perim{opacity:1}
+.cq-classcard:hover:not(:disabled)::after{opacity:1}
 .cq-classcard.soon{opacity:.55;cursor:default}
-.cq-classtop{display:flex;align-items:center;gap:15px;margin-bottom:2px}
+.cq-classtop{display:flex;align-items:center;gap:15px;margin-bottom:2px;position:relative;z-index:1}
 .cq-classemoji{font-size:30px;filter:saturate(1.15) drop-shadow(0 0 10px rgba(58,201,224,.25))}
 .cq-classnames{display:flex;flex-direction:column;gap:4px;flex:1}
 .cq-classlabel{font-family:var(--display);font-weight:600;font-size:20px;letter-spacing:-.3px}
@@ -7985,7 +7988,7 @@ const CSS = `
 .cq-classmode.ai{background:var(--amber-ghost);color:var(--amber)}
 .cq-classmode.concept{background:var(--violet-ghost);color:var(--violet)}
 .cq-classpct{font-family:var(--mono);font-size:13px;color:var(--ink-faint);font-weight:600}
-.cq-classblurb{color:var(--ink-soft);font-size:13px;line-height:1.55;margin:0;flex:1}
+.cq-classblurb{position:relative;z-index:1;color:var(--ink-soft);font-size:13px;line-height:1.55;margin:0;flex:1}
 .cq-classbar{height:7px;background:var(--bg-0);border-radius:99px;overflow:hidden;border:1px solid var(--line-soft)}
 .cq-classbar.big{height:11px}
 .cq-classbar-fill{height:100%;background:linear-gradient(90deg,var(--teal-deep),var(--teal));border-radius:99px;transition:width .6s cubic-bezier(.2,.7,.3,1);box-shadow:0 0 10px -2px var(--neon)}
