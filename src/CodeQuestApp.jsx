@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useMemo, useSyncExternalStore } fro
 // Build marker — check this in the browser console to confirm which version is
 // actually running: type  window.__CQ_VERSION  in DevTools. If it's not the
 // value below, your browser/Vercel is serving an older bundle.
-const CQ_VERSION = "2026-07-12-v74-touches-everywhere";
+const CQ_VERSION = "2026-07-12-v83-manual-multifile";
 if (typeof window !== "undefined") {
   window.__CQ_VERSION = CQ_VERSION;
   try { console.log("%cCodeQuest build: " + CQ_VERSION, "color:#3ac9e0;font-weight:bold"); } catch {}
@@ -904,26 +904,38 @@ function markupProjectHTML(files) {
   const pick = (re) => files.filter((f) => re.test(f.name));
   const htmlFile = pick(/\.html?$/i)[0];
   const cssFiles = pick(/\.css$/i);
-  const jsFile = pick(/\.(js|ts|jsx)$/i)[0];
+  // One behaviour file drives the page, in a clear priority order.
+  const find = (re) => files.find((f) => re.test(f.name));
   const p5File = files.find((f) => f.lang === "p5");
+  const svelteFile = find(/\.svelte$/i);
+  const vueFile = find(/\.vue$/i);
+  const jsxFile = find(/\.jsx$/i);
+  const tsFile = find(/\.ts$/i);
+  const jsFile = find(/\.js$/i);
 
   const styles = cssFiles.map((f) => `<style>${escScript(f.code)}</style>`).join("\n");
   const bodyHtml = htmlFile ? String(htmlFile.code || "") : '<div id="root"></div><div id="app"></div>';
+  const FAIL = `catch(e){ document.body.insertAdjacentHTML('beforeend','<pre style=\\"color:#ff6ba8;white-space:pre-wrap\\">'+String(e&&e.message||e)+'</pre>'); }`;
 
-  // Behaviour: p5 and JSX need their libraries; TS/JSX compile via Babel.
   let head = styles;
   let script = "";
   if (p5File) {
     head += `\n<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>`;
-    script = `<script>\ntry {\n${escScript(p5File.code)}\n} catch(e){ document.body.insertAdjacentHTML('beforeend','<pre style=\\"color:#ff6ba8\\">'+String(e&&e.message||e)+'</pre>'); }\n</` + `script>`;
-  } else if (jsFile && /\.jsx$/i.test(jsFile.name)) {
+    script = `<script>\ntry {\n${escScript(p5File.code)}\n} ${FAIL}\n</` + `script>`;
+  } else if (svelteFile) {
+    head += `\n<script src="https://unpkg.com/svelte@4/compiler.js"></script>`;
+    script = `<script>\ntry {\n  var __src = ${JSON.stringify(svelteFile.code || "")};\n  var __c = svelte.compile(__src, { format: 'iife', name: 'App' });\n  var __App = new Function(__c.js.code + '; return App;')();\n  new __App({ target: document.getElementById('app') || document.body });\n} ${FAIL}\n</` + `script>`;
+  } else if (vueFile) {
+    head += `\n<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>`;
+    script = `<script>\ntry {\n${escScript(vueFile.code)}\n} ${FAIL}\n</` + `script>`;
+  } else if (jsxFile) {
     head += `\n<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>\n<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>\n<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>`;
-    script = `<script type="text/babel" data-presets="react">\ntry {\n${escScript(jsFile.code)}\n} catch(e){ document.body.insertAdjacentHTML('beforeend','<pre style=\\"color:#ff6ba8\\">'+String(e&&e.message||e)+'</pre>'); }\n</` + `script>`;
-  } else if (jsFile && /\.ts$/i.test(jsFile.name)) {
+    script = `<script type="text/babel" data-presets="react">\ntry {\n${escScript(jsxFile.code)}\n} ${FAIL}\n</` + `script>`;
+  } else if (tsFile) {
     head += `\n<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>`;
-    script = `<script>\ntry {\n  var __js = Babel.transform(${JSON.stringify(jsFile.code || "")}, { presets: ['typescript'], filename: 'main.ts' }).code;\n  (new Function(__js))();\n} catch(e){ document.body.insertAdjacentHTML('beforeend','<pre style=\\"color:#ff6ba8\\">'+String(e&&e.message||e)+'</pre>'); }\n</` + `script>`;
+    script = `<script>\ntry {\n  var __js = Babel.transform(${JSON.stringify(tsFile.code || "")}, { presets: ['typescript'], filename: 'main.ts' }).code;\n  (new Function(__js))();\n} ${FAIL}\n</` + `script>`;
   } else if (jsFile) {
-    script = `<script>\ntry {\n${escScript(jsFile.code)}\n} catch(e){ document.body.insertAdjacentHTML('beforeend','<pre style=\\"color:#ff6ba8\\">'+String(e&&e.message||e)+'</pre>'); }\n</` + `script>`;
+    script = `<script>\ntry {\n${escScript(jsFile.code)}\n} ${FAIL}\n</` + `script>`;
   }
   return `<!doctype html><html><head><meta charset="utf-8">
 <style>html,body{margin:0;padding:16px;font-family:system-ui,-apple-system,sans-serif;background:#fff;color:#111;line-height:1.5}</style>
@@ -932,7 +944,7 @@ ${head}</head><body>${bodyHtml}${script}</body></html>`;
 // Does this set of files form a runnable WEB project (has at least an html/css/js
 // mix, more than one web file)?
 function isWebProject(files) {
-  const web = files.filter((f) => /\.(html?|css|js|ts|jsx)$/i.test(f.name) || f.lang === "p5");
+  const web = files.filter((f) => /\.(html?|css|js|ts|jsx|vue|svelte)$/i.test(f.name) || f.lang === "p5");
   const kinds = new Set(web.map((f) => (/\.html?$/i.test(f.name) ? "html" : /\.css$/i.test(f.name) ? "css" : "js")));
   return web.length >= 2 && kinds.size >= 2;
 }
@@ -1073,6 +1085,53 @@ const topicSystemFor = (langLabel, runnable, count = null) =>
   "CRITICAL — match tests to the io style: For \"return\" lessons the function must RETURN the expected value (the checker compares the return value). For \"print\" lessons the function must PRINT exactly the expected value as text (the checker compares what's printed) — and the lesson's teach/example must clearly tell the learner to use print. Never write a lesson whose solution prints but whose io says \"return\" (or vice-versa) — the io field must match what the solution actually does, and expected must match that output. " +
   `Every starter must NOT pass its tests; every solution MUST pass.`;
 
+// HTML/CSS/JSX don't have a return value to test, so their generated lessons
+// carry CHECK SPECS instead: plain data naming what should be true of the page
+// once the learner is done. The app compiles those into real assertions and runs
+// them against the actually-rendered document (see compileRealChecks). The model
+// never writes the assertion itself, so a lesson can only claim "real test
+// grading" if our own code can measure it.
+const MARKUP_SCAFFOLD = {
+  html: "The learner's HTML is placed directly in the page body. They can use any tags.",
+  css: "IMPORTANT: the learner writes CSS ONLY. It is applied to a FIXED page you cannot change, containing exactly:\n" +
+       '<div class="box">Box</div>\n<button class="btn">Button</button>\n<p class="text">Some text to style.</p>\n<ul class="list"><li>One</li><li>Two</li></ul>\n' +
+       "So every selector you use — in the solution AND in the checks — must target .box, .btn, .text, .list, li, or a plain tag like div/button/p/ul. Never invent a class that isn't there.",
+  jsx: "The page provides <div id=\"root\"></div> with React, ReactDOM and Babel already loaded. The learner's JSX must render into #root, e.g. ReactDOM.createRoot(document.getElementById(\"root\")).render(<App />).",
+};
+const markupTopicSystemFor = (langLabel, kind, count = null) =>
+  `You design a small THEMED set of beginner ${langLabel} exercises grouped under one topic. ` +
+  (count ? `YOU choose the topic; make EXACTLY ${count} lesson${count === 1 ? "" : "s"} for it. ` +
+           (count > 1 ? "They build on each other, easy to harder. " : "")
+         : "YOU choose the topic and how many lessons fit it (between 3 and 5), easy to harder. ") +
+  "EVERY lesson must TEACH before it tests: explain the new idea in plain words, then show a tiny worked example. " +
+  "NOVELTY IS REQUIRED: every lesson must introduce a genuinely NEW concept (named in its `concept` field) that the learner has not already learned. Two lessons must never share a concept. " +
+  MARKUP_SCAFFOLD[kind] + " " +
+  "Respond with ONLY JSON, no prose, no fences: {\"topic\":string (2-4 words), \"lessons\":[ {" +
+  "\"title\":string, " +
+  "\"concept\":string — a SHORT lowercase tag (2-4 words) for the ONE new capability taught, e.g. \"unordered lists\", \"border-radius\", \"props\". Use the standard name. " +
+  "\"teach\":string (2-3 plain sentences explaining the new idea to someone who has never seen it), " +
+  "\"example\":string (a short worked example in " + langLabel + "), " +
+  "\"starter\":string (what the learner begins with — a stub that does NOT yet satisfy the checks), " +
+  "\"solution\":string (complete correct " + langLabel + " that DOES satisfy every check), " +
+  "\"checks\":array of 2-4 CHECK SPECS — plain objects describing what must be true of the finished page. " +
+  "You may ONLY use these exact forms:\n" +
+  '  {"kind":"exists","selector":"h1"}                        — that element is on the page\n' +
+  '  {"kind":"count","selector":"li","n":3}                    — at least n of them\n' +
+  '  {"kind":"text","selector":"p"}                            — that element has words in it\n' +
+  '  {"kind":"text","selector":"h1","contains":"welcome"}      — ...containing this text\n' +
+  '  {"kind":"attr","selector":"a","name":"href"}              — that attribute is set and not empty\n' +
+  '  {"kind":"children","selector":"div","n":2}                — that element wraps at least n elements\n' +
+  (kind === "css" ? '  {"kind":"cssRule","selector":".box","prop":"background"}  — the CSS declares that property\n' +
+                    '  {"kind":"cssRule","selector":".box","prop":"color","value":"white"}  — ...with that value\n' : "") +
+  '  {"kind":"computed","selector":".box","prop":"border-radius"}  — the browser really applied it\n' +
+  (kind === "jsx" ? '  {"kind":"rendered","n":2}                                 — the component actually mounted and shows output\n' : "") +
+  "Every spec must be exactly one of those shapes — no other keys, no made-up kinds, no JavaScript. " +
+  "Each check must also carry an optional \"label\":string written for a beginner (e.g. \"Has a bulleted list with 3 items\"); if you omit it we generate one. " +
+  "} ] }. " +
+  "CRITICAL, and the whole point: run the checks in your head against your own solution — every single one must be TRUE for the solution, and at least one must be FALSE for the starter. A lesson whose solution fails its own checks, or whose starter already passes, is thrown away. " +
+  "Keep the checks tied to what the lesson actually teaches: if the lesson is about lists, check the list, not the heading. " +
+  "TEACHING QUALITY: explanations must be simple but never misleading — no comforting half-truths the learner would have to unlearn. Write the solution the way an experienced developer would. Always say WHY the idea matters.";
+
 // Retry a generate-and-validate operation a few times before giving up.
 // The free AI model occasionally returns something that fails validation; a
 // silent retry usually succeeds on the next attempt, so the learner rarely sees
@@ -1092,6 +1151,13 @@ async function withRetry(fn, attempts = 3, delayMs = 400, signal) {
           e?.message?.includes("rate-limited") || e?.message?.includes("429")) {
         throw signal?.aborted ? new Error("cancelled") : e;
       }
+      // A ReferenceError or SyntaxError is a BUG IN OUR CODE, not a flaky call.
+      // Retrying it re-runs the whole generation — including the Gemini request —
+      // and fails identically every time, so a single broken line quietly burns
+      // 4x the quota per attempt. Fail on the first one and surface the real
+      // message. TypeError is deliberately NOT here: browsers throw
+      // "TypeError: Failed to fetch" for genuine network failures, which SHOULD retry.
+      if (e instanceof ReferenceError || e instanceof SyntaxError) throw e;
       lastErr = e;
       if (i < attempts - 1) {
         // Abortable delay: signal aborts the wait instead of us sitting through it
@@ -1282,7 +1348,7 @@ const difficultyClause = (level) => {
 // Some lessons may be dropped by verification (buggy AI solution, or a starter
 // that accidentally passes) — so the count returned can be < requested. The
 // backfill wrapper below tops up the shortfall.
-async function generateTopicBatch({ classId, langLabel, priorTopics, customTopic, howManyToAsk, wanted, diff, fixedTopic = null, signal }) {
+async function generateTopicBatch({ classId, langLabel, priorTopics, learnedConcepts = [], customTopic, howManyToAsk, wanted, diff, fixedTopic = null, signal }) {
   const runnable = classId === "js" || classId === "py";
   const alreadyCovered = (priorTopics || []).length ? `The learner has ALREADY LEARNED these concepts — you may USE them in lessons, but do NOT make any lesson whose NEW concept is one of these: ${(priorTopics || []).join(", ")}. Teach something new instead. ` : "";
   const topicClause = fixedTopic
@@ -1291,8 +1357,9 @@ async function generateTopicBatch({ classId, langLabel, priorTopics, customTopic
   const ask = customTopic
     ? `Make a themed ${langLabel} set about "${customTopic}" now. ${alreadyCovered}Create exactly ${howManyToAsk} lesson${howManyToAsk === 1 ? "" : "s"} that teach this specific topic${wanted !== 1 ? ", easy to harder" : ""}. Each lesson must introduce a NEW aspect of "${customTopic}" — different sub-skills, not the same thing repeated (e.g. for a graphics topic: drawing, then colors, then movement, then input — not 'set up the window' three times). ${diff} ${topicClause} Each lesson explains the idea first, then a worked example, then the exercise.`
     : `Make a fresh themed ${langLabel} set now. Avoid these topics already covered: ${(priorTopics || []).join(", ") || "none"}. Pick a NEW beginner topic and make exactly ${howManyToAsk} lesson${howManyToAsk === 1 ? "" : "s"} for it. ${diff} ${topicClause} Remember: each lesson explains the idea first, then a worked example, then the exercise.`;
+  const isMarkup = MARKUP_GRADED.includes(classId);
   let raw;
-  try { raw = await callClaude([{ role: "user", content: ask }], { system: topicSystemFor(langLabel, runnable, howManyToAsk), maxTokens: 6000, signal, thinking: true }); }
+  try { raw = await callClaude([{ role: "user", content: ask }], { system: isMarkup ? markupTopicSystemFor(langLabel, classId, howManyToAsk) : topicSystemFor(langLabel, runnable, howManyToAsk), maxTokens: 6000, signal, thinking: true }); }
   catch (e) { throw new Error("ai-failed: " + (e?.message || "unknown")); }
   let parsed; try { parsed = extractJSON(raw); } catch (e) { throw new Error("bad-json: " + (e?.message || "parse failed")); }
   const topic = fixedTopic || (parsed.topic || "More practice").toString().slice(0, 40);
@@ -1356,6 +1423,22 @@ async function generateTopicBatch({ classId, langLabel, priorTopics, customTopic
     if (fn) seenFns.add(fn);
     if (ck) seenConcepts.add(ck);
     if (thisConcept) seenConcepts.add(thisConcept);
+    if (isMarkup) {
+      // Already validated above by rendering, so these compile cleanly.
+      const compiled = compileRealChecks(L.checks, classId);
+      if (!compiled) continue;
+      out.push({
+        id: "ai_" + Math.random().toString(36).slice(2, 8),
+        type: "markup", kind: classId, chapter, topic, generated: true, lang: classId,
+        title: L.title || "Lesson", teach: L.teach || "", example: L.example || "", concept: thisConcept,
+        intro: L.teach || "",
+        starter: L.starter || "",
+        checks: compiled.map((c) => c.label),
+        realChecks: compiled,
+        why: "Your page really rendered that — checked against the live result, not a guess.",
+      });
+      continue;
+    }
     out.push({
       id: "ai_" + Math.random().toString(36).slice(2, 8),
       type: "type", chapter, topic, generated: true, lang: classId,
@@ -1392,7 +1475,7 @@ async function generateTopicUnit({ classId = "js", langLabel = "JavaScript", pri
     let batch;
     try {
       batch = await generateTopicBatch({
-        classId, langLabel, priorTopics, customTopic, howManyToAsk: askFor,
+        classId, langLabel, priorTopics, learnedConcepts, customTopic, howManyToAsk: askFor,
         wanted, diff, fixedTopic: topic, signal,
       });
     } catch (e) {
@@ -1444,6 +1527,28 @@ function loadPyodide() {
 //     (e.g. teach says print "hi" but tests want "Hi") — the exact class of bug
 //     that trips up beginners who follow the example literally.
 async function validateLesson(L, classId) {
+  // Markup lessons (HTML/CSS/JSX) aren't function-shaped, so they're checked
+  // first and differently: we RENDER the author's own solution and require it to
+  // satisfy its own checks, then render the starter and require it NOT to. Same
+  // contract as the JS/Python path — solvable, and not already solved — but
+  // proven against a real document instead of a return value. If we can't render
+  // (no DOM), we reject rather than accept: an unverified lesson can't carry a
+  // "real test grading" badge.
+  if (MARKUP_GRADED.includes(classId)) {
+    if (!L || typeof L.solution !== "string" || !L.solution.trim()) return { ok: false, reason: "markup lesson has no solution" };
+    const compiled = compileRealChecks(L.checks, classId);
+    if (!compiled) return { ok: false, reason: "check spec unusable — cannot grade this honestly" };
+    if (typeof document === "undefined") return { ok: false, reason: "no document to verify against" };
+    const solved = await gradeMarkupReal(classId, L.solution, compiled);
+    if (!solved || solved.verdict !== "pass") {
+      if (solved && solved.renderFailed) return { ok: false, reason: "author solution does not render at all" };
+      const missed = solved && solved.checks ? solved.checks.filter((c) => !c.met).map((c) => c.label).join("; ") : "";
+      return { ok: false, reason: "author solution fails its own checks" + (missed ? " (" + missed + ")" : "") };
+    }
+    const started = await gradeMarkupReal(classId, L.starter || "", compiled);
+    if (started && started.verdict === "pass") return { ok: false, reason: "starter already passes (nothing to solve)" };
+    return { ok: true };
+  }
   if (!L || !L.fnName || !L.solution || !Array.isArray(L.tests) || L.tests.length < 2) {
     return { ok: false, reason: "missing fnName/solution/tests" };
   }
@@ -1567,6 +1672,65 @@ function initialProjectFiles(plan) {
   const lang = plan.lang || "py";
   return [{ name: defaultFileName(lang), lang, code: plan.code || plan.starter || "" }];
 }
+
+// ---- Manual multi-file setup ----------------------------------------------
+// The "set up files yourself" screen builds plan.files directly and skips the
+// AI planner. These helpers hold the rules we agreed on so the UI and the tests
+// share ONE source of truth.
+
+// Languages allowed as the entry ("main") language. SQL is excluded on purpose —
+// it's only ever a second file in a JS+SQL project, never a main. BASIC and
+// Assembly are excluded because their runners are single-file only, so they
+// can't anchor a multi-file project.
+const MAIN_LANGS = ["py", "js", "ts", "java", "lua", "php", "c", "cpp"];
+// Languages that may be ADDED as extra files. SQL is allowed here (the JS+SQL
+// second file). BASIC/ASM stay out entirely — no multi-file at all.
+const ADDABLE_LANGS = ["py", "js", "ts", "java", "lua", "php", "c", "cpp", "h", "hpp", "sql"];
+const MANUAL_BLOCKED_LANGS = ["basic", "asm"]; // single-file only, never in a manual project
+
+// The basename is the name with its extension stripped: "helpers.js" -> "helpers".
+// Uniqueness is enforced on the BASENAME, not the full name, so "helpers.js" and
+// "helpers.py" collide. This also blocks a second "main.*" and, as a bonus,
+// prevents the Java Main.java filename collision flagged earlier.
+function fileBaseName(name) {
+  const s = String(name || "").trim();
+  const dot = s.lastIndexOf(".");
+  return (dot > 0 ? s.slice(0, dot) : s).toLowerCase();
+}
+function extToProjectLang(name) {
+  const ext = String(name || "").split(".").pop().toLowerCase();
+  const map = { py: "py", js: "js", ts: "ts", java: "java", lua: "lua", php: "php",
+    c: "c", h: "c", cpp: "cpp", hpp: "cpp", cc: "cpp", sql: "sql", jsx: "jsx",
+    vue: "vue", svelte: "svelte", html: "html", css: "css" };
+  return map[ext] || null;
+}
+
+// Validate the whole file list for the manual builder. Returns { ok, error }.
+function validateManualProject(files) {
+  if (!Array.isArray(files) || files.length === 0) return { ok: false, error: "Add at least one file." };
+  const mains = files.filter((f) => fileBaseName(f.name) === "main");
+  if (mains.length === 0) return { ok: false, error: "Every project needs a file called main." };
+  if (mains.length > 1) return { ok: false, error: "Only one main file is allowed — it's the file that runs." };
+  const seen = new Set();
+  for (const f of files) {
+    const nm = String(f.name || "").trim();
+    if (!nm) return { ok: false, error: "A file has no name yet." };
+    if (!/\.[a-z0-9]+$/i.test(nm)) return { ok: false, error: `"${nm}" needs a file extension, like .py or .js.` };
+    const base = fileBaseName(nm);
+    if (seen.has(base)) return { ok: false, error: `Two files are both called "${base}". File names must be different (before the dot).` };
+    seen.add(base);
+    const el = extToProjectLang(nm);
+    if (!el) return { ok: false, error: `".${nm.split(".").pop()}" isn't a file type you can use here.` };
+    if (MANUAL_BLOCKED_LANGS.includes(el)) return { ok: false, error: `${PROJECT_LANG_LABEL[el] || el} can only be used in single-file projects.` };
+  }
+  // The main file's language must be a valid entry language.
+  const mainLang = extToProjectLang(mains[0].name);
+  if (!MAIN_LANGS.includes(mainLang)) {
+    return { ok: false, error: `main can't be ${PROJECT_LANG_LABEL[mainLang] || mainLang}. Choose one of: ${MAIN_LANGS.map((l) => PROJECT_LANG_LABEL[l]).join(", ")}.` };
+  }
+  return { ok: true };
+}
+
 // Load a script from a CDN once, and resolve when it's ready. Used for the
 // in-browser language engines (TypeScript via Babel, SQL via sql.js) so they
 // only download if the learner actually uses that language.
@@ -1666,7 +1830,7 @@ function javaMainClass(code) {
 // Compile + run a whole Java program. Returns real javac errors and real program
 // output. `consoleEl` MUST be the element with id="console" — CheerpJ implicitly
 // writes System.out/err into it.
-async function runProjectJava(code, consoleEl, displayEl) {
+async function runProjectJava(code, consoleEl, displayEl, files = null) {
   if (typeof window === "undefined") return { ok: false, output: "", error: "Java needs a browser." };
   // Check tools.jar is actually being served before we spin up a whole JVM —
   // otherwise the failure is cryptic.
@@ -1687,22 +1851,34 @@ async function runProjectJava(code, consoleEl, displayEl) {
   }
   const { className, fileName } = javaMainClass(code);
   if (consoleEl) consoleEl.innerHTML = "";
-  if (displayEl) { /* leave the display; CheerpJ owns it */ }
   const readConsole = () => (consoleEl ? (consoleEl.innerText || "").replace(/\n+$/, "") : "");
   try {
-    // 1) Put the learner's source into CheerpJ's virtual filesystem.
     const enc = new TextEncoder();
-    window.cheerpjAddStringFile("/str/" + fileName, enc.encode(code));
-    // 2) Compile it with the real javac, running inside the JVM.
+    // Put every .java file into the VFS so classes can find each other, then
+    // hand javac the whole list. The active file uses `code` (unsaved edits win).
+    const javaFiles = Array.isArray(files) ? files.filter((f) => /\.java$/i.test(f.name)) : [];
+    const paths = [];
+    if (javaFiles.length > 1) {
+      for (const f of javaFiles) {
+        const src = (f.code === code) ? code : (f.code || "");
+        const nm = javaMainClass(src).fileName; // name the file after its class
+        window.cheerpjAddStringFile("/str/" + nm, enc.encode(src));
+        paths.push("/str/" + nm);
+      }
+    } else {
+      window.cheerpjAddStringFile("/str/" + fileName, enc.encode(code));
+      paths.push("/str/" + fileName);
+    }
+    // Compile with the real javac, running inside the JVM.
     const exit = await window.cheerpjRunMain(
-      "com.sun.tools.javac.Main", JAVA_CLASSPATH, "/str/" + fileName, "-d", "/files/", "-Xlint"
+      "com.sun.tools.javac.Main", JAVA_CLASSPATH, ...paths, "-d", "/files/", "-Xlint"
     );
     if (exit !== 0) {
       // javac wrote its real errors into the console element.
       const compileErrors = readConsole();
       return { ok: false, output: "", error: compileErrors || "The code didn't compile.", compileError: true };
     }
-    // 3) It compiled — now run it. Output lands in the console element.
+    // It compiled — now run the class from the ACTIVE file.
     if (consoleEl) consoleEl.innerHTML = "";
     await window.cheerpjRunMain(className, JAVA_CLASSPATH);
     // Give CheerpJ a tick to flush output into the DOM before we read it.
@@ -1719,28 +1895,80 @@ async function runProjectPython(code, files = null, activeName = null) {
   let py;
   try { py = await loadPyodide(); } catch (e) { return { ok: false, output: "", error: "Couldn't start Python: " + e.message }; }
   let out = "";
+  const jsLogs = [];
   try {
     py.setStdout({ batched: (s) => { out += s + "\n"; } });
     py.setStderr({ batched: (s) => { out += s + "\n"; } });
   } catch {}
   try {
-    // If this is a multi-file project, write every .py file into Pyodide's
-    // virtual filesystem first, so the active file can genuinely `import` them.
     if (Array.isArray(files) && files.length > 1) {
+      // Other Python files become real importable modules.
       try { py.runPython("import sys\nif '' not in sys.path: sys.path.insert(0, '')"); } catch {}
       for (const f of files) {
         if (f && f.name && /\.py$/i.test(f.name)) {
           try { py.FS.writeFile(f.name, f.code || ""); } catch {}
         }
       }
+      // JavaScript files become callable Python globals: helpers.greet("Sam").
+      // Pyodide and the browser share one runtime, so this is the real JS
+      // function running — nothing is translated, nothing is simulated.
+      const hasJS = files.some((f) => /\.(js|ts|jsx)$/i.test(f.name));
+      if (hasJS) {
+        const exports = buildJSExports(files, jsLogs);
+        for (const [name, mod] of Object.entries(exports)) {
+          try { py.globals.set(name, mod); } catch {}
+        }
+      }
     }
     await py.runPythonAsync(code);
-    return { ok: true, output: out.replace(/\n$/, "") };
+    const combined = (jsLogs.length ? jsLogs.join("\n") + "\n" : "") + out;
+    return { ok: true, output: combined.replace(/\n$/, "") };
   } catch (e) {
     // Keep partial output printed before the error, plus the real error message.
-    return { ok: false, output: out.replace(/\n$/, ""), error: String(e && e.message ? e.message : e) };
+    const combined = (jsLogs.length ? jsLogs.join("\n") + "\n" : "") + out;
+    return { ok: false, output: combined.replace(/\n$/, ""), error: String(e && e.message ? e.message : e) };
   }
 }
+// Evaluate the project's JS files and return their exports, keyed by file name
+// without extension. This is what lets Python call real JavaScript functions:
+// Pyodide and the browser share one runtime, so nothing is translated or faked.
+// A file that throws is isolated — the others still load.
+function buildJSExports(files, logs) {
+  const push = (...a) => logs.push(a.map((x) => (typeof x === "object" && x !== null ? JSON.stringify(x) : String(x))).join(" "));
+  const fakeConsole = { log: push, error: push, warn: push, info: push };
+  const B = typeof window !== "undefined" ? window.Babel : null;
+  const norm = (n) => n.replace(/^\.?\//, "").replace(/\.(js|ts|jsx)$/i, "");
+  const registry = {};
+  for (const f of files) {
+    if (!/\.(js|ts|jsx)$/i.test(f.name)) continue;
+    let src = f.code || "";
+    if (B && /\.(ts|jsx)$/i.test(f.name)) {
+      const presets = [["env", { modules: "commonjs" }]];
+      if (/\.tsx?$/i.test(f.name)) presets.push("typescript");
+      if (/\.jsx$/i.test(f.name)) presets.push("react");
+      try { src = B.transform(src, { presets, filename: f.name }).code; } catch { continue; }
+    }
+    registry[norm(f.name)] = src;
+  }
+  const cache = {};
+  const makeRequire = () => function require(path) {
+    const key = norm(path);
+    if (cache[key]) return cache[key].exports;
+    if (!(key in registry)) throw new Error("Cannot find file '" + path + "' in this project");
+    const module = { exports: {} };
+    cache[key] = module;
+    // eslint-disable-next-line no-new-func
+    const fn = new Function("require", "module", "exports", "console", registry[key]);
+    fn(makeRequire(), module, module.exports, fakeConsole);
+    return module.exports;
+  };
+  const out = {};
+  for (const key of Object.keys(registry)) {
+    try { out[key] = makeRequire()(key); } catch { /* skip a broken file, keep the rest */ }
+  }
+  return out;
+}
+
 // Run a whole JS program, capturing console.log output + any real error. Runs in
 // a Function scope with a captured console — same real execution the JS lessons use.
 // For multi-file JS projects, all files become a little module registry so the
@@ -1762,21 +1990,32 @@ function runProjectJS(code, files = null, activeName = null) {
     }
   }
 
-  // Multi-file: compile each file to CommonJS with Babel, then wire a require()
-  // that resolves other project files by name.
+  // Multi-file: wire a require() that resolves other project files by name.
+  // Plain .js needs no compiler at all — CommonJS runs as-is inside the Function
+  // scope below. Only .ts and .jsx need Babel, and Babel is loaded lazily, so
+  // demanding it up front used to fail every plain JS+JS project with
+  // "Couldn't load the compiler for multi-file JS" unless the learner happened
+  // to have run TypeScript earlier in the session.
   const B = typeof window !== "undefined" ? window.Babel : null;
-  if (!B) return { ok: false, output: "", error: "Couldn't load the compiler for multi-file JS." };
   const norm = (n) => n.replace(/^\.?\//, "").replace(/\.(js|ts|jsx)$/i, "");
+  const needsCompiler = files.some((f) => /\.(ts|jsx)$/i.test(f.name));
+  if (needsCompiler && !B) {
+    return { ok: false, output: "", error: "TypeScript and JSX files need the compiler, which hasn't loaded yet. Run a TypeScript file once first, or keep this project to plain .js files." };
+  }
   const registry = {};
   for (const f of files) {
     if (!/\.(js|ts|jsx)$/i.test(f.name)) continue;
-    const presets = [["env", { modules: "commonjs" }]];
-    if (/\.tsx?$/i.test(f.name)) presets.push("typescript");
-    if (/\.jsx$/i.test(f.name)) presets.push("react");
-    try {
-      registry[norm(f.name)] = B.transform(f.code || "", { presets, filename: f.name }).code;
-    } catch (e) {
-      return { ok: false, output: logs.join("\n"), error: "In " + f.name + ": " + (e && e.message ? e.message : e) };
+    if (/\.(ts|jsx)$/i.test(f.name)) {
+      const presets = [["env", { modules: "commonjs" }]];
+      if (/\.tsx?$/i.test(f.name)) presets.push("typescript");
+      if (/\.jsx$/i.test(f.name)) presets.push("react");
+      try {
+        registry[norm(f.name)] = B.transform(f.code || "", { presets, filename: f.name }).code;
+      } catch (e) {
+        return { ok: false, output: logs.join("\n"), error: "In " + f.name + ": " + (e && e.message ? e.message : e) };
+      }
+    } else {
+      registry[norm(f.name)] = f.code || "";
     }
   }
   const cache = {};
@@ -1954,7 +2193,7 @@ function runProjectAssembly(code) {
 // Run PHP for real via php-wasm (the official PHP interpreter compiled to WASM).
 // Loads as an ESM module from a CDN. Captures echo/print output and errors.
 let _phpInstance = null;
-async function runProjectPHP(code) {
+async function runProjectPHP(code, files = null) {
   let php;
   try {
     if (!_phpInstance) {
@@ -1972,6 +2211,25 @@ async function runProjectPHP(code) {
   php.addEventListener("output", onOut);
   php.addEventListener("error", onErr);
   try {
+    // Multi-file: write the other .php files onto php-wasm's virtual filesystem
+    // so require/include genuinely resolve. If the FS isn't reachable we say so
+    // rather than silently concatenating and making require LOOK like it worked.
+    const phpFiles = Array.isArray(files) ? files.filter((f) => /\.php$/i.test(f.name)) : [];
+    if (phpFiles.length > 1) {
+      const FS = php.FS || (php.binary && php.binary.FS) || null;
+      if (FS && typeof FS.writeFile === "function") {
+        for (const f of phpFiles) {
+          const s = /<\?php|<\?=/.test(f.code || "") ? f.code : "<?php\n" + (f.code || "");
+          try { FS.writeFile("/" + f.name, s); } catch {}
+          try { FS.writeFile(f.name, s); } catch {}
+        }
+      } else {
+        php.removeEventListener("output", onOut);
+        php.removeEventListener("error", onErr);
+        return { ok: false, output: "",
+          error: "This PHP build can't hold more than one file yet, so require/include won't find your other files. Put everything in one file for now — I'd rather tell you that than quietly stitch your files together and have require look like it worked." };
+      }
+    }
     // Ensure the code has an opening tag so echo/print produce output.
     const src = /<\?php|<\?=/.test(code) ? code : "<?php\n" + code;
     await php.run(src);
@@ -2072,7 +2330,7 @@ function rubyInspect(v) {
 // NOTE: needs cross-origin isolation (COOP/COEP headers) for SharedArrayBuffer,
 // and downloads clang (~30MB compressed) on first use.
 let _wasmerInit = null, _clangPkg = null;
-async function runProjectCFamily(code, isCpp) {
+async function runProjectCFamily(code, isCpp, files = null, activeName = null) {
   try {
     if (!_wasmerInit) {
       const sdk = await import(/* @vite-ignore */ "https://unpkg.com/@wasmer/sdk@latest/dist/index.mjs");
@@ -2083,7 +2341,6 @@ async function runProjectCFamily(code, isCpp) {
     return { ok: false, output: "", error: "Couldn't load the C/C++ compiler engine: " + (e && e.message ? e.message : e) };
   }
   const sdk = _wasmerInit;
-  // Cross-origin isolation is required for the compiler's threads.
   if (typeof crossOriginIsolated !== "undefined" && !crossOriginIsolated) {
     return { ok: false, output: "",
       error: "C/C++ needs this site to send special security headers (COOP/COEP) so the compiler can run. They aren't set yet — everything else works; this language needs that server config.",
@@ -2091,19 +2348,39 @@ async function runProjectCFamily(code, isCpp) {
   }
   try {
     if (!_clangPkg) _clangPkg = await sdk.Wasmer.fromRegistry("clang/clang");
-    const srcName = isCpp ? "main.cpp" : "main.c";
     const compiler = isCpp ? "clang++" : "clang";
-    // 1) Compile source → a.wasm inside the package's virtual filesystem.
+    const srcRe = isCpp ? /\.(cpp|cc|cxx)$/i : /\.c$/i;
+    const hdrRe = /\.(h|hpp)$/i;
+    // Mount every source AND header so #include resolves; hand only the
+    // sources to clang (headers are included, never compiled directly).
+    const mount = {};
+    const sources = [];
+    const projFiles = Array.isArray(files) ? files.filter((f) => srcRe.test(f.name) || hdrRe.test(f.name)) : [];
+    if (projFiles.length > 1) {
+      for (const f of projFiles) {
+        mount[f.name] = f.code || "";
+        if (srcRe.test(f.name)) sources.push(f.name);
+      }
+      // Compile the active file first so its main() wins if several define one.
+      if (activeName && sources.includes(activeName)) {
+        sources.splice(sources.indexOf(activeName), 1);
+        sources.unshift(activeName);
+      }
+    }
+    if (sources.length === 0) {
+      const srcName = isCpp ? "main.cpp" : "main.c";
+      mount[srcName] = code;
+      sources.push(srcName);
+    }
     const compile = await _clangPkg.entrypoint.run({
-      args: [compiler === "clang++" ? "clang++" : "clang", srcName, "-o", "a.wasm", "-O2"],
-      mount: { "/src": { [srcName]: code } },
+      args: [compiler, ...sources, "-o", "a.wasm", "-O2"],
+      mount: { "/src": mount },
       cwd: "/src",
     });
     const compileResult = await compile.wait();
     if (compileResult.code !== 0) {
       return { ok: false, output: "", error: (compileResult.stderr || "Compilation failed").slice(0, 500) };
     }
-    // 2) Run the compiled program.
     const wasmBytes = await _clangPkg.fs?.readFile?.("/src/a.wasm");
     if (wasmBytes) {
       const prog = await sdk.Wasmer.fromFile(wasmBytes);
@@ -2117,7 +2394,7 @@ async function runProjectCFamily(code, isCpp) {
   }
 }
 
-async function runProjectLua(code) {
+async function runProjectLua(code, files = null) {
   try {
     if (!_luaFactory) {
       const mod = await import(/* @vite-ignore */ "https://esm.sh/wasmoon@1.16.0");
@@ -2129,11 +2406,21 @@ async function runProjectLua(code) {
   let out = "";
   let lua;
   try {
+    // Mount every .lua file so require("helpers") resolves for real.
+    const luaFiles = Array.isArray(files) ? files.filter((f) => /\.lua$/i.test(f.name)) : [];
+    if (luaFiles.length > 1) {
+      for (const f of luaFiles) {
+        try { await _luaFactory.mountFile(f.name, f.code || ""); } catch {}
+      }
+    }
     lua = await _luaFactory.createEngine();
     // Capture Lua's print() into our output.
     lua.global.set("print", (...args) => {
       out += args.map((a) => (a === undefined || a === null ? "nil" : String(a))).join("\t") + "\n";
     });
+    if (luaFiles.length > 1) {
+      try { await lua.doString('package.path = "./?.lua;" .. package.path'); } catch {}
+    }
     await lua.doString(code);
     return { ok: true, output: out.replace(/\n$/, "") };
   } catch (e) {
@@ -2540,24 +2827,59 @@ async function generateGeneralLessons(progressMap, signal, { customTopic = null,
 
 // Concept lessons for Hardware / Understanding-AI sections: teaching text + a
 // multiple-choice question, matching the hand-built puzzle/predict style.
+// Each AI / Hardware class generates within ITS OWN scope. Previously the whole
+// tab shared one description, so "How Circuits Work" was asked to cover CPUs and
+// memory too, and duly produced CPU lessons inside the circuits class. The `tab`
+// field lets us tell each class what its SIBLINGS own, so a lesson lands where a
+// learner would expect to find it.
 const CONCEPT_SECTIONS = {
-  hardware: {
-    label: "how computers and electronics work",
-    scope: "CPUs, memory, bits/binary, circuits, electricity, LEDs, resistors, transistors, Arduino, Raspberry Pi, and how physical computers work",
-  },
-  ai: {
-    label: "how AI works and how to build with it",
-    scope: "what AI is, how models learn from data, why AI can be wrong, prompts, APIs, tokens, training, and how apps use AI",
-  },
+  // ---------- AI tab ----------
+  ai_general: { tab: "ai", label: "what AI actually is",
+    scope: "what AI is and is not, learning patterns from examples instead of hand-written rules, why \"intelligence\" is a loaded word here, where AI already shows up in ordinary life, and why it can be confidently wrong" },
+  ai_ml: { tab: "ai", label: "machine learning — how machines learn from data",
+    scope: "the difference between training a model and using one, what an example and a label are, why data quality matters more than sheer quantity, the guess-check-adjust loop, and what it means to learn the wrong pattern" },
+  ai_nn: { tab: "ai", label: "neural networks — the design behind modern AI",
+    scope: "neurons as tiny simple units, weights and biases, how layers build from simple features up to whole concepts, why many small parts beat one clever one, and why data plus hardware finally made them work" },
+  ai_llm: { tab: "ai", label: "large language models and chatbots",
+    scope: "predicting the next word, tokens and context, why LLMs hallucinate confidently, why a specific prompt gets a better answer, and what a chatbot is really doing when it replies" },
+  ai_vision: { tab: "ai", label: "image AI — how AI sees and makes pictures",
+    scope: "an image as a grid of numbers, finding edges and shapes and objects in those numbers, and how image generators build a brand-new picture out of learned concepts rather than copying one" },
+  ai_using: { tab: "ai", label: "using and building with AI",
+    scope: "writing clear prompts, what an API is, sending a request and handling the response, checking AI output before trusting it, and how a real app plugs an AI into itself" },
+
+  // ---------- Hardware tab ----------
+  hw_general: { tab: "hardware", label: "hardware basics",
+    scope: "what hardware means as opposed to software, the idea that a computer is just very carefully controlled electricity, and the main physical pieces of a machine at a glance" },
+  hw_computer: { tab: "hardware", label: "what is inside a computer",
+    scope: "the CPU as the part that does the work, RAM as temporary workspace, storage as permanent files, bits and bytes and why everything is ones and zeros, and how those parts hand work to each other" },
+  hw_circuits: { tab: "hardware", label: "how circuits work",
+    scope: "a circuit as a complete loop, what a switch physically does to that loop, voltage as pressure and current as flow, series versus parallel paths, conductors and insulators, and what happens when a loop is broken or short-circuited" },
+  hw_components: { tab: "hardware", label: "electronic components and how to use them",
+    scope: "LEDs and why polarity matters, resistors limiting current to protect parts, transistors as switches with no moving parts, capacitors storing charge, and how to wire each part without destroying it" },
+
+  // Fallbacks, used only if a class id is ever missing from the list above.
+  ai: { tab: "ai", label: "how AI works and how to build with it",
+    scope: "what AI is, how models learn from data, why AI can be wrong, prompts, APIs, tokens, training, and how apps use AI" },
+  hardware: { tab: "hardware", label: "how computers and electronics work",
+    scope: "CPUs, memory, bits/binary, circuits, electricity, LEDs, resistors, transistors, Arduino, Raspberry Pi, and how physical computers work" },
 };
 async function generateConceptLessons(section, { customTopic = null, count = null, priorTitles = [], difficulty = null, signal } = {}) {
   const cfg = CONCEPT_SECTIONS[section];
   if (!cfg) throw new Error("unknown-section");
   const howMany = count && count >= 1 && count <= 10 ? count : 4;
   const diff = difficultyClause(difficulty);
+  // Name the neighbouring classes explicitly. Telling the model what this class
+  // IS leaves too much room; telling it what belongs to the class next door is
+  // what actually keeps CPU lessons out of the circuits class.
+  const siblings = Object.entries(CONCEPT_SECTIONS)
+    .filter(([id, c]) => c.tab === cfg.tab && id !== section && id !== cfg.tab)
+    .map(([, c]) => c.label);
+  const lane = siblings.length
+    ? ` STAY IN THIS CLASS'S LANE — this matters more than anything else here. This class is ONLY about ${cfg.label}, meaning: ${cfg.scope}. These topics belong to OTHER, SEPARATE classes and must never be the subject of a lesson you write here: ${siblings.join("; ")}. You may refer to them in a passing sentence for context, but every lesson's actual subject must sit inside this class's scope. A learner who opened this class expects to find only ${cfg.label}.`
+    : "";
   const focus = customTopic
-    ? `Focus every lesson specifically on: "${customTopic}" (within ${cfg.label}).`
-    : `Cover fresh sub-topics about ${cfg.scope}. Avoid repeating these already-covered titles: ${(priorTitles || []).join(", ") || "none"}.`;
+    ? `Focus every lesson specifically on: "${customTopic}" (within ${cfg.label}).${lane}`
+    : `Cover fresh sub-topics drawn from: ${cfg.scope}. Avoid repeating these already-covered titles: ${(priorTitles || []).join(", ") || "none"}.${lane}`;
   const sys =
     `You generate beginner lessons about ${cfg.label}. Each lesson TEACHES with a clear plain-language explanation, then asks ONE multiple-choice question to check understanding. ` +
     "CRITICAL: Respond with ONLY valid JSON. No prose before or after. No markdown fences. Start with { and end with }. " +
@@ -3031,6 +3353,16 @@ async function gradeMarkupReal(kind, code, realChecks) {
       let checks;
       try {
         const doc = win.document;
+        // If nothing rendered at all, that is NOT the same as failing the checks.
+        // Reporting "every check unmet" would tell a learner their correct answer
+        // was wrong, when the truth is we never got a page to look at. Say so.
+        if (doc && doc.body && doc.body.children.length === 0 && String(code || "").trim()) {
+          try { document.body.removeChild(iframe); } catch {}
+          resolve({ verdict: "fail", real: true, renderFailed: true,
+            checks: realChecks.map((c) => ({ label: c.label, met: false })),
+            feedback: "Your code didn't render at all, so there was nothing to check — that's usually an unclosed tag or bracket rather than a wrong answer." });
+          return;
+        }
         const style = (sel) => { const el = doc.querySelector(sel); return el ? win.getComputedStyle(el) : null; };
         const ctx = { doc, win, style, code, css: kind === "css" ? code : "" };
         checks = realChecks.map((c) => { let met = false; try { met = !!c.test(ctx); } catch { met = false; } return { label: c.label, met }; });
@@ -3060,6 +3392,118 @@ function cssHasRule(css, selector, prop, valRe) {
   const pm = m[1].match(new RegExp(prop + "\\s*:\\s*([^;]+)", "i"));
   if (!pm) return false;
   return valRe ? valRe.test(pm[1].trim()) : true;
+}
+
+// ---------- Real grading for GENERATED markup lessons ----------
+// The hand-built HTML/CSS/JSX lessons carry `realChecks` as JavaScript functions.
+// The AI can't be handed that job: we would have to eval model-written code, and
+// an assertion the model invented isn't evidence — it's the same problem as an
+// AI-judged lesson wearing a "real test" badge.
+//
+// So the AI emits DATA describing what to assert, drawn from the fixed vocabulary
+// below, and OUR code compiles each spec into the same {label, test(ctx)} shape
+// gradeMarkupReal already runs against the real rendered document. The model
+// decides WHAT matters; we decide HOW it's measured. Nothing is eval'd.
+//
+// Anything we don't recognise makes the whole lesson unusable (compile returns
+// null) rather than quietly passing — an uncheckable lesson must never ship.
+const MARKUP_GRADED = ["html", "css", "jsx"];
+const MARKUP_CHECKS = {
+  // <tag> is present in the rendered document
+  exists: (s) => ({
+    label: s.label || `Has a ${s.selector} element`,
+    test: ({ doc }) => !!doc.querySelector(s.selector),
+  }),
+  // at least n of them (lists, cards, rows…)
+  count: (s) => ({
+    label: s.label || `Has at least ${s.n} ${s.selector} elements`,
+    test: ({ doc }) => doc.querySelectorAll(s.selector).length >= s.n,
+  }),
+  // present AND actually has words in it (catches empty <p></p>)
+  text: (s) => ({
+    label: s.label || (s.contains ? `${s.selector} mentions "${s.contains}"` : `${s.selector} has text in it`),
+    test: ({ doc }) => {
+      const el = doc.querySelector(s.selector);
+      if (!el) return false;
+      const t = (el.textContent || "").trim();
+      return s.contains ? t.toLowerCase().includes(String(s.contains).toLowerCase()) : t.length > 0;
+    },
+  }),
+  // attribute present and non-empty (href, src, alt…)
+  attr: (s) => ({
+    label: s.label || `${s.selector} has a ${s.name}`,
+    test: ({ doc }) => {
+      const el = doc.querySelector(s.selector);
+      if (!el) return false;
+      const v = el.getAttribute(s.name);
+      if (typeof v !== "string" || !v.trim()) return false;
+      return s.contains ? v.toLowerCase().includes(String(s.contains).toLowerCase()) : true;
+    },
+  }),
+  // wraps at least n child elements (a <div> that actually groups something)
+  children: (s) => ({
+    label: s.label || `${s.selector} wraps at least ${s.n} elements`,
+    test: ({ doc }) => {
+      const el = doc.querySelector(s.selector);
+      return !!el && el.children.length >= s.n;
+    },
+  }),
+  // the CSS source declares this property on this selector
+  cssRule: (s) => ({
+    label: s.label || `${s.selector} sets ${s.prop}`,
+    test: ({ css }) => cssHasRule(css, s.selector, s.prop, s.value ? new RegExp(escapeForRegex(s.value), "i") : null),
+  }),
+  // the browser's own computed style — proves the rule actually took effect
+  computed: (s) => ({
+    label: s.label || `${s.selector} really renders with a ${s.prop}`,
+    test: ({ style }) => {
+      const cs = style(s.selector);
+      if (!cs) return false;
+      const v = String(cs.getPropertyValue ? cs.getPropertyValue(s.prop) : cs[s.prop] || "").trim();
+      if (!v) return false;
+      return s.value ? v.toLowerCase().includes(String(s.value).toLowerCase()) : true;
+    },
+  }),
+  // something actually mounted (JSX: React rendered into #root rather than erroring)
+  rendered: (s) => ({
+    label: s.label || "Renders visible output on the page",
+    test: ({ doc }) => {
+      const root = doc.getElementById("root") || doc.getElementById("app") || doc.body;
+      if (!root) return false;
+      const enough = (root.textContent || "").trim().length > 0;
+      return s.n ? root.querySelectorAll("*").length >= s.n && enough : enough;
+    },
+  }),
+};
+function escapeForRegex(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+
+// Turn the AI's spec list into runnable checks, or null if anything is off.
+// Deliberately strict: a lesson we can't verify is a lesson we can't label real.
+function compileRealChecks(specs, kind) {
+  if (!Array.isArray(specs) || specs.length === 0 || specs.length > 6) return null;
+  const out = [];
+  for (const s of specs) {
+    if (!s || typeof s !== "object") return null;
+    const make = MARKUP_CHECKS[s.kind];
+    if (!make) return null;
+    // cssRule reads the stylesheet source, so it only means anything in a CSS lesson.
+    if (s.kind === "cssRule" && kind !== "css") return null;
+    // Selector sanity. A malformed selector would throw at grade time and the
+    // learner could never pass, so reject it here instead.
+    if (s.kind !== "rendered") {
+      if (typeof s.selector !== "string") return null;
+      const sel = s.selector.trim();
+      if (!sel || sel.length > 60 || /[<>{}]/.test(sel)) return null;
+    }
+    if ((s.kind === "count" || s.kind === "children") && !(Number.isInteger(s.n) && s.n >= 1 && s.n <= 20)) return null;
+    if (s.kind === "attr" && (typeof s.name !== "string" || !s.name.trim() || s.name.length > 30)) return null;
+    if ((s.kind === "cssRule" || s.kind === "computed") && (typeof s.prop !== "string" || !s.prop.trim() || s.prop.length > 40)) return null;
+    let compiled;
+    try { compiled = make(s); } catch { return null; }
+    if (!compiled || typeof compiled.test !== "function" || !compiled.label) return null;
+    out.push(compiled);
+  }
+  return out;
 }
 
 const MARKUP_LESSONS = {
@@ -3523,7 +3967,8 @@ function AppInner({ initialState, onPersist, onSignOut } = {}) {
         return await withRetry(() => generateGeneralLessons(progress || {}, signal, { customTopic, count, difficulty }), 3, 400, signal);
       }
       if (cls.tab === "hardware" || cls.tab === "ai") {
-        return await withRetry(() => generateConceptLessons(cls.tab, { customTopic, count, priorTitles: priorTitles || [], difficulty, signal }), 3, 400, signal);
+        // cls.id, not cls.tab — the generator needs to know WHICH class this is.
+        return await withRetry(() => generateConceptLessons(cls.id, { customTopic, count, priorTitles: priorTitles || [], difficulty, signal }), 3, 400, signal);
       }
       if (cls.mode === "real") {
         const covered = [...new Set([...(priorTopics || []), ...(priorTitles || []), ...(priorConcepts || [])])];
@@ -5673,7 +6118,7 @@ function MarkupStep({ step, onDone }) {
 
       {result && (
         <div className="cq-results" style={{ padding: "12px 0 0" }}>
-          <div className={`cq-verdict-badge ${result.verdict}`}>{result.verdict === "pass" ? (result.real ? "✓ Passed" : "✓ AI says: looks good") : (result.real ? "✗ Not yet" : "✗ AI says: not yet")}<span className="cq-verdict-note">{result.real ? "real test · checked your rendered result" : "AI-judged · preview is real"}</span></div>
+          <div className={`cq-verdict-badge ${result.verdict}`}>{result.verdict === "pass" ? (result.real ? "✓ Passed" : "✓ AI says: looks good") : result.renderFailed ? "⚠ Couldn't render" : (result.real ? "✗ Not yet" : "✗ AI says: not yet")}<span className="cq-verdict-note">{result.renderFailed ? "nothing rendered · not a judgement on your answer" : result.real ? "real test · checked your rendered result" : "AI-judged · preview is real"}</span></div>
           {result.checks?.map((c, i) => (<div key={i} className={`cq-testrow ${c.met ? "pass" : "fail"}`}><span className="cq-test-icon">{c.met ? "✓" : "✗"}</span><span className="cq-test-detail">{c.label}</span></div>))}
           {result.feedback && <p className="cq-ai-feedback">{result.feedback}</p>}
           {result.verdict === "pass" && <div className="cq-takeaway" style={{ marginTop: 12 }}>{step.why}</div>}
@@ -5693,6 +6138,28 @@ function ProjectPicker({ onStart, onBack }) {
   const [building, setBuilding] = useState(false);
   const [buildErr, setBuildErr] = useState("");
 
+  // Manual multi-file setup. `manual` holds the file rows the user is assembling;
+  // null means we're on the normal AI-planned screen.
+  const [manual, setManual] = useState(null); // null | [{name}]
+  const openManual = () => setManual([{ name: "main." + (MAIN_LANGS.includes(lang) ? PROJECT_FILE_EXT[lang] : "py") }]);
+  const closeManual = () => setManual(null);
+  const setRow = (i, name) => setManual((rows) => rows.map((r, j) => (j === i ? { name } : r)));
+  const addRow = () => setManual((rows) => [...rows, { name: "" }]);
+  const removeRow = (i) => setManual((rows) => rows.filter((_, j) => j !== i));
+  const changeMainLang = (l) => setManual((rows) => rows.map((r) => (fileBaseName(r.name) === "main" ? { name: "main." + PROJECT_FILE_EXT[l] } : r)));
+
+  const manualCheck = manual ? validateManualProject(manual.filter((r) => r.name.trim())) : { ok: false };
+  const createManual = () => {
+    const files = manual.filter((r) => r.name.trim()).map((r) => ({
+      name: r.name.trim(), lang: extToProjectLang(r.name.trim()), code: "",
+    }));
+    const check = validateManualProject(files);
+    if (!check.ok) { setBuildErr(check.error); return; }
+    const mainFile = files.find((f) => fileBaseName(f.name) === "main");
+    // Build a plan the normal editor already understands: files + the main lang.
+    onStart({ lang: mainFile.lang, files, idea: "Custom multi-file project", title: "Custom project", manual: true });
+  };
+
   // Changing language clears stale suggestions (they were for the old language).
   const pickLang = (l) => { setLang(l); setSuggestions(null); setSugErr(""); };
 
@@ -5710,6 +6177,53 @@ function ProjectPicker({ onStart, onBack }) {
     finally { setBuilding(false); }
   };
 
+  const mainRowLang = manual ? extToProjectLang((manual.find((r) => fileBaseName(r.name) === "main") || {}).name || "") : null;
+
+  if (manual) {
+    return (
+      <main className="cq-main">
+        <button className="cq-back" onClick={closeManual}>← Back</button>
+        <p className="cq-eyebrow">Project mode</p>
+        <h1 className="cq-home-title">Set up your files.</h1>
+        <p className="cq-home-sub">Build a project from several files. Every project runs the file called <strong>main</strong>. Add as many other files as you want — you can add more later too. Files are created empty.</p>
+
+        <div className="cq-proj-langrow">
+          <span className="cq-proj-langlabel">main runs in</span>
+          <div className="cq-proj-langs">
+            {MAIN_LANGS.map((l) => (
+              <button key={l} className={`cq-proj-langchip ${mainRowLang === l ? "active" : ""}`} onClick={() => changeMainLang(l)}>{PROJECT_LANG_LABEL[l]}</button>
+            ))}
+          </div>
+        </div>
+
+        <div className="cq-manual-files">
+          {manual.map((r, i) => {
+            const base = fileBaseName(r.name);
+            const isMain = base === "main";
+            const el = extToProjectLang(r.name.trim());
+            return (
+              <div className="cq-manual-row" key={i}>
+                <input className="cq-search cq-manual-name" placeholder="filename, e.g. helpers.js" value={r.name}
+                  onChange={(e) => setRow(i, e.target.value)} spellCheck={false} autoCapitalize="off" autoCorrect="off" />
+                <span className="cq-manual-lang">{el ? (PROJECT_LANG_LABEL[el] || el) : "—"}</span>
+                {isMain
+                  ? <span className="cq-manual-tag">main · runs</span>
+                  : <button className="cq-set-remove" onClick={() => removeRow(i)} aria-label="Remove file">✕</button>}
+              </div>
+            );
+          })}
+          <button className="cq-projbtn cq-manual-add" onClick={addRow}>＋ Add file</button>
+        </div>
+
+        {!manualCheck.ok && manual.filter((r) => r.name.trim()).length > 0 && (
+          <p className="cq-generr">{manualCheck.error}</p>
+        )}
+        {buildErr && <p className="cq-generr">{buildErr}</p>}
+        <button className="cq-run cq-manual-create" disabled={!manualCheck.ok} onClick={createManual}>Create project →</button>
+      </main>
+    );
+  }
+
   return (
     <main className="cq-main">
       <button className="cq-back" onClick={onBack}>← Home</button>
@@ -5725,6 +6239,8 @@ function ProjectPicker({ onStart, onBack }) {
           ))}
         </div>
       </div>
+
+      <button className="cq-projbtn cq-manual-open" onClick={openManual}>Or set up several files yourself →</button>
 
       <div className="cq-proj-own">
         <label className="cq-proj-label">Describe what you want to build</label>
@@ -5797,27 +6313,46 @@ function ProjectBuilder({ plan, onBack, onComplete, onHome, reviewMode = false, 
   const javaDisplayRef = useRef(null);
 
   // ---- File management ----
+  const [fileErr, setFileErr] = useState("");
   const addFile = () => {
     // New file defaults to the same language as the current one (most common:
-    // splitting a Python program into more Python files).
-    const base = "file" + (files.length + 1);
-    const nm = defaultFileName(lang, lang === "java" ? "Class" + (files.length + 1) : base);
+    // splitting a Python program into more Python files). Pick a basename that
+    // doesn't collide with an existing one.
+    const taken = new Set(files.map((f) => fileBaseName(f.name)));
+    let n = files.length + 1;
+    let base = "file" + n;
+    while (taken.has(base.toLowerCase())) { n++; base = "file" + n; }
+    const nm = defaultFileName(lang, lang === "java" ? "Class" + n : base);
     setFiles((prev) => [...prev, { name: nm, lang, code: "" }]);
     setActiveFile(files.length);
     setRenaming(files.length); // let them name it right away
   };
   const deleteFile = (i) => {
     if (files.length <= 1) return; // always keep at least one file
+    // The entry point can't be deleted — Run needs it.
+    if (fileBaseName(files[i].name) === "main") { setFileErr("main can't be deleted — it's the file that runs."); return; }
     setFiles((prev) => prev.filter((_, idx) => idx !== i));
     setActiveFile((a) => (a >= i && a > 0 ? a - 1 : a));
   };
   const renameFile = (i, newName) => {
     const clean = (newName || "").trim();
     if (!clean) { setRenaming(null); return; }
+    if (!/\.[a-z0-9]+$/i.test(clean)) { setFileErr(`"${clean}" needs an extension, like .py or .js.`); setRenaming(null); return; }
+    // Renaming AWAY from main is only allowed if another main already exists —
+    // otherwise the project would have no entry point.
+    const wasMain = fileBaseName(files[i].name) === "main";
+    const willBeMain = fileBaseName(clean) === "main";
+    if (wasMain && !willBeMain) { setFileErr("You can change what main runs in, but a project always needs a main."); setRenaming(null); return; }
+    // Basename must stay unique across the project.
+    const base = fileBaseName(clean);
+    if (files.some((f, idx) => idx !== i && fileBaseName(f.name) === base)) {
+      setFileErr(`Another file is already called "${base}". File names must differ before the dot.`); setRenaming(null); return;
+    }
     // Infer the language from the extension so coloring/running follow the name.
     const ext = clean.split(".").pop().toLowerCase();
-    const extToLang = { py: "py", js: "js", ts: "ts", java: "java", sql: "sql", html: "html", css: "css", jsx: "jsx", vue: "vue", svelte: "svelte", lua: "lua" };
+    const extToLang = { py: "py", js: "js", ts: "ts", java: "java", sql: "sql", html: "html", css: "css", jsx: "jsx", vue: "vue", svelte: "svelte", lua: "lua", php: "php", c: "c", h: "c", cpp: "cpp", hpp: "cpp", cc: "cpp", bas: "basic", asm: "asm" };
     const inferred = extToLang[ext] || files[i].lang;
+    setFileErr("");
     setFiles((prev) => prev.map((f, idx) => (idx === i ? { ...f, name: clean, lang: inferred } : f)));
     setRenaming(null);
   };
@@ -5874,34 +6409,46 @@ function ProjectBuilder({ plan, onBack, onComplete, onHome, reviewMode = false, 
   }, [code, reviewMode, asking, packLoading, errorHelp, concepts, plan]);
 
   const run = async () => {
-    if (!code.trim()) return;
+    // The ENTRY POINT is the file named "main" when this is a manual multi-file
+    // project — Run always runs main, regardless of which tab is open, so you
+    // can't accidentally run a helper file and get the wrong engine. Web/markup
+    // projects render the whole page, so they have no entry point and keep using
+    // the active file. If there's no main (AI-planned single-file projects), the
+    // active file IS the entry point, exactly as before.
+    const mainFile = files.find((f) => fileBaseName(f.name) === "main");
+    const runsViaMain = mainFile && (projectLangMode(mainFile.lang) === "run" || projectLangMode(mainFile.lang) === "java");
+    const entry = runsViaMain ? mainFile : current;
+    const runCode = entry.code;
+    const runLang = entry.lang || lang;
+    const runName = entry.name;
+    if (!runCode.trim()) { setOutput({ ok: false, output: "", error: `${runName} is empty — write some code in it first.` }); return; }
     setRunning(true); setOutput(null); setSrcDoc(null); setNudge(null);
     try {
       // If this project's files form a real WEB project (html + css + js/ts/jsx/p5),
       // combine them into one live page — the honest "real webpage" experience.
       const webProject = files.length > 1 && isWebProject(files);
       // A JS file + a SQL file = JavaScript querying a real database.
-      const jsPlusSql = files.length > 1 && files.some((f) => /\.js$/i.test(f.name)) && files.some((f) => /\.sql$/i.test(f.name)) && /\.js$/i.test(current.name);
+      const jsPlusSql = files.length > 1 && files.some((f) => /\.js$/i.test(f.name)) && files.some((f) => /\.sql$/i.test(f.name)) && /\.js$/i.test(runName);
 
       if (webProject) {
         setSrcDoc(markupProjectHTML(files));
         markBuilt();
         setErrorHelp(null); helpedErrorRef.current = null;
       } else if (jsPlusSql) {
-        const r = await runProjectJSWithSQL(files, current.name);
+        const r = await runProjectJSWithSQL(files, runName);
         setOutput(r);
         if (r.ok) { markBuilt(); setErrorHelp(null); helpedErrorRef.current = null; }
         else if (r.error && helpedErrorRef.current !== r.error) {
           helpedErrorRef.current = r.error;
-          try { setErrorHelp(await explainProjectError({ project: plan, code, errorText: r.error, learnedConcepts: concepts })); } catch {}
+          try { setErrorHelp(await explainProjectError({ project: plan, code: runCode, errorText: r.error, learnedConcepts: concepts })); } catch {}
         }
-      } else if (mode === "markup") {
-        setSrcDoc(markupSandboxHTML(lang, code));
+      } else if (projectLangMode(runLang) === "markup") {
+        setSrcDoc(markupSandboxHTML(runLang, runCode));
         markBuilt();
         setErrorHelp(null); helpedErrorRef.current = null;
-      } else if (mode === "java") {
+      } else if (projectLangMode(runLang) === "java") {
         // Real JVM in the browser. CheerpJ writes System.out into #console.
-        const r = await runProjectJava(code, javaConsoleRef.current, javaDisplayRef.current);
+        const r = await runProjectJava(runCode, javaConsoleRef.current, javaDisplayRef.current, files);
         setOutput(r);
         if (r.ok) {
           markBuilt();
@@ -5909,22 +6456,22 @@ function ProjectBuilder({ plan, onBack, onComplete, onHome, reviewMode = false, 
         } else if (r.error && !r.setupNeeded && helpedErrorRef.current !== r.error) {
           helpedErrorRef.current = r.error;
           try {
-            const h = await explainProjectError({ project: plan, code, errorText: r.error, learnedConcepts: concepts });
+            const h = await explainProjectError({ project: plan, code: runCode, errorText: r.error, learnedConcepts: concepts });
             setErrorHelp(h);
           } catch {}
         }
       } else {
-        // Single-file (or same-language multi-file with real imports).
-        const r = lang === "py" ? await runProjectPython(code, files, current.name)
-          : lang === "ts" ? await runProjectTS(code)
-          : lang === "lua" ? await runProjectLua(code)
-          : lang === "basic" ? runProjectBASIC(code)
-          : lang === "asm" ? runProjectAssembly(code)
-          : lang === "php" ? await runProjectPHP(code)
-          : lang === "c" ? await runProjectCFamily(code, false)
-          : lang === "cpp" ? await runProjectCFamily(code, true)
-          : lang === "sql" ? await runProjectSQL(code)
-          : runProjectJS(code, files, current.name);
+        // Single-file, or same-language multi-file with real imports. Runs `main`.
+        const r = runLang === "py" ? await runProjectPython(runCode, files, runName)
+          : runLang === "ts" ? await runProjectTS(runCode)
+          : runLang === "lua" ? await runProjectLua(runCode, files)
+          : runLang === "basic" ? runProjectBASIC(runCode)
+          : runLang === "asm" ? runProjectAssembly(runCode)
+          : runLang === "php" ? await runProjectPHP(runCode, files)
+          : runLang === "c" ? await runProjectCFamily(runCode, false, files, runName)
+          : runLang === "cpp" ? await runProjectCFamily(runCode, true, files, runName)
+          : runLang === "sql" ? await runProjectSQL(runCode)
+          : runProjectJS(runCode, files, runName);
         setOutput(r);
         if (r.ok) {
           markBuilt();
@@ -5934,7 +6481,7 @@ function ProjectBuilder({ plan, onBack, onComplete, onHome, reviewMode = false, 
           // A NEW real error → help from the error message itself, once.
           helpedErrorRef.current = r.error;
           try {
-            const h = await explainProjectError({ project: plan, code, errorText: r.error, learnedConcepts: concepts });
+            const h = await explainProjectError({ project: plan, code: runCode, errorText: r.error, learnedConcepts: concepts });
             setErrorHelp(h);
           } catch {}
         }
@@ -6009,11 +6556,18 @@ function ProjectBuilder({ plan, onBack, onComplete, onHome, reviewMode = false, 
             </div>
           ))}
           <button className="cq-filetab-add" onClick={addFile} title="New file">＋</button>
+          {fileErr && <span className="cq-file-err">{fileErr}</span>}
         </div>
         <div className="cq-editor-bar"><span className="cq-dot" /><span className="cq-dot" /><span className="cq-dot" /><span className="cq-filename">{current.name} · {PROJECT_LANG_LABEL[lang] || lang}</span></div>
         <CodeEditor code={code} setCode={setCode} onChange={() => { setOutput(null); setNudge(null); lastTypedRef.current = Date.now(); }} onKeyDown={onKeyDown} lang={lang} minHeight={240} />
         <div className="cq-buildrow">
-          <button className="cq-run" onClick={run} disabled={running || !code.trim()}>{running ? "Running…" : (mode === "markup" ? "▶ Run & preview" : "▶ Run " + current.name)}</button>
+          {(() => {
+            const mainFile = files.find((f) => fileBaseName(f.name) === "main");
+            const runsViaMain = mainFile && (projectLangMode(mainFile.lang) === "run" || projectLangMode(mainFile.lang) === "java");
+            const entry = runsViaMain ? mainFile : current;
+            const label = running ? "Running…" : (mode === "markup" && !runsViaMain ? "▶ Run & preview" : "▶ Run " + entry.name);
+            return <button className="cq-run" onClick={run} disabled={running || !entry.code.trim()}>{label}</button>;
+          })()}
           <button className="cq-hintbtn" onClick={() => ask("What should I do next?")} disabled={asking}>💡 What should I do next?</button>
         </div>
 
@@ -8172,6 +8726,15 @@ const CSS = `
 .cq-filetab-x{background:none;border:none;color:var(--ink-faint);cursor:pointer;font-size:11px;padding:0 8px 0 0;opacity:.6}
 .cq-filetab-x:hover{opacity:1;color:var(--rose)}
 .cq-filetab-add{background:none;border:1px dashed var(--line);border-radius:8px;color:var(--ink-soft);cursor:pointer;font-size:15px;padding:5px 11px;font-family:inherit}
+.cq-manual-files{display:flex;flex-direction:column;gap:10px;margin:18px 0 8px;max-width:560px}
+.cq-manual-row{display:flex;align-items:center;gap:12px}
+.cq-manual-name{flex:1;margin:0}
+.cq-manual-lang{font-size:13px;color:var(--ink-soft);min-width:92px;text-align:right}
+.cq-manual-tag{font-size:12px;color:var(--neon);border:1px solid rgba(58,201,224,.4);border-radius:99px;padding:3px 10px;white-space:nowrap}
+.cq-manual-add{align-self:flex-start;margin-top:2px}
+.cq-manual-open{margin:14px 0 2px}
+.cq-manual-create{margin-top:16px}
+.cq-file-err{font-size:12px;color:var(--rose);margin-left:10px}
 .cq-filetab-add:hover{border-color:var(--teal-deep);color:var(--teal)}
 .cq-filetab-input{background:var(--bg-3);border:1px solid var(--teal-deep);border-radius:6px;color:var(--ink);font-family:var(--mono);font-size:12.5px;padding:6px 8px;width:140px;outline:none}
 .cq-dot{width:11px;height:11px;border-radius:50%;background:var(--line)}
@@ -8341,4 +8904,157 @@ const CSS = `
   .cq-navlabel{display:none}
   .cq-classhero{padding:20px}
 }
+
+/* ============================================================
+   POLISH + HOVER LIGHTING (v80)
+   Kept in one labelled block so the whole pass is reviewable and reversible in
+   a single diff instead of scattered through 1,500 lines.
+
+   Everything you can point at lights up. The strength lives in the three
+   --hover-* tokens below, so the entire app dims or brightens from one place.
+
+   Untouched on purpose — the sacred list: syntax colours (.hl-*, --code-*),
+   the console, the editor surface, breadboard rails, macOS traffic-light dots,
+   resistor bands and LED colours. Cyberpunk stays on the shell; code stays calm.
+   ============================================================ */
+
+.cq-root{
+  --hover-lift:-2px;
+  --hover-glow:0 0 24px -2px rgba(58,201,224,.42);        /* standard */
+  --hover-glow-strong:0 0 34px -1px rgba(58,201,224,.58); /* primary actions */
+  --hover-glow-magenta:0 0 26px -2px rgba(189,84,221,.42);
+  --hover-ease:.18s cubic-bezier(.2,.7,.3,1);
+}
+
+/* --- Scrollbars. Every scrollable surface, previously default grey. */
+.cq-root ::-webkit-scrollbar{width:11px;height:11px}
+.cq-root ::-webkit-scrollbar-track{background:var(--bg-0)}
+.cq-root ::-webkit-scrollbar-corner{background:var(--bg-0)}
+.cq-root ::-webkit-scrollbar-thumb{background:linear-gradient(180deg,var(--neon-deep),var(--magenta));border-radius:99px;border:3px solid var(--bg-0)}
+.cq-root ::-webkit-scrollbar-thumb:hover{background:linear-gradient(180deg,var(--neon),var(--magenta))}
+.cq-root{scrollbar-color:var(--neon-deep) var(--bg-0);scrollbar-width:thin}
+
+/* --- Header: lit hairline along the bottom edge; the logo answers on hover. */
+.cq-header::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px;
+  background:linear-gradient(90deg,transparent,var(--neon),var(--magenta),transparent);opacity:.6;pointer-events:none}
+.cq-logo{box-shadow:0 0 22px -6px var(--neon);transition:box-shadow .25s,transform .25s}
+.cq-name{transition:text-shadow .25s}
+.cq-brand:hover .cq-logo{transform:translateY(-1px);box-shadow:0 0 30px -2px rgba(58,201,224,.5),0 0 46px -6px rgba(189,84,221,.4)}
+.cq-brand:hover .cq-name{text-shadow:0 0 20px rgba(58,201,224,.55)}
+
+/* --- Tabs: the active tab was flat violet, off the cyan/magenta palette. */
+.cq-tab{position:relative}
+.cq-tab:hover:not(.on){color:var(--ink);background:rgba(58,201,224,.09);box-shadow:inset 0 0 0 1px rgba(58,201,224,.28)}
+.cq-tab.on{background:linear-gradient(135deg,var(--neon-deep),var(--magenta));color:#fff;
+  box-shadow:0 8px 20px -10px var(--magenta),0 0 26px -6px rgba(58,201,224,.45);text-shadow:0 0 14px rgba(255,255,255,.35)}
+
+/* --- Section headings trail into a rule, so the page reads as sections. */
+.cq-section-label{display:flex;align-items:center;gap:12px}
+.cq-section-label::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--line),transparent)}
+
+/* ============================================================
+   HOVER LIGHTING
+   Group A — pills, chips and buttons. Every small interactive control.
+   ============================================================ */
+.cq-projbtn,.cq-clearbtn,.cq-navbtn,.cq-sortbtn,.cq-labsave-btn,.cq-circ-pbtn,.cq-circ-tool,
+.cq-ai-chip,.cq-hintbtn,.cq-proj-langchip,.cq-langtab,.cq-set-mode,.cq-diff-btn,.cq-addset,
+.cq-filetab-add,.cq-profilechip,.cq-proj-dot,.cq-searchclear,.cq-lessonhelp-toggle,
+.cq-chapter-save,.cq-chapter-cancel,.cq-set-remove,.cq-wire-swatch,.cq-ai-celltgt,.cq-tab{
+  transition:border-color var(--hover-ease),color var(--hover-ease),background var(--hover-ease),
+             box-shadow var(--hover-ease),transform var(--hover-ease)}
+.cq-projbtn:hover,.cq-clearbtn:hover,.cq-navbtn:hover:not(:disabled),.cq-sortbtn:hover,
+.cq-labsave-btn:hover,.cq-circ-pbtn:hover,.cq-circ-tool:hover,.cq-ai-chip:hover:not(:disabled),
+.cq-hintbtn:hover,.cq-proj-langchip:hover,.cq-langtab:hover,.cq-set-mode:hover,.cq-diff-btn:hover,
+.cq-addset:hover,.cq-filetab-add:hover,.cq-profilechip:hover,.cq-proj-dot:hover,.cq-searchclear:hover,
+.cq-lessonhelp-toggle:hover,.cq-chapter-save:hover,.cq-ai-celltgt:hover,.cq-manual-add:hover,.cq-manual-open:hover{
+  transform:translateY(var(--hover-lift));border-color:var(--neon);color:var(--ink);
+  box-shadow:var(--hover-glow)}
+/* Dismiss and delete light rose, not cyan — they shouldn't read as the same
+   action as everything else on the page. */
+.cq-chapter-cancel,.cq-set-remove,.cq-filetab-x,.cq-labsave-del,.cq-proj-nudge-x{
+  transition:color var(--hover-ease),border-color var(--hover-ease),box-shadow var(--hover-ease),transform var(--hover-ease)}
+.cq-chapter-cancel:hover,.cq-set-remove:hover,.cq-filetab-x:hover,.cq-labsave-del:hover,.cq-proj-nudge-x:hover{
+  transform:translateY(var(--hover-lift));color:var(--rose);border-color:var(--rose);opacity:1;
+  box-shadow:0 0 22px -4px rgba(255,107,168,.4)}
+.cq-wire-swatch:hover{transform:translateY(var(--hover-lift)) scale(1.06);box-shadow:var(--hover-glow)}
+.cq-chapter-rename:hover,.cq-draghandle:hover{opacity:1;color:var(--neon);
+  text-shadow:0 0 14px rgba(58,201,224,.7)}
+
+/* Group B — the pieces a learner taps inside a lesson. */
+.cq-piece,.cq-banktok,.cq-orderchoice,.cq-builtpiece,.cq-orderitem,.cq-choice,.cq-set-topic{
+  transition:border-color var(--hover-ease),box-shadow var(--hover-ease),transform var(--hover-ease),background var(--hover-ease)}
+.cq-piece:hover,.cq-banktok:hover:not(:disabled),.cq-choice:hover:not(:disabled){
+  transform:translateY(var(--hover-lift));border-color:var(--neon);box-shadow:var(--hover-glow)}
+.cq-orderchoice:hover{transform:translateX(4px);border-color:var(--neon);box-shadow:var(--hover-glow)}
+.cq-builtpiece:hover,.cq-orderitem:hover{transform:translateY(var(--hover-lift));box-shadow:var(--hover-glow)}
+
+/* Group C — rows and panels. */
+.cq-lessonrow:hover{border-color:var(--neon-deep);box-shadow:0 0 22px -6px rgba(58,201,224,.34)}
+.cq-lessonrow.resume{box-shadow:0 0 0 1px var(--neon),0 8px 26px -10px rgba(58,201,224,.4)}
+.cq-labsave-item,.cq-filetab{transition:background var(--hover-ease),box-shadow var(--hover-ease),border-color var(--hover-ease)}
+.cq-labsave-item:hover{box-shadow:inset 0 0 0 1px rgba(58,201,224,.4),var(--hover-glow)}
+.cq-filetab:hover{border-color:var(--neon-deep);box-shadow:0 0 18px -6px rgba(58,201,224,.34)}
+.cq-chapter{position:relative;overflow:hidden;transition:border-color .2s,box-shadow .2s}
+.cq-chapter::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;
+  background:linear-gradient(180deg,var(--neon),var(--magenta));opacity:.5;transition:opacity .2s}
+.cq-chapter:hover{border-color:var(--neon-deep);box-shadow:0 0 30px -12px rgba(58,201,224,.32)}
+.cq-chapter:hover::before{opacity:1}
+.cq-teacher{transition:border-color var(--hover-ease),box-shadow var(--hover-ease)}
+.cq-teacher:hover{border-color:var(--neon-deep);box-shadow:var(--shadow),0 0 30px -14px rgba(58,201,224,.3)}
+
+/* Group D — primary actions light up hardest. */
+.cq-run,.cq-manual-create,.cq-genbtn,.cq-continue,.cq-navbtn.primary,.cq-labsave-btn.primary{
+  transition:transform var(--hover-ease),filter var(--hover-ease),box-shadow var(--hover-ease)}
+.cq-run:hover:not(:disabled),.cq-manual-create:hover:not(:disabled),.cq-genbtn:hover:not(:disabled),.cq-continue:hover,
+.cq-navbtn.primary:hover:not(:disabled),.cq-labsave-btn.primary:hover{
+  transform:translateY(var(--hover-lift));filter:brightness(1.08);box-shadow:var(--hover-glow-strong)}
+
+/* Group E — the two big hero buttons. */
+.cq-resumehero:hover{box-shadow:0 18px 40px -22px var(--neon-deep),0 0 38px -10px rgba(58,201,224,.4)}
+.cq-projhero:hover{box-shadow:0 18px 40px -22px var(--magenta),var(--hover-glow-magenta)}
+
+/* Group F — inputs answer to hover, not only to focus. */
+.cq-search,.cq-modal-textarea,.cq-set-topic,.cq-chapter-input{transition:border-color var(--hover-ease),box-shadow var(--hover-ease)}
+.cq-search:hover,.cq-modal-textarea:hover,.cq-set-topic:hover{border-color:var(--neon-deep);box-shadow:0 0 20px -8px rgba(58,201,224,.3)}
+.cq-search:focus,.cq-modal-textarea:focus,.cq-set-topic:focus,.cq-chapter-input:focus{
+  outline:none;border-color:var(--neon);box-shadow:0 0 0 3px var(--neon-ghost),0 0 28px -6px rgba(58,201,224,.45)}
+
+/* Group G — back link and small text controls. */
+.cq-back{transition:color var(--hover-ease),transform var(--hover-ease),text-shadow var(--hover-ease)}
+.cq-back:hover{color:var(--neon);transform:translateX(-3px);text-shadow:0 0 16px rgba(58,201,224,.6)}
+.cq-linklike:hover{text-shadow:0 0 14px rgba(255,107,168,.6)}
+
+/* Group H — lab canvases. Ports and legs are the fiddliest targets in the app. */
+.cq-port{transition:border-color var(--hover-ease),background var(--hover-ease),box-shadow var(--hover-ease),transform var(--hover-ease)}
+.cq-port:hover{transform:translate(-50%,-50%) scale(1.25);box-shadow:0 0 16px 0 rgba(58,201,224,.7)}
+.cq-circ-comp{transition:border-color var(--hover-ease),box-shadow var(--hover-ease)}
+.cq-circ-comp:hover{border-color:var(--neon);box-shadow:var(--hover-glow)}
+.cq-tb-legdot:hover{filter:drop-shadow(0 0 6px rgba(58,201,224,.9))}
+.cq-tb-hole:hover{filter:drop-shadow(0 0 5px rgba(58,201,224,.8))}
+
+/* --- Grading badges: a pass should read as a pass across the room. */
+.cq-classmode.real,.cq-classmode.sql{box-shadow:0 0 16px -6px rgba(58,201,224,.5)}
+.cq-verdict-badge.pass{box-shadow:0 0 30px -8px rgba(58,201,224,.45)}
+.cq-verdict-badge.fail{box-shadow:0 0 30px -10px rgba(255,107,168,.4)}
+.cq-takeaway{border-color:rgba(58,201,224,.45);box-shadow:0 0 36px -12px rgba(58,201,224,.35),inset 0 1px 0 rgba(255,255,255,.03)}
+
+/* --- Editor chrome only. The code surface below is left exactly as it was. */
+.cq-editor-bar{position:relative}
+.cq-editor-bar::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;
+  background:linear-gradient(90deg,transparent,var(--neon-deep),var(--magenta),transparent);opacity:.5}
+
+/* --- Modal and footer. */
+.cq-modal{box-shadow:0 30px 80px -20px rgba(0,0,0,.7),0 0 0 1px var(--line),0 0 50px -12px rgba(58,201,224,.3)}
+.cq-footer{position:relative}
+.cq-footer::before{content:"";position:absolute;top:-1px;left:0;right:0;height:1px;
+  background:linear-gradient(90deg,transparent,var(--neon-deep),transparent);opacity:.5}
+
+/* Touch devices have no hover state; :hover there fires on tap and sticks, so
+   the lift and glow are limited to pointers that can actually hover. */
+@media (hover:none){
+  .cq-root{--hover-lift:0px}
+}
+
+/* Motion is already disabled globally under prefers-reduced-motion; these are
+   transitions and static glows, so that rule covers them. */
 `;
