@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useMemo, useSyncExternalStore } fro
 // Build marker — check this in the browser console to confirm which version is
 // actually running: type  window.__CQ_VERSION  in DevTools. If it's not the
 // value below, your browser/Vercel is serving an older bundle.
-const CQ_VERSION = "2026-07-12-v83-manual-multifile";
+const CQ_VERSION = "2026-07-12-v91-vue-svelte-realchecks";
 if (typeof window !== "undefined") {
   window.__CQ_VERSION = CQ_VERSION;
   try { console.log("%cCodeQuest build: " + CQ_VERSION, "color:#3ac9e0;font-weight:bold"); } catch {}
@@ -1097,6 +1097,8 @@ const MARKUP_SCAFFOLD = {
        '<div class="box">Box</div>\n<button class="btn">Button</button>\n<p class="text">Some text to style.</p>\n<ul class="list"><li>One</li><li>Two</li></ul>\n' +
        "So every selector you use — in the solution AND in the checks — must target .box, .btn, .text, .list, li, or a plain tag like div/button/p/ul. Never invent a class that isn't there.",
   jsx: "The page provides <div id=\"root\"></div> with React, ReactDOM and Babel already loaded. The learner's JSX must render into #root, e.g. ReactDOM.createRoot(document.getElementById(\"root\")).render(<App />).",
+  vue: "The page provides <div id=\"app\"></div> with Vue 3 already loaded as the global `Vue`. The learner's code must create and mount an app onto #app, e.g. Vue.createApp({ data(){return{msg:'Hi'}}, template:'<h1>{{msg}}</h1>' }).mount('#app'). Checks run against the rendered DOM inside #app, so target the elements the component renders (h1, p, button, li…), NOT Vue syntax.",
+  svelte: "The learner writes a single Svelte component (script + markup). It is compiled and mounted into <div id=\"app\"></div>. Checks run against the rendered DOM inside #app, so target the elements the component renders (h1, p, button, li…), NOT Svelte syntax. Keep components self-contained — no imports.",
 };
 const markupTopicSystemFor = (langLabel, kind, count = null) =>
   `You design a small THEMED set of beginner ${langLabel} exercises grouped under one topic. ` +
@@ -1526,6 +1528,72 @@ function loadPyodide() {
 //  5. The example shown in the teaching text doesn't contradict the tests
 //     (e.g. teach says print "hi" but tests want "Hi") — the exact class of bug
 //     that trips up beginners who follow the example literally.
+// Concept-honesty guard for CODING lessons. Unlike the concept-tab gate (which
+// can only count vocabulary because there's no code), a coding lesson has a
+// runnable solution — so we can check the declared `concept` against what the
+// solution ACTUALLY does. If a lesson says concept:"recursion" but its solution
+// never calls itself, the label is dishonest: that label feeds the cross-language
+// "already learned this" filter, so a mislabel silently corrupts a learner's map
+// of what they know. We only gate concepts with an UNAMBIGUOUS code signature —
+// if a concept has no clean signal (e.g. "variables"), we don't guess.
+//
+// Returns { ok } or { ok:false, reason }. Language-agnostic by design: it looks
+// for the structural signal in the solution source across C-family, Python, JS,
+// Lua, PHP, Ruby — the signatures are chosen to hold in all of them.
+const CONCEPT_CODE_SIGNATURES = {
+  // concept (already normalized) -> test(solutionSource, fnName) => bool present
+  "recursion": (s, fn) => {
+    if (!fn) return /\b([A-Za-z_$][\w$]*)\s*\([^)]*\)[\s\S]*\b\1\s*\(/.test(s);
+    // the function must call itself somewhere in its body
+    const calls = (s.match(new RegExp("\\b" + fn.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*\\(", "g")) || []).length;
+    return calls >= 2; // one definition-site reference + at least one recursive call
+  },
+  "for loop": (s) => /\bfor\b/.test(s),
+  "while loop": (s) => /\bwhile\b/.test(s),
+  "conditionals": (s) => /\bif\b/.test(s) || /\?[^?:]+:/.test(s),
+  "dictionary": (s) => /\{[^}]*:[^}]*\}|\bdict\s*\(|\bnew\s+Map\b|=>/.test(s) || /\[["'][^"']+["']\]\s*=/.test(s),
+  "recursion ": null,
+};
+// A few concepts imply a loop of SOME kind; accept either loop keyword.
+const CONCEPT_LOOP_ANY = new Set(["for loop", "while loop", "loop", "iteration"]);
+function conceptMatchesCode(concept, solution, fnName) {
+  const c = (concept || "").toString();
+  const s = (solution || "").toString();
+  if (!c || !s) return { ok: true }; // nothing to check
+  // Loops: the specific keyword may differ from what the AI named (it might teach
+  // "for loop" using a while, or vice-versa). Accept any loop for loop-family
+  // concepts, so we only reject a "for loop" lesson with NO loop at all.
+  if (CONCEPT_LOOP_ANY.has(c)) {
+    if (!/\b(for|while|forEach|map\s*\(|\.each\b)\b/.test(s) && !/\bfor\b|\bwhile\b/.test(s)) {
+      return { ok: false, reason: `concept "${c}" but the solution has no loop` };
+    }
+    return { ok: true };
+  }
+  const sig = CONCEPT_CODE_SIGNATURES[c];
+  if (typeof sig !== "function") return { ok: true }; // no clean signal → don't gate
+  if (!sig(s, fnName)) return { ok: false, reason: `concept "${c}" not reflected in the solution` };
+  return { ok: true };
+}
+
+// Module-scope concept normalizer, mirroring the one inside generateTopicBatch,
+// so validateLesson can canonicalize a concept the same way before matching a
+// signature. Kept deliberately small — lowercase, strip punctuation, map the
+// common synonyms that have code signatures.
+const CONCEPT_CHECK_SYNONYMS = {
+  "for loops": "for loop", "for-loop": "for loop", "looping": "for loop", "loops": "for loop",
+  "iterate": "for loop", "iteration": "for loop", "while loops": "while loop",
+  "conditional": "conditionals", "if statement": "conditionals", "if statements": "conditionals",
+  "if else": "conditionals", "if/else": "conditionals", "recursive": "recursion",
+  "recursive function": "recursion", "dictionaries": "dictionary", "dict": "dictionary",
+  "dicts": "dictionary", "hashmap": "dictionary",
+};
+function normalizeConceptForCheck(c) {
+  let s = (c || "").toString().toLowerCase().trim();
+  s = s.replace(/\(\s*\)/g, "").replace(/[^a-z0-9 /+-]/g, "").replace(/\s+/g, " ").trim();
+  if (CONCEPT_CHECK_SYNONYMS[s]) s = CONCEPT_CHECK_SYNONYMS[s];
+  return s;
+}
+
 async function validateLesson(L, classId) {
   // Markup lessons (HTML/CSS/JSX) aren't function-shaped, so they're checked
   // first and differently: we RENDER the author's own solution and require it to
@@ -1605,6 +1673,13 @@ async function validateLesson(L, classId) {
     // AI-judged languages: we can't run them, so we can't deep-validate. Accept
     // if the basic shape is present (the AI judge grades leniently at runtime).
     return { ok: true };
+  }
+  // Concept honesty: the declared concept must be visible in the solution. Runs
+  // after the solution has passed its tests (so we know the code is real), and
+  // only for concepts with an unambiguous code signature — otherwise skipped.
+  if (L.concept && L.solution) {
+    const cm = conceptMatchesCode(normalizeConceptForCheck(L.concept), L.solution, L.fnName);
+    if (!cm.ok) return { ok: false, reason: cm.reason };
   }
   // 5: example-vs-tests consistency. If the teaching text or example shows a
   // concrete expected output/value, make sure it doesn't contradict the tests.
@@ -1688,6 +1763,36 @@ const MAIN_LANGS = ["py", "js", "ts", "java", "lua", "php", "c", "cpp"];
 const ADDABLE_LANGS = ["py", "js", "ts", "java", "lua", "php", "c", "cpp", "h", "hpp", "sql"];
 const MANUAL_BLOCKED_LANGS = ["basic", "asm"]; // single-file only, never in a manual project
 
+// One-click starting points. Each is just a list of file names — all created
+// EMPTY, exactly like assembling them by hand. Only combinations that genuinely
+// run or render are here; C++/Lua/PHP are left out until their runners are
+// confirmed live, so we never offer a one-click start for something that can't
+// actually run. The list is validated by a test against validateManualProject /
+// isWebProject, so a template can never ship in a state the builder would reject.
+const PROJECT_TEMPLATES = [
+  { id: "web", label: "Web page", hint: "HTML + CSS + JavaScript", files: ["index.html", "style.css", "main.js"] },
+  { id: "web-plain", label: "Web page (plain)", hint: "HTML + CSS", files: ["index.html", "style.css"] },
+  { id: "web-ts", label: "Web page + TypeScript", hint: "HTML + CSS + TypeScript", files: ["index.html", "style.css", "main.ts"] },
+  { id: "react", label: "React page", hint: "HTML + CSS + JSX", files: ["index.html", "style.css", "App.jsx"] },
+  { id: "vue", label: "Vue page", hint: "HTML + CSS + Vue", files: ["index.html", "style.css", "App.vue"] },
+  { id: "svelte", label: "Svelte page", hint: "HTML + CSS + Svelte", files: ["index.html", "style.css", "App.svelte"] },
+  { id: "p5", label: "p5 sketch", hint: "HTML + a p5 drawing", files: ["index.html", "sketch.js"], langs: { "sketch.js": "p5" } },
+  { id: "py-helper", label: "Python + helper", hint: "main.py + helpers.py", files: ["main.py", "helpers.py"] },
+  { id: "py-js", label: "Python + JavaScript", hint: "Python calling a real JS helper", files: ["main.py", "helpers.js"] },
+  { id: "js-helper", label: "JavaScript + helper", hint: "main.js + helpers.js", files: ["main.js", "helpers.js"] },
+  { id: "js-sql", label: "JS + database", hint: "JavaScript querying real SQLite", files: ["main.js", "data.sql"] },
+  { id: "c-header", label: "C + header", hint: "main.c + helpers.c + helpers.h", files: ["main.c", "helpers.c", "helpers.h"] },
+  { id: "java-2", label: "Java, two classes", hint: "main.java + Helper.java", files: ["main.java", "Helper.java"] },
+];
+// Turn a template into the {name, lang, code} file list the editor expects.
+function templateFiles(tpl) {
+  return tpl.files.map((name) => ({
+    name,
+    lang: (tpl.langs && tpl.langs[name]) || extToProjectLang(name),
+    code: "",
+  }));
+}
+
 // The basename is the name with its extension stripped: "helpers.js" -> "helpers".
 // Uniqueness is enforced on the BASENAME, not the full name, so "helpers.js" and
 // "helpers.py" collide. This also blocks a second "main.*" and, as a bonus,
@@ -1716,12 +1821,20 @@ function validateManualProject(files) {
     const nm = String(f.name || "").trim();
     if (!nm) return { ok: false, error: "A file has no name yet." };
     if (!/\.[a-z0-9]+$/i.test(nm)) return { ok: false, error: `"${nm}" needs a file extension, like .py or .js.` };
-    const base = fileBaseName(nm);
-    if (seen.has(base)) return { ok: false, error: `Two files are both called "${base}". File names must be different (before the dot).` };
-    seen.add(base);
     const el = extToProjectLang(nm);
     if (!el) return { ok: false, error: `".${nm.split(".").pop()}" isn't a file type you can use here.` };
     if (MANUAL_BLOCKED_LANGS.includes(el)) return { ok: false, error: `${PROJECT_LANG_LABEL[el] || el} can only be used in single-file projects.` };
+    // C/C++ headers deliberately share their stem with a source file
+    // (helpers.h pairs with helpers.c via #include "helpers.h"). That's the
+    // correct idiom, not a collision, so headers are exempt from the basename
+    // uniqueness check. Header-vs-header still can't clash (two helpers.h).
+    const isHeader = /\.(h|hpp)$/i.test(nm);
+    const key = isHeader ? "h:" + fileBaseName(nm) : fileBaseName(nm);
+    if (seen.has(key)) {
+      const base = fileBaseName(nm);
+      return { ok: false, error: `Two files are both called "${base}"${isHeader ? " (header)" : ""}. File names must be different (before the dot).` };
+    }
+    seen.add(key);
   }
   // The main file's language must be a valid entry language.
   const mainLang = extToProjectLang(mains[0].name);
@@ -2723,8 +2836,8 @@ const LANGUAGE_CATALOG = [
   { id: "html", label: "HTML", emoji: "📄", mode: "real", blurb: "The skeleton of every web page — structure and content." },
   { id: "css", label: "CSS", emoji: "🎨", mode: "real", blurb: "Makes web pages beautiful — colors, layout, and style." },
   { id: "jsx", label: "React (JSX)", emoji: "⚛️", mode: "real", blurb: "Build interactive UIs with components — the modern web standard." },
-  { id: "vue", label: "Vue", emoji: "💚", mode: "markup", blurb: "A friendly framework for building web interfaces." },
-  { id: "svelte", label: "Svelte", emoji: "🧡", mode: "markup", blurb: "Write less code — a fresh take on building web UIs." },
+  { id: "vue", label: "Vue", emoji: "💚", mode: "real", blurb: "A friendly framework for building web interfaces." },
+  { id: "svelte", label: "Svelte", emoji: "🧡", mode: "real", blurb: "Write less code — a fresh take on building web UIs." },
   { id: "java", label: "Java", emoji: "☕", mode: "real", blurb: "Powers big apps and Android." },
   { id: "cpp", label: "C++", emoji: "⚙️", mode: "real", blurb: "Fast and powerful, used in games and systems." },
   { id: "c", label: "C", emoji: "🔧", mode: "real", blurb: "The classic low-level language behind everything." },
@@ -2765,6 +2878,9 @@ const LANGUAGE_CATALOG = [
   { id: "cobol", label: "COBOL", emoji: "🏦", mode: "ai", blurb: "Runs banking and business systems since the 1960s." },
   { id: "pascal", label: "Pascal", emoji: "📘", mode: "ai", blurb: "A classic teaching language built for clarity." },
   { id: "lisp", label: "Lisp", emoji: "🔁", mode: "ai", blurb: "One of the oldest languages — code as lists." },
+  { id: "racket", label: "Racket", emoji: "🎾", mode: "ai", blurb: "A modern Lisp built for learning and language design." },
+  { id: "tcl", label: "Tcl", emoji: "🔗", mode: "ai", blurb: "A simple scripting language — everything is a string." },
+  { id: "raku", label: "Raku", emoji: "🦋", mode: "ai", blurb: "Perl's expressive successor, with modern features." },
   { id: "assembly", label: "Assembly", emoji: "🔩", mode: "ai", blurb: "The lowest level — talking almost directly to the CPU." },
   { id: "ada", label: "Ada", emoji: "✈️", mode: "ai", blurb: "Built for safety-critical systems like aviation." },
   { id: "prolog", label: "Prolog", emoji: "🧠", mode: "ai", blurb: "Logic programming — you state facts and rules." },
@@ -2863,6 +2979,68 @@ const CONCEPT_SECTIONS = {
   hardware: { tab: "hardware", label: "how computers and electronics work",
     scope: "CPUs, memory, bits/binary, circuits, electricity, LEDs, resistors, transistors, Arduino, Raspberry Pi, and how physical computers work" },
 };
+// Signature terms per concept class. These are the words a lesson ABOUT that
+// class's subject would naturally use. They power a real off-topic gate: prompt
+// wording alone doesn't stop Gemini from writing a CPU lesson inside the circuits
+// class, so after generation we check each lesson's text against these. A lesson
+// that reads like a SIBLING class's subject — heavy in the sibling's terms, empty
+// of its own — is rejected. Deterministic, no AI judgement.
+const CONCEPT_SIGNATURES = {
+  ai_general: ["artificial intelligence", "learn", "pattern", "data", "rules", "predict", "training", "intelligent"],
+  ai_ml: ["machine learning", "training", "data", "label", "example", "model", "learn", "dataset"],
+  ai_nn: ["neural network", "neuron", "weight", "bias", "layer", "activation", "node"],
+  ai_llm: ["language model", "llm", "token", "word", "prompt", "chatbot", "text", "predict the next"],
+  ai_vision: ["image", "pixel", "vision", "picture", "camera", "edge", "generate", "photo"],
+  ai_using: ["prompt", "api", "request", "response", "app", "endpoint", "integrate", "call"],
+  hw_general: ["hardware", "physical", "electricity", "machine", "device", "component"],
+  hw_computer: ["cpu", "processor", "memory", "ram", "storage", "bit", "byte", "binary", "hard drive", "disk"],
+  hw_circuits: ["circuit", "current", "voltage", "switch", "loop", "wire", "series", "parallel", "conductor", "insulator", "short circuit", "electricity"],
+  hw_components: ["led", "resistor", "transistor", "capacitor", "polarity", "diode", "ohm", "forward voltage"],
+};
+// Count how many of a term list appear in the text. A trailing plural "s" is
+// allowed (so "neural network" matches "neural networks"), but the boundary is
+// otherwise strict so "ram" doesn't match "program".
+function countSignatureHits(text, terms) {
+  const t = " " + String(text || "").toLowerCase() + " ";
+  let n = 0;
+  for (const term of terms) {
+    const esc = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp("(^|[^a-z])" + esc + "s?([^a-z]|$)", "i");
+    if (re.test(t)) n++;
+  }
+  return n;
+}
+// Is this lesson actually about a DIFFERENT class in the same tab? We compare
+// how strongly it reads as THIS class versus the most-matching sibling. It's
+// off-topic when a sibling clearly dominates: the sibling scores at least 2 and
+// beats this class's own score by 2+. That catches a CPU/RAM or LED lesson that
+// merely brushes a circuits word ("current") in passing, without dropping a
+// genuine circuits lesson that names a neighbour once.
+function conceptLessonOffTopic(lesson, section) {
+  const cfg = CONCEPT_SECTIONS[section];
+  const own = CONCEPT_SIGNATURES[section];
+  if (!cfg || !own) return false; // no signatures for this section → don't gate
+  const text = [lesson.title, lesson.intro, lesson.q, (lesson.choices || []).join(" "), lesson.why].join(" ");
+  const ownHits = countSignatureHits(text, own);
+  let bestSibling = 0, bestId = null;
+  for (const [id, sig] of Object.entries(CONCEPT_SIGNATURES)) {
+    if (id === section) continue;
+    if (CONCEPT_SECTIONS[id] && CONCEPT_SECTIONS[id].tab !== cfg.tab) continue;
+    const h = countSignatureHits(text, sig);
+    if (h > bestSibling) { bestSibling = h; bestId = id; }
+  }
+  // Two honest signals, either one drops the lesson:
+  //  1. PURE wrong-section: uses none of this class's vocabulary and a sibling
+  //     clearly owns it (3+). Catches a CPU lesson dropped into circuits.
+  //  2. DOMINATED: a sibling beats this class by 3+ terms and scores 4+. Catches
+  //     an LED/components lesson in circuits — it says "current" (1-2 own terms)
+  //     but is unmistakably about components (led, resistor, transistor,
+  //     capacitor, polarity = 5). The 3-gap-and-4-floor is above anything the
+  //     real hand-built lessons produce (their sibling overlap tops out at a
+  //     1-term gap), so it adds no false positives.
+  return (ownHits === 0 && bestSibling >= 3) || (bestSibling - ownHits >= 3 && bestSibling >= 4);
+}
+
 async function generateConceptLessons(section, { customTopic = null, count = null, priorTitles = [], difficulty = null, signal } = {}) {
   const cfg = CONCEPT_SECTIONS[section];
   if (!cfg) throw new Error("unknown-section");
@@ -2905,6 +3083,10 @@ async function generateConceptLessons(section, { customTopic = null, count = nul
     if (!L || !L.title || !L.intro || !L.q || !L.why) continue;
     if (!Array.isArray(L.choices) || L.choices.length < 2) continue;
     if (!Number.isFinite(L.correctIndex) || L.correctIndex < 0 || L.correctIndex >= L.choices.length || Math.floor(L.correctIndex) !== L.correctIndex) continue;
+    // The real fix for the wrong-section bug: drop a lesson that is actually
+    // about a different class in this tab (e.g. a CPU lesson generated inside
+    // "How Circuits Work"). Prompt wording asks Gemini not to; this enforces it.
+    if (customTopic ? false : conceptLessonOffTopic(L, section)) continue;
     out.push({
       type: "puzzle", title: L.title, intro: L.intro, q: L.q, choices: L.choices,
       correctIndex: L.correctIndex, why: L.why,
@@ -3407,7 +3589,7 @@ function cssHasRule(css, selector, prop, valRe) {
 //
 // Anything we don't recognise makes the whole lesson unusable (compile returns
 // null) rather than quietly passing — an uncheckable lesson must never ship.
-const MARKUP_GRADED = ["html", "css", "jsx"];
+const MARKUP_GRADED = ["html", "css", "jsx", "vue", "svelte"];
 const MARKUP_CHECKS = {
   // <tag> is present in the rendered document
   exists: (s) => ({
@@ -3591,24 +3773,40 @@ const MARKUP_LESSONS = {
     { title: "Your first Vue app", teach: "Vue mounts an app onto an element. The `template` describes the HTML, and `data` holds values you can show with {{ curly braces }}.",
       example: 'Vue.createApp({\n  data() { return { msg: "Hello!" }; },\n  template: "<h1>{{ msg }}</h1>"\n}).mount("#app");',
       starter: 'Vue.createApp({\n  data() {\n    return { message: "Hello from Vue!" };\n  },\n  template: "<h1>{{ message }}</h1>"\n}).mount("#app");\n',
-      checks: ["Creates a Vue app with data", "Shows a data value in the template with {{ }}"],
+      checks: ["Renders an <h1>", "The heading shows your message text"],
+      realChecks: [
+        { label: "Renders an <h1>", test: ({ doc }) => !!doc.querySelector("#app h1, h1") },
+        { label: "The heading shows your message text", test: ({ doc }) => { const h = doc.querySelector("#app h1, h1"); return !!h && (h.textContent || "").trim().length > 0; } },
+      ],
       why: "A reactive Vue app — change the data and the page updates automatically!" },
     { title: "Vue with a list", teach: "Vue's v-for repeats an element for each item in an array. You bind it in the template to render lists from data.",
       example: 'template: "<ul><li v-for=\'item in items\'>{{ item }}</li></ul>"',
       starter: 'Vue.createApp({\n  data() {\n    return { items: ["Apple", "Banana", "Cherry"] };\n  },\n  template: "<ul><li v-for=\'item in items\'>{{ item }}</li></ul>"\n}).mount("#app");\n',
-      checks: ["Has an array in data", "Uses v-for to render the list"],
+      checks: ["Renders a list", "The list has more than one item"],
+      realChecks: [
+        { label: "Renders a list", test: ({ doc }) => !!doc.querySelector("#app ul, ul") },
+        { label: "The list has more than one item", test: ({ doc }) => doc.querySelectorAll("#app li, li").length >= 2 },
+      ],
       why: "v-for renders lists from data — a core Vue pattern!" },
   ],
   svelte: [
     { title: "Your first Svelte component", teach: "Svelte components are HTML with a <script> block for logic. Variables in the script show up in the markup with {curly braces}.",
       example: '<script>\n  let name = "world";\n</script>\n\n<h1>Hello {name}!</h1>',
       starter: '<script>\n  let name = "Svelte";\n</script>\n\n<h1>Hello {name}!</h1>\n<p>This is a Svelte component.</p>\n',
-      checks: ["Has a <script> with a variable", "Shows the variable in the markup with { }"],
+      checks: ["Renders an <h1>", "The heading has text in it"],
+      realChecks: [
+        { label: "Renders an <h1>", test: ({ doc }) => !!doc.querySelector("#app h1, h1") },
+        { label: "The heading has text in it", test: ({ doc }) => { const h = doc.querySelector("#app h1, h1"); return !!h && (h.textContent || "").trim().length > 0; } },
+      ],
       why: "A live Svelte component — clean and simple, no boilerplate!" },
     { title: "Svelte with a list", teach: "Svelte's {#each} block loops over an array to render repeated markup. It's Svelte's way of building lists.",
       example: '{#each items as item}\n  <li>{item}</li>\n{/each}',
       starter: '<script>\n  let items = ["One", "Two", "Three"];\n</script>\n\n<ul>\n  {#each items as item}\n    <li>{item}</li>\n  {/each}\n</ul>\n',
-      checks: ["Has an array in the script", "Uses {#each} to render the list"],
+      checks: ["Renders a list", "The list has more than one item"],
+      realChecks: [
+        { label: "Renders a list", test: ({ doc }) => !!doc.querySelector("#app ul, ul") },
+        { label: "The list has more than one item", test: ({ doc }) => doc.querySelectorAll("#app li, li").length >= 2 },
+      ],
       why: "The {#each} block — Svelte's elegant way to render lists!" },
   ],
 };
@@ -4425,7 +4623,7 @@ function Home({ progress, aiLessons, savedProjects = [], profileDescription = ""
       newEyebrow: "Welcome", returningEyebrow: `${tabDone} coding ${tabDone === 1 ? "lesson" : "lessons"} in`,
       newTitle: "Learn to code, from zero.", returningTitle: "Keep coding.",
       newSub: <>Brand new? Start with <b>General Coding</b> — it teaches you to <b>think</b> like a coder using puzzles and plain examples, before any specific language.</>,
-      returningSub: <>Pick up where you left off, or explore a new language — <b>44</b> to choose from.</>,
+      returningSub: <>Pick up where you left off, or explore a new language — <b>{LANGUAGE_CATALOG.length}</b> to choose from.</>,
     },
     ai: {
       newEyebrow: "Understand AI", returningEyebrow: `${tabDone} AI ${tabDone === 1 ? "lesson" : "lessons"} in`,
@@ -6147,6 +6345,13 @@ function ProjectPicker({ onStart, onBack }) {
   const addRow = () => setManual((rows) => [...rows, { name: "" }]);
   const removeRow = (i) => setManual((rows) => rows.filter((_, j) => j !== i));
   const changeMainLang = (l) => setManual((rows) => rows.map((r) => (fileBaseName(r.name) === "main" ? { name: "main." + PROJECT_FILE_EXT[l] } : r)));
+  // Fill the row list from a template. Rows stay fully editable afterwards.
+  const applyTemplate = (id) => {
+    const tpl = PROJECT_TEMPLATES.find((t) => t.id === id);
+    if (!tpl) return;
+    setBuildErr("");
+    setManual(tpl.files.map((name) => ({ name })));
+  };
 
   const manualCheck = manual ? validateManualProject(manual.filter((r) => r.name.trim())) : { ok: false };
   const createManual = () => {
@@ -6186,6 +6391,16 @@ function ProjectPicker({ onStart, onBack }) {
         <p className="cq-eyebrow">Project mode</p>
         <h1 className="cq-home-title">Set up your files.</h1>
         <p className="cq-home-sub">Build a project from several files. Every project runs the file called <strong>main</strong>. Add as many other files as you want — you can add more later too. Files are created empty.</p>
+
+        <div className="cq-tpl-row">
+          <label className="cq-tpl-label" htmlFor="cq-tpl-manual">Start from a template</label>
+          <select id="cq-tpl-manual" className="cq-tpl-select" value="" onChange={(e) => { applyTemplate(e.target.value); e.target.value = ""; }}>
+            <option value="" disabled>Fill the files below…</option>
+            {PROJECT_TEMPLATES.map((t) => (
+              <option key={t.id} value={t.id}>{t.label} · {t.hint}</option>
+            ))}
+          </select>
+        </div>
 
         <div className="cq-proj-langrow">
           <span className="cq-proj-langlabel">main runs in</span>
@@ -6241,6 +6456,22 @@ function ProjectPicker({ onStart, onBack }) {
       </div>
 
       <button className="cq-projbtn cq-manual-open" onClick={openManual}>Or set up several files yourself →</button>
+
+      <div className="cq-tpl-row">
+        <label className="cq-tpl-label" htmlFor="cq-tpl-main">Start from a template</label>
+        <select id="cq-tpl-main" className="cq-tpl-select" value="" onChange={(e) => {
+          const tpl = PROJECT_TEMPLATES.find((t) => t.id === e.target.value);
+          if (!tpl) return;
+          const files = templateFiles(tpl);
+          const mainFile = files.find((f) => fileBaseName(f.name) === "main");
+          onStart({ lang: (mainFile || files[0]).lang, files, idea: tpl.label, title: tpl.label, manual: true });
+        }}>
+          <option value="" disabled>Choose a starting point…</option>
+          {PROJECT_TEMPLATES.map((t) => (
+            <option key={t.id} value={t.id}>{t.label} · {t.hint}</option>
+          ))}
+        </select>
+      </div>
 
       <div className="cq-proj-own">
         <label className="cq-proj-label">Describe what you want to build</label>
@@ -6343,9 +6574,17 @@ function ProjectBuilder({ plan, onBack, onComplete, onHome, reviewMode = false, 
     const wasMain = fileBaseName(files[i].name) === "main";
     const willBeMain = fileBaseName(clean) === "main";
     if (wasMain && !willBeMain) { setFileErr("You can change what main runs in, but a project always needs a main."); setRenaming(null); return; }
-    // Basename must stay unique across the project.
+    // Basename must stay unique across the project — but a C/C++ header may
+    // share its stem with a source file (helpers.h + helpers.c), matching the
+    // rule in validateManualProject.
     const base = fileBaseName(clean);
-    if (files.some((f, idx) => idx !== i && fileBaseName(f.name) === base)) {
+    const isHeader = /\.(h|hpp)$/i.test(clean);
+    const clashes = files.some((f, idx) => {
+      if (idx === i) return false;
+      const fHeader = /\.(h|hpp)$/i.test(f.name);
+      return fileBaseName(f.name) === base && fHeader === isHeader;
+    });
+    if (clashes) {
       setFileErr(`Another file is already called "${base}". File names must differ before the dot.`); setRenaming(null); return;
     }
     // Infer the language from the extension so coloring/running follow the name.
@@ -8735,6 +8974,96 @@ const CSS = `
 .cq-manual-open{margin:14px 0 2px}
 .cq-manual-create{margin-top:16px}
 .cq-file-err{font-size:12px;color:var(--rose);margin-left:10px}
+.cq-tpl-row{display:flex;align-items:center;gap:12px;margin:14px 0 2px;flex-wrap:wrap}
+.cq-tpl-label{font-size:13px;color:var(--ink-soft);font-weight:600}
+.cq-tpl-select{background:var(--bg-2);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:9px 13px;font-family:inherit;font-size:14px;cursor:pointer;min-width:280px;transition:border-color var(--hover-ease),box-shadow var(--hover-ease)}
+.cq-tpl-select:hover{border-color:var(--neon-deep);box-shadow:0 0 20px -8px rgba(58,201,224,.3)}
+.cq-tpl-select:focus{outline:none;border-color:var(--neon);box-shadow:0 0 0 3px var(--neon-ghost),0 0 28px -6px rgba(58,201,224,.45)}
+/* ============================================================
+   VISUAL POLISH (v88) — refine + punch, whole app
+   One appended block so the pass is reviewable and reversible in a single diff.
+   Uses only existing tokens. Sacred surfaces (.hl-*, --code-*, .cq-console,
+   .cq-editor, breadboard rails, traffic-light dots, resistor/LED colours) are
+   never selected here. All motion is transition/transform, covered by the
+   existing prefers-reduced-motion rule.
+   ============================================================ */
+
+/* --- Titles: a touch more presence, gradient ink on the big display type. */
+.cq-home-title{
+  background:linear-gradient(180deg,var(--ink) 60%,rgba(58,201,224,.85));
+  -webkit-background-clip:text;background-clip:text;
+}
+.cq-eyebrow{position:relative;display:inline-block}
+.cq-eyebrow::after{content:"";position:absolute;left:0;right:0;bottom:-5px;height:1px;
+  background:linear-gradient(90deg,var(--neon),transparent);opacity:.5}
+
+/* --- Cards & heroes: deeper resting shadow, a lit top edge, a real lift. */
+.cq-classhero,.cq-teacher,.cq-modal,.cq-chapter{
+  box-shadow:0 1px 0 rgba(255,255,255,.03) inset, 0 12px 34px -22px rgba(0,0,0,.7), var(--shadow);
+}
+.cq-classhero::after,.cq-teacher::after{content:"";position:absolute;inset:0 0 auto 0;height:1px;
+  background:linear-gradient(90deg,transparent,rgba(58,201,224,.5),rgba(189,84,221,.4),transparent);
+  opacity:.6;pointer-events:none}
+.cq-teacher{position:relative;overflow:hidden}
+
+/* --- The lesson/class cards get a smoother lift + settle. */
+.cq-card,.cq-classcard,.cq-lessonrow,.cq-langcard{
+  transition:transform var(--hover-ease),box-shadow var(--hover-ease),border-color var(--hover-ease)}
+.cq-card:hover,.cq-classcard:hover,.cq-langcard:hover{
+  transform:translateY(-3px);border-color:var(--neon-deep);
+  box-shadow:0 18px 40px -24px rgba(0,0,0,.8),0 0 30px -14px rgba(58,201,224,.4)}
+
+/* --- Verdict badges: a soft inner glow so pass/fail reads instantly. */
+.cq-verdict-badge{position:relative;overflow:hidden}
+.cq-verdict-badge.pass{box-shadow:0 0 30px -8px rgba(58,201,224,.45),inset 0 0 20px -14px rgba(58,201,224,.6)}
+.cq-verdict-badge.fail{box-shadow:0 0 30px -10px rgba(255,107,168,.4),inset 0 0 20px -14px rgba(255,107,168,.5)}
+
+/* --- Progress bars: give the fill a moving sheen and rounded cap. */
+.cq-classbar-fill,.cq-resumehero-fill{position:relative;overflow:hidden;border-radius:99px}
+.cq-classbar-fill::after,.cq-resumehero-fill::after{content:"";position:absolute;inset:0;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.25),transparent);
+  transform:translateX(-100%);animation:cq-sheen 2.6s ease-in-out infinite}
+@keyframes cq-sheen{0%{transform:translateX(-100%)}55%,100%{transform:translateX(200%)}}
+
+/* --- The manual builder: give the rows structure and a lit main row. */
+.cq-manual-files{padding:16px;background:linear-gradient(180deg,var(--bg-1),var(--bg-2));
+  border:1px solid var(--line);border-radius:var(--radius-lg);box-shadow:var(--shadow)}
+.cq-manual-row{padding:8px 10px;border-radius:10px;transition:background var(--hover-ease)}
+.cq-manual-row:hover{background:rgba(58,201,224,.05)}
+.cq-manual-name{background:var(--bg-0)}
+.cq-manual-tag{background:linear-gradient(135deg,rgba(58,201,224,.14),rgba(189,84,221,.12));
+  box-shadow:0 0 16px -8px rgba(58,201,224,.5)}
+.cq-manual-lang{font-family:var(--mono);font-size:12px;letter-spacing:.3px}
+
+/* --- Template dropdown: a subtle chevron affordance + lifted card feel. */
+.cq-tpl-select{background-image:linear-gradient(180deg,var(--bg-2),var(--bg-1));appearance:none;
+  padding-right:34px}
+.cq-tpl-row{padding:12px 14px;border-radius:12px;background:rgba(58,201,224,.03);
+  border:1px solid rgba(58,201,224,.12)}
+
+/* --- Inputs across the app share one calm focus ring. */
+.cq-search,.cq-modal-textarea,.cq-set-topic,.cq-chapter-input,.cq-manual-name{
+  transition:border-color var(--hover-ease),box-shadow var(--hover-ease),background var(--hover-ease)}
+
+/* --- Errors: a gentle rose plate instead of bare text. */
+.cq-generr,.cq-file-err{padding:9px 12px;border-radius:9px;
+  background:rgba(255,107,168,.08);border:1px solid rgba(255,107,168,.25);
+  display:inline-block;margin-top:8px}
+.cq-file-err{margin-left:0}
+
+/* --- Tabs row: a faint rail under the whole row to seat them. */
+.cq-tabs{position:relative}
+.cq-tabs::after{content:"";position:absolute;left:0;right:0;bottom:0;height:1px;
+  background:linear-gradient(90deg,transparent,var(--line),transparent)}
+
+/* --- Buttons gain a pressed state so clicks feel physical. */
+.cq-run:active:not(:disabled),.cq-genbtn:active:not(:disabled),.cq-continue:active,
+.cq-navbtn:active:not(:disabled),.cq-projbtn:active,.cq-manual-create:active:not(:disabled){
+  transform:translateY(0) scale(.985)}
+
+/* --- Section labels: brighten the leading rule to cyan. */
+.cq-section-label::after{background:linear-gradient(90deg,rgba(58,201,224,.4),transparent)}
+
 .cq-filetab-add:hover{border-color:var(--teal-deep);color:var(--teal)}
 .cq-filetab-input{background:var(--bg-3);border:1px solid var(--teal-deep);border-radius:6px;color:var(--ink);font-family:var(--mono);font-size:12.5px;padding:6px 8px;width:140px;outline:none}
 .cq-dot{width:11px;height:11px;border-radius:50%;background:var(--line)}
