@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useMemo, useSyncExternalStore } fro
 // Build marker — check this in the browser console to confirm which version is
 // actually running: type  window.__CQ_VERSION  in DevTools. If it's not the
 // value below, your browser/Vercel is serving an older bundle.
-const CQ_VERSION = "2026-07-12-v92-grading-sort-fix";
+const CQ_VERSION = "2026-07-12-v94-css-injection-fix";
 if (typeof window !== "undefined") {
   window.__CQ_VERSION = CQ_VERSION;
   try { console.log("%cCodeQuest build: " + CQ_VERSION, "color:#3ac9e0;font-weight:bold"); } catch {}
@@ -901,6 +901,10 @@ try {
 // together exactly as they do on a real site.
 function markupProjectHTML(files) {
   const escScript = (s) => String(s || "").replace(/<\/script/gi, "<\\/script");
+  // CSS goes inside a <style> block, broken out of by </style> (not </script>).
+  // Neutralize both so learner/AI CSS can't escape the style block and inject
+  // an executable <script>.
+  const escStyle = (s) => String(s || "").replace(/<\/style/gi, "<\\/style").replace(/<\/script/gi, "<\\/script");
   const pick = (re) => files.filter((f) => re.test(f.name));
   const htmlFile = pick(/\.html?$/i)[0];
   const cssFiles = pick(/\.css$/i);
@@ -913,7 +917,7 @@ function markupProjectHTML(files) {
   const tsFile = find(/\.ts$/i);
   const jsFile = find(/\.js$/i);
 
-  const styles = cssFiles.map((f) => `<style>${escScript(f.code)}</style>`).join("\n");
+  const styles = cssFiles.map((f) => `<style>${escStyle(f.code)}</style>`).join("\n");
   const bodyHtml = htmlFile ? String(htmlFile.code || "") : '<div id="root"></div><div id="app"></div>';
   const FAIL = `catch(e){ document.body.insertAdjacentHTML('beforeend','<pre style=\\"color:#ff6ba8;white-space:pre-wrap\\">'+String(e&&e.message||e)+'</pre>'); }`;
 
@@ -1157,9 +1161,13 @@ async function withRetry(fn, attempts = 3, delayMs = 400, signal) {
       // Retrying it re-runs the whole generation — including the Gemini request —
       // and fails identically every time, so a single broken line quietly burns
       // 4x the quota per attempt. Fail on the first one and surface the real
-      // message. TypeError is deliberately NOT here: browsers throw
-      // "TypeError: Failed to fetch" for genuine network failures, which SHOULD retry.
-      if (e instanceof ReferenceError || e instanceof SyntaxError) throw e;
+      // message. We check BOTH instanceof AND e.name: an error that was
+      // re-thrown, structurally cloned, or crossed a realm can lose its
+      // prototype chain (so instanceof fails) while keeping its name. TypeError
+      // is deliberately excluded: browsers throw "TypeError: Failed to fetch"
+      // for genuine network failures, which SHOULD retry.
+      if (e instanceof ReferenceError || e instanceof SyntaxError ||
+          e?.name === "ReferenceError" || e?.name === "SyntaxError") throw e;
       lastErr = e;
       if (i < attempts - 1) {
         // Abortable delay: signal aborts the wait instead of us sitting through it
@@ -1351,7 +1359,7 @@ const difficultyClause = (level) => {
 // that accidentally passes) — so the count returned can be < requested. The
 // backfill wrapper below tops up the shortfall.
 async function generateTopicBatch({ classId, langLabel, priorTopics, learnedConcepts = [], customTopic, howManyToAsk, wanted, diff, fixedTopic = null, signal }) {
-  const runnable = classId === "js" || classId === "py";
+  const runnable = classId === "js" || classId === "py" || classId === "scheme";
   const alreadyCovered = (priorTopics || []).length ? `The learner has ALREADY LEARNED these concepts — you may USE them in lessons, but do NOT make any lesson whose NEW concept is one of these: ${(priorTopics || []).join(", ")}. Teach something new instead. ` : "";
   const topicClause = fixedTopic
     ? `Keep using the SAME topic: "${fixedTopic}", but each new lesson must teach a DIFFERENT aspect of it the learner hasn't done yet — go deeper or wider into "${fixedTopic}", never repeat an aspect already covered.`
@@ -1648,6 +1656,14 @@ async function validateLesson(L, classId) {
     if (!v.ok) return { ok: false, reason: "author solution fails its own tests" };
     const sv = await verifyLua(L.starter || "", L.fnName, L.tests);
     if (sv.ok) return { ok: false, reason: "starter already passes (nothing to solve)" };
+  } else if (classId === "scheme") {
+    // BiwaScheme runs in-browser only; if it can't load here, accept and let the
+    // live check catch problems — same tolerance as the other engine languages.
+    const v = await verifyScheme(L.solution, L.fnName, L.tests);
+    if (v.engineError) return { ok: true };
+    if (!v.ok) return { ok: false, reason: "author solution fails its own tests" };
+    const sv = await verifyScheme(L.starter || "", L.fnName, L.tests);
+    if (sv.ok) return { ok: false, reason: "starter already passes (nothing to solve)" };
   } else if (classId === "java") {
     // Java compiles only in the browser (CheerpJ), so we can't validate the
     // solution offline during generation — accept it; the harness + runtime
@@ -1725,7 +1741,7 @@ async function validateLesson(L, classId) {
 const PROJECT_LANGS = ["py", "js", "ts", "java", "lua", "basic", "asm", "php", "c", "cpp", "sql", "p5", "html", "css", "jsx", "vue", "svelte"];
 const PROJECT_LANG_LABEL = { py: "Python", js: "JavaScript", ts: "TypeScript", java: "Java", lua: "Lua", basic: "BASIC", asm: "Assembly", php: "PHP", c: "C", cpp: "C++", sql: "SQL", p5: "p5 (drawing)", html: "HTML", css: "CSS", jsx: "React (JSX)", vue: "Vue", svelte: "Svelte" };
 function projectLangMode(lang) {
-  if (lang === "py" || lang === "js" || lang === "ts" || lang === "lua" || lang === "basic" || lang === "asm" || lang === "php" || lang === "c" || lang === "cpp") return "run"; // text output
+  if (lang === "py" || lang === "js" || lang === "ts" || lang === "lua" || lang === "basic" || lang === "asm" || lang === "php" || lang === "c" || lang === "cpp" || lang === "scheme") return "run"; // text output
   if (lang === "sql") return "sql";     // table output
   if (lang === "java") return "java";   // real JVM in the browser (CheerpJ)
   return "markup";                       // live preview in iframe (incl. p5)
@@ -1972,9 +1988,25 @@ async function runProjectJava(code, consoleEl, displayEl, files = null) {
     const javaFiles = Array.isArray(files) ? files.filter((f) => /\.java$/i.test(f.name)) : [];
     const paths = [];
     if (javaFiles.length > 1) {
+      const usedNames = new Set();
       for (const f of javaFiles) {
         const src = (f.code === code) ? code : (f.code || "");
-        const nm = javaMainClass(src).fileName; // name the file after its class
+        const detected = javaMainClass(src);
+        // Prefer the class name (javac needs the file named after its public
+        // class). But if NO class was detected, javaMainClass falls back to
+        // "Main" for every such file — two class-less files would both become
+        // Main.java and overwrite each other. Fall back to the real filename
+        // instead, which is unique, and dedup defensively if a real collision
+        // still occurs.
+        const hasClass = /\bclass\s+\w+/.test(src);
+        let nm = hasClass ? detected.fileName : (f.name.replace(/[^\w.]/g, "_") || "File.java");
+        if (!/\.java$/i.test(nm)) nm += ".java";
+        if (usedNames.has(nm)) {
+          const base = nm.replace(/\.java$/i, "");
+          let k = 2; while (usedNames.has(`${base}_${k}.java`)) k++;
+          nm = `${base}_${k}.java`;
+        }
+        usedNames.add(nm);
         window.cheerpjAddStringFile("/str/" + nm, enc.encode(src));
         paths.push("/str/" + nm);
       }
@@ -2190,6 +2222,63 @@ async function runProjectJSWithSQL(files, activeName) {
 // as an ES module from a CDN so it works without a bundler. Captures print output
 // and real Lua errors.
 let _luaFactory = null;
+
+// Scheme via BiwaScheme — a real, pure-JS Scheme interpreter (no WASM, no
+// toolchain), loaded as an ES module from a CDN. verifyScheme defines the
+// learner's code, then evaluates (fnName arg1 arg2 …) and compares the returned
+// value to the expected one, mirroring how verifyLua works.
+//
+// NOT TESTED IN THIS ENVIRONMENT: the BiwaScheme library can't be fetched in the
+// build sandbox, so the wiring below is written to BiwaScheme's documented API
+// (new BiwaScheme.Interpreter(); interp.evaluate(code)) but the actual
+// evaluate-and-compare is confirmed only in a live browser. If BiwaScheme's
+// return-value shape differs from what's assumed, this is the line to adjust.
+let _biwa = null;
+function schemeLiteral(v) {
+  // Render a JS test value as a Scheme literal for the call expression.
+  if (v === null || v === undefined) return "'()";
+  if (typeof v === "boolean") return v ? "#t" : "#f";
+  if (typeof v === "string") return JSON.stringify(v);
+  if (Array.isArray(v)) return "(list " + v.map(schemeLiteral).join(" ") + ")";
+  return String(v);
+}
+function schemeValueToJS(v) {
+  // BiwaScheme returns JS numbers/strings/booleans directly; pairs/lists come
+  // back as BiwaScheme.Pair with a to_array() method (underscore — confirmed
+  // against BiwaScheme 0.8). Normalize to plain JS for comparison.
+  if (v && typeof v.to_array === "function") return v.to_array().map(schemeValueToJS);
+  if (v && typeof v.toArray === "function") return v.toArray().map(schemeValueToJS);
+  if (v === BiwaSchemeNil()) return [];
+  return v;
+}
+function BiwaSchemeNil() { try { return _biwa && _biwa.nil; } catch { return undefined; } }
+async function verifyScheme(code, fnName, tests) {
+  if (!code || !code.trim()) return { ok: false, why: "write some code first" };
+  try {
+    if (!_biwa) {
+      const mod = await import(/* @vite-ignore */ "https://cdn.jsdelivr.net/npm/biwascheme@0.8.0/release/biwascheme-min.js");
+      _biwa = (typeof mod === "object" && (mod.default || mod.BiwaScheme)) || (typeof BiwaScheme !== "undefined" ? BiwaScheme : null);
+    }
+  } catch (e) {
+    return { ok: false, why: "the Scheme engine didn't load", engineError: true };
+  }
+  if (!_biwa || !_biwa.Interpreter) return { ok: false, why: "the Scheme engine didn't load", engineError: true };
+  for (const t of tests) {
+    try {
+      const interp = new _biwa.Interpreter((e) => { throw e; });
+      const argList = (t.args || []).map(schemeLiteral).join(" ");
+      const program = `${code}\n(${fnName} ${argList})`;
+      const raw = interp.evaluate(program);
+      const got = schemeValueToJS(raw);
+      if (JSON.stringify(got) !== JSON.stringify(t.expected)) {
+        return { ok: false, why: `with ${(t.args || []).join(", ")} it gave ${JSON.stringify(got)}, but should give ${JSON.stringify(t.expected)}` };
+      }
+    } catch (e) {
+      return { ok: false, why: "it hit an error: " + (e && e.message ? String(e.message).slice(0, 80) : String(e)) };
+    }
+  }
+  return { ok: true };
+}
 // Run a BASIC program with our from-scratch interpreter (proven against 12 tests:
 // PRINT, LET, arithmetic, FOR/STEP, IF/THEN, GOTO, INPUT, string vars). Classic
 // line-numbered beginner BASIC — no engine to load, it just runs.
@@ -2872,7 +2961,7 @@ const LANGUAGE_CATALOG = [
   { id: "erlang", label: "Erlang", emoji: "📡", mode: "ai", blurb: "Built for rock-solid, always-on telecom systems." },
   { id: "ocaml", label: "OCaml", emoji: "🐫", mode: "ai", blurb: "Functional language prized for speed and safety." },
   { id: "elm", label: "Elm", emoji: "🌳", mode: "ai", blurb: "A friendly functional language for web front-ends." },
-  { id: "scheme", label: "Scheme", emoji: "🎯", mode: "ai", blurb: "A clean, minimal dialect of Lisp." },
+  { id: "scheme", label: "Scheme", emoji: "🎯", mode: "real", blurb: "A clean, minimal dialect of Lisp." },
   // ---- older / classic ----
   { id: "fortran", label: "Fortran", emoji: "🧮", mode: "ai", blurb: "The original scientific language, still used today." },
   { id: "cobol", label: "COBOL", emoji: "🏦", mode: "ai", blurb: "Runs banking and business systems since the 1960s." },
@@ -6112,6 +6201,7 @@ function TypeStep({ step, onDone }) {
     else if (step.lang === "cpp") v = await verifyCFamily(code, step.fnName, step.tests, true);
     else if (step.lang === "php") v = await verifyPHP(code, step.fnName, step.tests);
     else if (step.lang === "ruby") v = await verifyRuby(code, step.fnName, step.tests);
+    else if (step.lang === "scheme") v = await verifyScheme(code, step.fnName, step.tests);
     else v = verifyRuns(code, step.fnName, step.tests);
     setResult(v); setRunning(false);
     if (v.ok) onDone(stats.buildStats());
