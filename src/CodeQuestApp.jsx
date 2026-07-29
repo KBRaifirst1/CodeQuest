@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useMemo, useSyncExternalStore } fro
 // Build marker — check this in the browser console to confirm which version is
 // actually running: type  window.__CQ_VERSION  in DevTools. If it's not the
 // value below, your browser/Vercel is serving an older bundle.
-const CQ_VERSION = "2026-07-12-v91-vue-svelte-realchecks";
+const CQ_VERSION = "2026-07-12-v92-grading-sort-fix";
 if (typeof window !== "undefined") {
   window.__CQ_VERSION = CQ_VERSION;
   try { console.log("%cCodeQuest build: " + CQ_VERSION, "color:#3ac9e0;font-weight:bold"); } catch {}
@@ -4814,10 +4814,14 @@ function Home({ progress, aiLessons, savedProjects = [], profileDescription = ""
 
         // Sort/organize modes.
         if (sortMode === "grading") {
-          // Group by how lessons are graded, so real-test languages are together.
-          const groupOf = (m) => (m === "real" || m === "sql") ? "real" : m === "markup" ? "markup" : "ai";
+          // Group by how lessons are graded. SQL is real but graded differently
+          // (a query against a real database), so it gets its own honest heading
+          // rather than being counted under "real test grading" — otherwise the
+          // count reads one too high for code that runs and is checked.
+          const groupOf = (m) => m === "real" ? "real" : m === "sql" ? "sql" : m === "markup" ? "markup" : "ai";
           const groups = {
             real: { label: "Real test grading — your code runs and is checked", items: [] },
+            sql: { label: "Real query grading — your query runs on a real database", items: [] },
             markup: { label: "Live preview — you see your real rendered result", items: [] },
             ai: { label: "AI-guided — explained and reviewed by AI", items: [] },
           };
@@ -4826,7 +4830,7 @@ function Home({ progress, aiLessons, savedProjects = [], profileDescription = ""
           return (
             <>
               {generalShown && (<><div className="cq-section-label">Start here</div><div className="cq-classlist" style={{ marginBottom: 28 }}>{renderCard(general)}</div></>)}
-              {["real", "markup", "ai"].map((k) => groups[k].items.length > 0 && (
+              {["real", "sql", "markup", "ai"].map((k) => groups[k].items.length > 0 && (
                 <React.Fragment key={k}>
                   <div className="cq-section-label">{groups[k].label} <span className="cq-section-count">({groups[k].items.length})</span></div>
                   <div className="cq-classlist" style={{ marginBottom: 28 }}>{groups[k].items.map(renderCard)}</div>
