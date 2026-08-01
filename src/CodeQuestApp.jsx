@@ -7,7 +7,7 @@ import { supabase } from "./lib/supabase";
 // Build marker — check this in the browser console to confirm which version is
 // actually running: type  window.__CQ_VERSION  in DevTools. If it's not the
 // value below, your browser/Vercel is serving an older bundle.
-const CQ_VERSION = "2026-07-12-v105-feedback";
+const CQ_VERSION = "2026-07-12-v107-editor-undo";
 
 // Only this account (by Supabase user id) can read submitted feedback. Gating by
 // id, not email, so it survives email changes / adding Google login later.
@@ -1296,7 +1296,7 @@ function _scoreTopicFamiliarity(cls, doneSet, allClasses, progressMap, customTop
   const words = customTopic.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
   if (words.length === 0) return null;
   let relevant = 0, done = 0, crossBonus = 0;
-  cls.steps.forEach((s, i) => {
+  (cls.steps || []).forEach((s, i) => {
     const hay = ((s.title || "") + " " + (s.chapter || "") + " " + (s.intro || "")).toLowerCase();
     if (words.some((w) => hay.includes(w))) { relevant++; if (doneSet.has(i)) done++; }
   });
@@ -1311,20 +1311,23 @@ function _scoreTopicFamiliarity(cls, doneSet, allClasses, progressMap, customTop
   const base = relevant > 0 ? done / relevant : 0;
   return Math.min(1, base + Math.min(0.3, crossBonus * 0.05));
 }
-function _scoreClassDepth(cls, doneSet) { return cls.steps.length === 0 ? 0 : Math.min(1, doneSet.size / cls.steps.length); }
+function _scoreClassDepth(cls, doneSet) { const n = (cls.steps || []).length; return n === 0 ? 0 : Math.min(1, doneSet.size / n); }
 function _scoreClassBreadth(cls, doneSet) {
   const touched = new Set(), all = new Set();
-  cls.steps.forEach((s, i) => { if (s.chapter) all.add(s.chapter); if (doneSet.has(i) && s.chapter) touched.add(s.chapter); });
-  return all.size === 0 ? 0 : touched.size / all.size;
+  (cls.steps || []).forEach((s, i) => { if (s.chapter) all.add(s.chapter); if (doneSet.has(i) && s.chapter) touched.add(s.chapter); });
+  return all.size === 0 ? 0 : Math.min(1, touched.size / all.size);
 }
 function _scoreRecency(cls, doneSet) {
   if (doneSet.size === 0) return 0;
-  const total = cls.steps.length; let sum = 0;
-  doneSet.forEach((i) => { sum += (i + 1) / total; });
-  return sum / doneSet.size;
+  const total = (cls.steps || []).length;
+  if (total === 0) return 0; // no steps → no recency signal (avoids /0 = Infinity)
+  let sum = 0, counted = 0;
+  doneSet.forEach((i) => { if (typeof i === "number" && i >= 0 && i < total) { sum += (i + 1) / total; counted++; } });
+  return counted === 0 ? 0 : Math.min(1, sum / counted); // only count in-range indices; clamp
 }
 function _scoreGlobal(progressMap) {
   const total = Object.values(progressMap || {}).reduce((n, s) => n + (s?.size || 0), 0);
+  if (!Number.isFinite(total) || total <= 0) return 0;
   return Math.min(1, Math.log10(1 + total) / Math.log10(101));
 }
 function _scoreRelated(cls, allClasses, progressMap) {
@@ -1337,13 +1340,15 @@ function _scoreRelated(cls, allClasses, progressMap) {
     else if (other.tab === "coding" && cls.tab === "coding") w = 0.3;
     if (w === 0) continue;
     const doneOther = (progressMap[other.id] || new Set()).size;
-    if (other.steps.length > 0) { points += w * (doneOther / other.steps.length); possible += w; }
+    if ((other.steps || []).length > 0) { points += w * Math.min(1, doneOther / other.steps.length); possible += w; }
   }
-  return possible > 0 ? points / possible : 0;
+  return possible > 0 ? Math.min(1, points / possible) : 0;
 }
 function _scoreChallenge(cls, aiLessonCount) {
-  const total = cls.steps.length + aiLessonCount;
-  const ratio = total > 0 ? aiLessonCount / total : 0;
+  // Guard against non-finite / negative aiLessonCount from a corrupt save.
+  const ai = Number.isFinite(aiLessonCount) && aiLessonCount > 0 ? aiLessonCount : 0;
+  const total = (cls.steps || []).length + ai;
+  const ratio = total > 0 ? ai / total : 0;
   return Math.min(1, ratio * 2);
 }
 
@@ -1420,7 +1425,11 @@ function computeSkillScore({ cls, doneSet, progressMap, allClasses, customTopic,
   // done globally lifts them at least into the "easy-medium" band.
   const globalFloor = g > 0.35 ? 3.5 : g > 0.2 ? 2.5 : 1.0;
   const raw = 1 + composite * 9;
-  return Math.round(Math.max(globalFloor, raw) * 10) / 10; // 1.0 - 10.0
+  const scored = Math.round(Math.max(globalFloor, raw) * 10) / 10;
+  // Final safety net: even if a sub-score somehow misbehaves on corrupt data,
+  // the value handed to difficulty generation must be a finite 1.0–10.0.
+  if (!Number.isFinite(scored)) return globalFloor;
+  return Math.min(10, Math.max(1, scored));
 }
 function autoDifficultyClause(score, description) {
   // Bands calibrated so real practice moves you meaningfully. A learner who's
@@ -5903,35 +5912,95 @@ function LessonRunner({ cls, idx, doneSet, onDone, onUndone, onBack, goStep }) {
 //  • Shift+Tab removes up to 2 leading spaces (dedent)
 //  • Enter keeps the current line's indentation, and adds one extra level (2
 //    spaces) when the line ends with ":" (Python/Ruby style blocks)
-function makeCodeKeyDown(value, setValue) {
-  return (e) => {
+// Per-editor undo/redo history. Because the code editor is a controlled textarea
+// whose value we also set programmatically (for Tab/Enter auto-indent), the
+// browser's native undo history gets wiped — so Ctrl+Z had nothing to undo. We
+// keep our own stack instead: snapshots of {text, caret}, pushed on meaningful
+// edits, popped by Ctrl+Z / restored forward by Ctrl+Y (or Ctrl+Shift+Z).
+function makeCodeController(setValue) {
+  const undoStack = [];
+  const redoStack = [];
+  let last = null;          // last committed snapshot {text, caret}
+  let lastPushAt = 0;
+  const MAX = 200;
+
+  const snapshot = (text, caret) => ({ text, caret });
+  // Coalesce rapid typing into one undo entry (like real editors) — only push a
+  // new checkpoint if enough changed or enough time passed since the last one.
+  const record = (text, caret) => {
+    const now = Date.now();
+    if (last === null) { last = snapshot(text, caret); return; }
+    if (text === last.text) { last = snapshot(text, caret); return; }
+    const bigJump = Math.abs(text.length - last.text.length) > 1;
+    const paused = now - lastPushAt > 350;
+    if (bigJump || paused) {
+      undoStack.push(last);
+      if (undoStack.length > MAX) undoStack.shift();
+      redoStack.length = 0; // a fresh edit invalidates the redo branch
+      lastPushAt = now;
+    }
+    last = snapshot(text, caret);
+  };
+
+  const setCaret = (el, caret) => {
+    try { el.selectionStart = el.selectionEnd = caret; } catch {}
+    requestAnimationFrame(() => { try { el.selectionStart = el.selectionEnd = caret; } catch {} });
+  };
+  const applyTo = (el, text, caret) => {
+    setValue(text);
+    el.value = text;
+    setCaret(el, caret);
+  };
+
+  const onKeyDown = (e) => {
     const el = e.target;
-    // Read the CURRENT text straight from the DOM element, not the closed-over
-    // `value` — the closure can be one render stale, which made edits land in the
-    // wrong place (or appear to do nothing). el.value is always current.
     const cur = el.value;
     const s = el.selectionStart, eend = el.selectionEnd;
     const apply = (newText, caret) => {
-      // Update React state...
+      // checkpoint the state BEFORE this structural edit so one Ctrl+Z reverses it
+      record(cur, s);
+      undoStack.push(snapshot(cur, s));
+      if (undoStack.length > MAX) undoStack.shift();
+      redoStack.length = 0;
+      lastPushAt = Date.now();
+      last = snapshot(newText, caret);
       setValue(newText);
-      // ...and set the DOM value + caret synchronously so Safari doesn't reset the
-      // cursor to the end when React re-commits the controlled value. We set it on
-      // the element now, and again on the next frame as a belt-and-suspenders.
       el.value = newText;
-      el.selectionStart = el.selectionEnd = caret;
-      requestAnimationFrame(() => { try { el.selectionStart = el.selectionEnd = caret; } catch {} });
+      setCaret(el, caret);
     };
+
+    const meta = e.ctrlKey || e.metaKey;
+    // Undo: Ctrl/Cmd+Z (without shift)
+    if (meta && !e.shiftKey && (e.key === "z" || e.key === "Z")) {
+      e.preventDefault();
+      if (undoStack.length === 0) return;
+      // ensure the current (possibly uncommitted) text is redo-able
+      const prev = undoStack.pop();
+      redoStack.push(snapshot(el.value, el.selectionStart));
+      last = snapshot(prev.text, prev.caret);
+      applyTo(el, prev.text, prev.caret);
+      return;
+    }
+    // Redo: Ctrl/Cmd+Y or Ctrl/Cmd+Shift+Z
+    if (meta && ((e.key === "y" || e.key === "Y") || (e.shiftKey && (e.key === "z" || e.key === "Z")))) {
+      e.preventDefault();
+      if (redoStack.length === 0) return;
+      const next = redoStack.pop();
+      undoStack.push(snapshot(el.value, el.selectionStart));
+      last = snapshot(next.text, next.caret);
+      applyTo(el, next.text, next.caret);
+      return;
+    }
+
     if (e.key === "Tab") {
       e.preventDefault();
       if (e.shiftKey) {
-        // Dedent: remove up to 4 leading spaces (one Python indent level).
         const lineStart = cur.lastIndexOf("\n", s - 1) + 1;
         const lead = cur.slice(lineStart, s);
         let remove = 0;
         while (remove < 4 && lead.endsWith(" ".repeat(remove + 1))) remove++;
         if (remove) apply(cur.slice(0, s - remove) + cur.slice(s), s - remove);
       } else {
-        // Indent by 4 spaces (Python standard, matches the AI's starter code).
         apply(cur.slice(0, s) + "    " + cur.slice(eend), s + 4);
       }
       return;
@@ -5942,13 +6011,29 @@ function makeCodeKeyDown(value, setValue) {
       const line = cur.slice(lineStart, s);
       const indentMatch = line.match(/^[ \t]*/);
       let indent = indentMatch ? indentMatch[0] : "";
-      // One extra level (4 spaces) after a block opener ending in ":".
       if (/:\s*$/.test(line)) indent += "    ";
       const insert = "\n" + indent;
       apply(cur.slice(0, s) + insert + cur.slice(eend), s + insert.length);
       return;
     }
   };
+
+  // Called from the textarea's onChange (normal typing) so ordinary edits also
+  // build undo history.
+  const onInput = (el) => { record(el.value, el.selectionStart); };
+
+  return { onKeyDown, onInput };
+}
+
+// Factory: build a keydown handler + input recorder backed by one undo history.
+// Call sites keep using makeCodeKeyDown(code, setCode); CodeEditor holds the
+// controller in a ref so the history persists across renders (see CodeEditor).
+function makeCodeKeyDown(value, setValue) {
+  const ctrl = makeCodeController(setValue);
+  const handler = ctrl.onKeyDown;
+  handler.__onInput = ctrl.onInput;
+  handler.__isController = true;
+  return handler;
 }
 
 // ---------- Lightweight syntax highlighter ----------
@@ -6052,14 +6137,23 @@ function highlightCode(code, lang) {
 function CodeEditor({ code, setCode, onKeyDown, lang, onChange, minHeight = 180 }) {
   const taRef = useRef(null);
   const preRef = useRef(null);
+  // Persist ONE undo controller for the life of this editor, so history isn't
+  // wiped when the parent recreates setCode/onKeyDown each render. We keep the
+  // latest setCode in a ref and give the controller a stable wrapper.
+  const setCodeRef = useRef(setCode);
+  setCodeRef.current = setCode;
+  const ctrlRef = useRef(null);
+  if (!ctrlRef.current) {
+    ctrlRef.current = makeCodeController((text) => setCodeRef.current(text));
+  }
+  const handleKeyDown = ctrlRef.current.onKeyDown;
+  const handleInput = ctrlRef.current.onInput;
   const syncScroll = () => {
     if (taRef.current && preRef.current) {
       preRef.current.scrollTop = taRef.current.scrollTop;
       preRef.current.scrollLeft = taRef.current.scrollLeft;
     }
   };
-  // Pass the REAL language through so the highlighter picks the right family
-  // (SQL keywords, Lisp, markup, etc.) — not just py-vs-js.
   const html = highlightCode(code + (code.endsWith("\n") ? " " : ""), lang || "js");
   return (
     <div className="cq-editor-wrap" style={{ minHeight }}>
@@ -6069,8 +6163,8 @@ function CodeEditor({ code, setCode, onKeyDown, lang, onChange, minHeight = 180 
         className="cq-editor cq-editor-ta"
         value={code}
         spellCheck={false}
-        onChange={(e) => { setCode(e.target.value); if (onChange) onChange(); }}
-        onKeyDown={onKeyDown}
+        onChange={(e) => { handleInput(e.target); setCode(e.target.value); if (onChange) onChange(); }}
+        onKeyDown={handleKeyDown}
         onScroll={syncScroll}
         style={{ minHeight }}
       />
