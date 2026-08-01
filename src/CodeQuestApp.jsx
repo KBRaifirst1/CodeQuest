@@ -1,9 +1,46 @@
 import React, { useState, useEffect, useRef, useMemo, useSyncExternalStore } from "react";
+// Shared Supabase client (same one useCloudSave.js uses). CodeQuestApp.jsx lives
+// in src/, so the client at src/lib/supabase.js is "./lib/supabase". Only used by
+// the feedback feature; everything else still comes through props from App.jsx.
+import { supabase } from "./lib/supabase";
 
 // Build marker — check this in the browser console to confirm which version is
 // actually running: type  window.__CQ_VERSION  in DevTools. If it's not the
 // value below, your browser/Vercel is serving an older bundle.
-const CQ_VERSION = "2026-07-12-v94-css-injection-fix";
+const CQ_VERSION = "2026-07-12-v105-feedback";
+
+// Only this account (by Supabase user id) can read submitted feedback. Gating by
+// id, not email, so it survives email changes / adding Google login later.
+const FEEDBACK_OWNER_ID = "1e676bb0-c735-45e7-8f77-9358b2b6dbfc";
+// Submit a piece of feedback. RLS lets any signed-in user insert their own row.
+async function submitFeedback({ message, category, user }) {
+  const msg = String(message || "").trim();
+  if (!msg) return { ok: false, error: "Write a message first." };
+  if (msg.length > 4000) return { ok: false, error: "That's a bit long — keep it under 4000 characters." };
+  try {
+    const { error } = await supabase.from("feedback").insert({
+      message: msg,
+      category: ["bug", "idea", "other"].includes(category) ? category : "other",
+      user_id: user?.id ?? null,
+      user_email: user?.email ?? null,
+    });
+    if (error) return { ok: false, error: error.message || "Couldn't send — try again." };
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: (e && e.message) || "Couldn't send — check your connection." };
+  }
+}
+// Read all feedback. RLS only returns rows to FEEDBACK_OWNER_ID, so a non-owner
+// gets an empty list even if they call this.
+async function fetchAllFeedback() {
+  try {
+    const { data, error } = await supabase.from("feedback").select("*").order("created_at", { ascending: false });
+    if (error) return { ok: false, error: error.message, rows: [] };
+    return { ok: true, rows: data || [] };
+  } catch (e) {
+    return { ok: false, error: (e && e.message) || "Couldn't load feedback.", rows: [] };
+  }
+}
 if (typeof window !== "undefined") {
   window.__CQ_VERSION = CQ_VERSION;
   try { console.log("%cCodeQuest build: " + CQ_VERSION, "color:#3ac9e0;font-weight:bold"); } catch {}
@@ -25,13 +62,19 @@ if (typeof window !== "undefined") {
 // ============================================================
 
 // ---------- Honest run-verification ----------
-function verifyRuns(code, fnName, tests) {
-  // Guard against infinite loops from AI-generated code. Injects a step counter
-  // into every while/for/do loop body — throws after 100K iterations. Enough for
-  // any beginner exercise, catches accidental infinite loops from Gemini.
+// Inject an infinite-loop guard into JS/TS source: a step counter dropped into
+// every while/for/do loop body that throws after `limit` iterations. Shared by
+// the lesson checker (verifyRuns) and the JS PROJECT runner, so a learner who
+// writes `while(true){}` gets a clean error instead of a frozen browser tab.
+function injectLoopGuard(code, limit = 100000) {
   const gvar = "__cq_i__";
-  const preamble = `let ${gvar}=0; const ${gvar}_g=()=>{if(++${gvar}>100000)throw new Error("Loop ran too long — likely an infinite loop");};`;
-  const guarded = preamble + code.replace(/(\b(?:while|for)\s*\([^{}]*\)\s*\{|\bdo\s*\{)/g, `$1${gvar}_g();`);
+  const preamble = `let ${gvar}=0; const ${gvar}_g=()=>{if(++${gvar}>${limit})throw new Error("Loop ran too long — likely an infinite loop");};`;
+  return preamble + String(code || "").replace(/(\b(?:while|for)\s*\([^{}]*\)\s*\{|\bdo\s*\{)/g, `$1${gvar}_g();`);
+}
+
+function verifyRuns(code, fnName, tests) {
+  // Guard against infinite loops from AI-generated code (100K-iteration ceiling).
+  const guarded = injectLoopGuard(code, 100000);
   let fn;
   try { fn = new Function(`${guarded}; return typeof ${fnName}==='function'?${fnName}:undefined;`)(); }
   catch (e) { return { ok: false, why: "it couldn't run: " + e.message }; }
@@ -192,6 +235,59 @@ async function verifyLua(code, fnName, tests) {
 }
 // Puzzles first, then neutral code. Progressively harder. Three skills:
 // patterns/reading, breaking into steps, predicting what code does.
+const GENERAL_MULTIFILE_STEPS = [
+  { type: "concept", chapter: "1 · Why more than one file", title: "One giant file gets messy",
+    teach: "When a program is tiny, one file is fine. But real programs grow to thousands of lines — and scrolling through one huge file to find anything becomes painful. So coders split a program across several files, each holding one clear job. It's the same reason a kitchen has separate drawers instead of one giant bin: things are easier to find and change.",
+    why: "Splitting code into files keeps each part small, focused, and easy to find — the bigger the program, the more it matters." },
+  { type: "puzzle", chapter: "1 · Why more than one file", title: "Why split it up?",
+    intro: "You've written a 4,000-line program in one file and can never find anything.",
+    q: "What's the main reason to split it into several files?", choices: ["To make it run faster", "To keep each part small and easy to find", "So it uses less memory"], correctIndex: 1,
+    why: "Right — splitting is about keeping code organized and findable for humans. It doesn't make the program faster or smaller; it makes it manageable." },
+
+  { type: "concept", chapter: "2 · The file that runs", title: "One file starts everything",
+    teach: "When you have many files, the computer needs to know which one to run FIRST. That starting file is called the entry point — in this app, and in many languages, it's the file named 'main'. Main is where the program begins. The other files just sit there holding code, waiting until main decides to use them. Think of main as the front door: you always come in through it, and it leads you to every other room.",
+    why: "Every multi-file program has exactly one entry point — the file that runs first. The rest wait to be used by it." },
+  { type: "pick", chapter: "2 · The file that runs", title: "Which file runs first?",
+    intro: "A project has three files: helpers.py, main.py, and data.py.",
+    q: "Which one does the program start from?", options: ["helpers.py", "main.py", "data.py", "whichever is biggest"], correctIndex: 1,
+    why: "main is the entry point — the program always begins there. The others only run when main reaches out and uses them." },
+
+  { type: "concept", chapter: "3 · Pulling in other files", title: "How one file uses another",
+    teach: "A file can't magically see the code in another file — it has to ask for it. That asking is called importing (some languages say 'include' or 'require', but it's the same idea). When main imports a helper file, it's saying 'give me access to the functions in there so I can use them.' After importing, main can call those functions as if they were written right there. The spelling differs by language — Python says 'import helpers', JavaScript says 'require', C says '#include' — but the idea is identical.",
+    example: "main.py:\n  import helpers\n  helpers.greet(\"Sam\")   # uses a function from the other file",
+    why: "Importing is how one file gains access to another file's code. Same idea everywhere, just spelled differently per language." },
+  { type: "puzzle", chapter: "3 · Pulling in other files", title: "What does importing do?",
+    intro: "main.py has the line: import helpers",
+    q: "What does that line let main.py do?", choices: ["Run helpers.py first, then stop", "Use the functions written inside helpers.py", "Copy helpers.py into a new file"], correctIndex: 1,
+    why: "Importing gives main access to the helper's functions so it can call them. It doesn't replace main or copy files — it connects them." },
+
+  { type: "concept", chapter: "4 · Deciding what goes where", title: "Helpers in one place, logic in another",
+    teach: "A common pattern: put your reusable pieces — small functions that do one job — in a 'helper' file, and put the main story of your program in main. That way, if ten different programs all need to, say, format a date, they can each import the same helper instead of rewriting it. Main stays short and readable because the fiddly details live elsewhere. The rule of thumb: if a chunk of code does its own clear job and might be reused, it's a candidate for its own file.",
+    why: "Reusable, self-contained pieces go in helper files; the main flow stays in main. This keeps main readable and lets many programs share the same helpers." },
+  { type: "order", chapter: "4 · Deciding what goes where", title: "Build the project",
+    intro: "Put these steps in order to set up a clean two-file program.",
+    items: ["Write a reusable function in helpers", "Import helpers from main", "Call the helper function from main", "Run main"],
+    why: "You build the helper first, import it, call it, then run main — the entry point that ties it all together." },
+
+  { type: "concept", chapter: "5 · How the files connect", title: "Main calls the helper, not the reverse",
+    teach: "The flow has a direction. Main is in charge: it imports the helper and calls the helper's functions. The helper usually does NOT call main — it just offers its functions and waits. Picture main as a chef and the helper as a well-stocked pantry: the chef reaches into the pantry for ingredients, but the pantry doesn't cook. Keeping this direction clear — main uses helpers, helpers don't use main — is what stops multi-file programs from turning into a tangled knot.",
+    why: "The entry point (main) drives everything and calls into helpers; helpers provide functions and wait. Keeping that direction one-way keeps the program untangled." },
+  { type: "puzzle", chapter: "5 · How the files connect", title: "Which way does it flow?",
+    intro: "You have main.py and helpers.py.",
+    q: "In a clean setup, who calls whom?", choices: ["helpers calls main", "main calls helpers", "they call each other constantly"], correctIndex: 1,
+    why: "Main calls into helpers — it's the one in charge. Helpers just offer functions and wait to be used." },
+
+  { type: "multifile", chapter: "6 · See it run for real", title: "Your first two-file program", lang: "py",
+    teach: "Here's everything above, running for real. There are TWO files. 'helpers.py' has a function called shout. 'main.py' imports helpers and calls it. Finish main so it prints SHOUT of the word 'hello' — you'll see the two files work together. Notice main can only do this because it imported the helper.",
+    example: "helpers.py already has:\n  def shout(word):\n      return word.upper() + \"!\"",
+    files: [
+      { name: "main.py", lang: "py", code: "import helpers\n\n# Call shout (from helpers.py) on the word \"hello\" and print the result.\n# It should print:  HELLO!\n" },
+      { name: "helpers.py", lang: "py", code: "def shout(word):\n    return word.upper() + \"!\"\n" },
+    ],
+    expectedOutput: "HELLO!",
+    why: "You just ran a real two-file program. main imported helpers and called its function — exactly the pattern every multi-file project uses." },
+];
+
 const GENERAL_STEPS = [
   // Chapter 1 — Spotting patterns (plain-English puzzles)
   { type: "puzzle", chapter: "1 · Spotting patterns", title: "What comes next?",
@@ -948,6 +1044,7 @@ ${head}</head><body>${bodyHtml}${script}</body></html>`;
 // Does this set of files form a runnable WEB project (has at least an html/css/js
 // mix, more than one web file)?
 function isWebProject(files) {
+  if (!Array.isArray(files)) return false;
   const web = files.filter((f) => /\.(html?|css|js|ts|jsx|vue|svelte)$/i.test(f.name) || f.lang === "p5");
   const kinds = new Set(web.map((f) => (/\.html?$/i.test(f.name) ? "html" : /\.css$/i.test(f.name) ? "css" : "js")));
   return web.length >= 2 && kinds.size >= 2;
@@ -1738,8 +1835,8 @@ async function validateLesson(L, classId) {
 // runs it to see what it does. These run the WHOLE program and capture real
 // output + real errors. Python runs via Pyodide, JS runs natively in a worker-ish
 // sandbox, and markup (html/css/jsx/vue/svelte) renders live via the iframe.
-const PROJECT_LANGS = ["py", "js", "ts", "java", "lua", "basic", "asm", "php", "c", "cpp", "sql", "p5", "html", "css", "jsx", "vue", "svelte"];
-const PROJECT_LANG_LABEL = { py: "Python", js: "JavaScript", ts: "TypeScript", java: "Java", lua: "Lua", basic: "BASIC", asm: "Assembly", php: "PHP", c: "C", cpp: "C++", sql: "SQL", p5: "p5 (drawing)", html: "HTML", css: "CSS", jsx: "React (JSX)", vue: "Vue", svelte: "Svelte" };
+const PROJECT_LANGS = ["py", "js", "ts", "java", "lua", "basic", "asm", "php", "c", "cpp", "sql", "scheme", "p5", "html", "css", "jsx", "vue", "svelte"];
+const PROJECT_LANG_LABEL = { py: "Python", js: "JavaScript", ts: "TypeScript", java: "Java", lua: "Lua", basic: "BASIC", asm: "Assembly", php: "PHP", c: "C", cpp: "C++", sql: "SQL", scheme: "Scheme", p5: "p5 (drawing)", html: "HTML", css: "CSS", jsx: "React (JSX)", vue: "Vue", svelte: "Svelte" };
 function projectLangMode(lang) {
   if (lang === "py" || lang === "js" || lang === "ts" || lang === "lua" || lang === "basic" || lang === "asm" || lang === "php" || lang === "c" || lang === "cpp" || lang === "scheme") return "run"; // text output
   if (lang === "sql") return "sql";     // table output
@@ -1748,7 +1845,7 @@ function projectLangMode(lang) {
 }
 // The default file name for a language — used when a project starts, and as the
 // basis for imports (e.g. a Python file "helpers.py" is imported as "helpers").
-const PROJECT_FILE_EXT = { py: "py", js: "js", ts: "ts", java: "java", lua: "lua", basic: "bas", asm: "asm", php: "php", c: "c", cpp: "cpp", sql: "sql", p5: "js", html: "html", css: "css", jsx: "jsx", vue: "vue", svelte: "svelte" };
+const PROJECT_FILE_EXT = { py: "py", js: "js", ts: "ts", java: "java", lua: "lua", basic: "bas", asm: "asm", php: "php", c: "c", cpp: "cpp", sql: "sql", scheme: "scm", p5: "js", html: "html", css: "css", jsx: "jsx", vue: "vue", svelte: "svelte" };
 function defaultFileName(lang, base) {
   const ext = PROJECT_FILE_EXT[lang] || "txt";
   if (lang === "java") return (base || "Main") + ".java"; // Java file must match class
@@ -1777,7 +1874,7 @@ const MAIN_LANGS = ["py", "js", "ts", "java", "lua", "php", "c", "cpp"];
 // Languages that may be ADDED as extra files. SQL is allowed here (the JS+SQL
 // second file). BASIC/ASM stay out entirely — no multi-file at all.
 const ADDABLE_LANGS = ["py", "js", "ts", "java", "lua", "php", "c", "cpp", "h", "hpp", "sql"];
-const MANUAL_BLOCKED_LANGS = ["basic", "asm"]; // single-file only, never in a manual project
+const MANUAL_BLOCKED_LANGS = ["basic", "asm", "scheme"]; // single-file only, never in a manual multi-file project
 
 // One-click starting points. Each is just a list of file names — all created
 // EMPTY, exactly like assembling them by hand. Only combinations that genuinely
@@ -1822,7 +1919,7 @@ function extToProjectLang(name) {
   const ext = String(name || "").split(".").pop().toLowerCase();
   const map = { py: "py", js: "js", ts: "ts", java: "java", lua: "lua", php: "php",
     c: "c", h: "c", cpp: "cpp", hpp: "cpp", cc: "cpp", sql: "sql", jsx: "jsx",
-    vue: "vue", svelte: "svelte", html: "html", css: "css" };
+    vue: "vue", svelte: "svelte", html: "html", css: "css", scm: "scheme", ss: "scheme" };
   return map[ext] || null;
 }
 
@@ -2127,7 +2224,7 @@ function runProjectJS(code, files = null, activeName = null) {
   if (!Array.isArray(files) || files.filter((f) => /\.(js|ts|jsx)$/i.test(f.name)).length <= 1) {
     try {
       // eslint-disable-next-line no-new-func
-      const fn = new Function("console", code);
+      const fn = new Function("console", injectLoopGuard(code, 10000000));
       fn(fakeConsole);
       return { ok: true, output: logs.join("\n") };
     } catch (e) {
@@ -2155,12 +2252,12 @@ function runProjectJS(code, files = null, activeName = null) {
       if (/\.tsx?$/i.test(f.name)) presets.push("typescript");
       if (/\.jsx$/i.test(f.name)) presets.push("react");
       try {
-        registry[norm(f.name)] = B.transform(f.code || "", { presets, filename: f.name }).code;
+        registry[norm(f.name)] = injectLoopGuard(B.transform(f.code || "", { presets, filename: f.name }).code, 10000000);
       } catch (e) {
         return { ok: false, output: logs.join("\n"), error: "In " + f.name + ": " + (e && e.message ? e.message : e) };
       }
     } else {
-      registry[norm(f.name)] = f.code || "";
+      registry[norm(f.name)] = injectLoopGuard(f.code || "", 10000000);
     }
   }
   const cache = {};
@@ -2252,11 +2349,61 @@ function schemeValueToJS(v) {
   return v;
 }
 function BiwaSchemeNil() { try { return _biwa && _biwa.nil; } catch { return undefined; } }
+
+// Run a whole Scheme program for PROJECTS (not lesson grading): evaluate it and
+// show its result / displayed output. Single-file only — BiwaScheme has no
+// cross-file module system, so we do NOT concatenate multiple .scm files and
+// pretend they're linked. Scheme can be a project `main` but takes no added files.
+async function runProjectScheme(code) {
+  if (!code || !code.trim()) return { ok: false, output: "", error: "write some Scheme first" };
+  try {
+    if (!_biwa) {
+      const mod = await import(/* @vite-ignore */ "https://cdn.jsdelivr.net/npm/biwascheme@0.8.0/release/biwascheme.mjs");
+      _biwa = (typeof mod === "object" && (mod.default || mod.BiwaScheme)) || (typeof BiwaScheme !== "undefined" ? BiwaScheme : null);
+    }
+  } catch {
+    return { ok: false, output: "", error: "Couldn't load the Scheme engine (BiwaScheme)." };
+  }
+  if (!_biwa || !_biwa.Interpreter) return { ok: false, output: "", error: "Couldn't load the Scheme engine (BiwaScheme)." };
+  let out = "";
+  try {
+    const interp = new _biwa.Interpreter((e) => { throw e; });
+    try {
+      if (_biwa.Port && _biwa.Port.StringOutput) {
+        const port = new _biwa.Port.StringOutput();
+        interp.stdout = port;
+        if (_biwa.Port) _biwa.Port.current_output = port;
+        const val = interp.evaluate(code);
+        // BiwaScheme's StringOutput accumulates writes in `buffer` as an ARRAY
+        // of strings and exposes output_string() to join them. Using the array
+        // directly produced comma-joined garbage for any program with more than
+        // one (display …). Prefer the official method, else join the array.
+        const capture = (pp) => {
+          try { if (typeof pp.output_string === "function") return pp.output_string(); } catch {}
+          if (Array.isArray(pp.buffer)) return pp.buffer.join("");
+          if (typeof pp.output_buffer === "string") return pp.output_buffer;
+          return typeof pp.buffer === "string" ? pp.buffer : "";
+        };
+        out = capture(port) || "";
+        if (!out && val !== undefined && val !== _biwa.undef) out = String(schemeValueToJS(val));
+      } else {
+        const val = interp.evaluate(code);
+        out = (val === undefined || val === _biwa.undef) ? "" : String(schemeValueToJS(val));
+      }
+    } catch (inner) {
+      return { ok: false, output: out, error: String(inner && inner.message ? inner.message : inner) };
+    }
+    return { ok: true, output: out.replace(/\n$/, "") };
+  } catch (e) {
+    return { ok: false, output: out, error: String(e && e.message ? e.message : e) };
+  }
+}
+
 async function verifyScheme(code, fnName, tests) {
   if (!code || !code.trim()) return { ok: false, why: "write some code first" };
   try {
     if (!_biwa) {
-      const mod = await import(/* @vite-ignore */ "https://cdn.jsdelivr.net/npm/biwascheme@0.8.0/release/biwascheme-min.js");
+      const mod = await import(/* @vite-ignore */ "https://cdn.jsdelivr.net/npm/biwascheme@0.8.0/release/biwascheme.mjs");
       _biwa = (typeof mod === "object" && (mod.default || mod.BiwaScheme)) || (typeof BiwaScheme !== "undefined" ? BiwaScheme : null);
     }
   } catch (e) {
@@ -3130,7 +3277,173 @@ function conceptLessonOffTopic(lesson, section) {
   return (ownHits === 0 && bestSibling >= 3) || (bestSibling - ownHits >= 3 && bestSibling >= 4);
 }
 
-async function generateConceptLessons(section, { customTopic = null, count = null, priorTitles = [], difficulty = null, signal } = {}) {
+// The runnable multi-file combos we can generate graded lessons for. Only combos
+// that genuinely run AND can be graded are here — nothing gets a "runs for real"
+// badge it can't back up.
+// One hand-built, proven multi-file lesson per combo — so the class isn't empty
+// on first load and every combo has a verified example before any AI generation.
+// The runnable ones (py, js, js+sql, c, cpp, lua) are tested against real engines;
+// php and java are structure-verified (their engines are browser-only).
+const MULTIFILE_SEED_LESSONS = [
+  { type: "multifile", lang: "py", combo: "py_py", chapter: "Python + Python", title: "Greet from a helper",
+    teach: "Two Python files. helpers.py has a greet function. main.py imports it and prints the greeting. main can only do this because it imported helpers.",
+    files: [
+      { name: "main.py", lang: "py", code: "import helpers\n\n# Print a greeting for \"Sam\" using helpers.greet\n# Should print:  Hi, Sam!\n" },
+      { name: "helpers.py", lang: "py", code: 'def greet(name):\n    return "Hi, " + name + "!"\n' },
+    ], expectedOutput: "Hi, Sam!",
+    why: "main imported helpers and called its function — a real two-file Python program." },
+
+  { type: "multifile", lang: "js", combo: "js_js", chapter: "JavaScript + JavaScript", title: "Add with a helper",
+    teach: "helpers.js exports an add function; main.js requires it and logs a sum. The export/require pair is how JS files share code.",
+    files: [
+      { name: "main.js", lang: "js", code: "const helpers = require('./helpers');\n\n// Log the result of add(3, 4) from helpers\n// Should print:  7\n" },
+      { name: "helpers.js", lang: "js", code: "module.exports = { add: (a, b) => a + b };\n" },
+    ], expectedOutput: "7",
+    why: "main required helpers and used its exported function — a real two-file JS program." },
+
+  { type: "multifile", lang: "js", combo: "js_sql", chapter: "JavaScript + SQL", title: "Query a real database",
+    teach: "data.sql builds a table of pets; main.js runs a query against that real database and prints a name. The SQL file sets up the data, the JS reads it.",
+    files: [
+      { name: "main.js", lang: "js", code: "// The database from data.sql is available as `db`.\n// Query for the pet with 4 legs and print its name.\n// Should print:  cat\nconst rows = db.exec(\"SELECT name FROM pets WHERE legs = 4\");\n// print the first result's name:\n" },
+      { name: "data.sql", lang: "sql", code: "CREATE TABLE pets (name TEXT, legs INTEGER);\nINSERT INTO pets VALUES ('cat', 4), ('bird', 2);\n" },
+    ], expectedOutput: "cat",
+    why: "Your JavaScript queried a real SQLite database built by the SQL file." },
+
+  { type: "multifile", lang: "c", combo: "c_c", chapter: "C + C", title: "Square with a header",
+    teach: "Three files, the classic C pattern: helpers.h declares square, helpers.c defines it, main.c includes the header and calls it. The header is the promise; the .c file keeps it.",
+    files: [
+      { name: "main.c", lang: "c", code: '#include <stdio.h>\n#include "helpers.h"\n\nint main() {\n    // Print square(6) — should print:  36\n    return 0;\n}\n' },
+      { name: "helpers.c", lang: "c", code: '#include "helpers.h"\n\nint square(int n) {\n    return n * n;\n}\n' },
+      { name: "helpers.h", lang: "c", code: "int square(int n);\n" },
+    ], expectedOutput: "36",
+    why: "main.c included the header and called a function defined in helpers.c — the standard C multi-file pattern." },
+
+  { type: "multifile", lang: "cpp", combo: "cpp_cpp", chapter: "C++ + C++", title: "Double with a header",
+    teach: "Same header pattern in C++: helpers.h declares, helpers.cpp defines, main.cpp includes and calls. Splitting declaration from definition is how C++ programs stay organized.",
+    files: [
+      { name: "main.cpp", lang: "cpp", code: '#include <iostream>\n#include "helpers.h"\n\nint main() {\n    // Print doubleIt(21) — should print:  42\n    return 0;\n}\n' },
+      { name: "helpers.cpp", lang: "cpp", code: '#include "helpers.h"\n\nint doubleIt(int n) {\n    return n * 2;\n}\n' },
+      { name: "helpers.h", lang: "cpp", code: "int doubleIt(int n);\n" },
+    ], expectedOutput: "42",
+    why: "main.cpp included the header and called a function from helpers.cpp — real multi-file C++." },
+
+  { type: "multifile", lang: "lua", combo: "lua_lua", chapter: "Lua + Lua", title: "Shout with a module",
+    teach: "helpers.lua returns a table of functions; main.lua requires it and calls one. In Lua, a module is just a file that returns a table.",
+    files: [
+      { name: "main.lua", lang: "lua", code: 'local helpers = require("helpers")\n\n-- Print helpers.shout("hi") — should print:  HI!\n' },
+      { name: "helpers.lua", lang: "lua", code: 'local M = {}\nfunction M.shout(s)\n    return string.upper(s) .. "!"\nend\nreturn M\n' },
+    ], expectedOutput: "HI!",
+    why: "main required the helpers module and called its function — real multi-file Lua." },
+
+  { type: "multifile", lang: "php", combo: "php_php", chapter: "PHP + PHP", title: "Reverse with a helper",
+    teach: "helpers.php defines a function; main.php requires the file and calls it. `require` pulls the other file's code in so main can use it.",
+    files: [
+      { name: "main.php", lang: "php", code: '<?php\nrequire "helpers.php";\n\n// Print reverseIt("dog") — should print:  god\n' },
+      { name: "helpers.php", lang: "php", code: '<?php\nfunction reverseIt($s) {\n    return strrev($s);\n}\n' },
+    ], expectedOutput: "god",
+    why: "main required helpers.php and called its function — real multi-file PHP." },
+
+  { type: "multifile", lang: "java", combo: "java_java", chapter: "Java + Java", title: "Triple with a helper class",
+    teach: "Helper.java has a class with a static method; Main.java calls it as Helper.triple(...). In Java, code lives in classes, and one class can call another's static methods.",
+    files: [
+      { name: "Main.java", lang: "java", code: "public class Main {\n    public static void main(String[] args) {\n        // Print Helper.triple(4) — should print:  12\n    }\n}\n" },
+      { name: "Helper.java", lang: "java", code: "public class Helper {\n    public static int triple(int n) {\n        return n * 3;\n    }\n}\n" },
+    ], expectedOutput: "12",
+    why: "Main called a static method on the Helper class — real multi-file Java." },
+];
+
+const MULTIFILE_COMBOS = {
+  "py_py":  { id: "py_py",  label: "Python + Python", entry: "py",  files: ["main.py", "helpers.py"], how: "main.py imports helpers.py (import helpers) and calls a function defined there" },
+  "js_js":  { id: "js_js",  label: "JavaScript + JavaScript", entry: "js", files: ["main.js", "helpers.js"], how: "main.js requires helpers.js (const helpers = require('./helpers')) and calls a function it exports via module.exports" },
+  "js_sql": { id: "js_sql", label: "JavaScript + SQL", entry: "js", files: ["main.js", "data.sql"], how: "data.sql creates and fills a table; main.js runs a query against it and prints a result" },
+  "c_c":    { id: "c_c",    label: "C + C", entry: "c", files: ["main.c", "helpers.c", "helpers.h"], how: "helpers.h declares a function, helpers.c defines it, main.c includes helpers.h and calls it" },
+  "cpp_cpp":{ id: "cpp_cpp",label: "C++ + C++", entry: "cpp", files: ["main.cpp", "helpers.cpp", "helpers.h"], how: "helpers.h declares a function, helpers.cpp defines it, main.cpp includes helpers.h and calls it" },
+  "java_java": { id: "java_java", label: "Java + Java", entry: "java", files: ["Main.java", "Helper.java"], how: "Helper.java defines a public class with a static method, Main.java calls Helper.method()" },
+  "lua_lua": { id: "lua_lua", label: "Lua + Lua", entry: "lua", files: ["main.lua", "helpers.lua"], how: "helpers.lua returns a table of functions, main.lua does local h = require('helpers') and calls one" },
+  "php_php": { id: "php_php", label: "PHP + PHP", entry: "php", files: ["main.php", "helpers.php"], how: "helpers.php defines a function, main.php does require 'helpers.php' and calls it" },
+};
+
+// Generate ONE graded multi-file lesson for a combo. The AI returns a full file
+// set (starter + solution) plus expectedOutput; validateMultiFileLesson runs the
+// solution for real (where we can) and confirms the files genuinely interlink.
+async function generateMultiFileLesson(comboId, { difficulty = null, priorTitles = [], signal } = {}) {
+  const combo = MULTIFILE_COMBOS[comboId];
+  if (!combo) throw new Error("unknown-combo");
+  const diff = difficultyClause(difficulty);
+  const avoid = (priorTitles || []).length ? ` Avoid repeating these already-used lesson ideas: ${priorTitles.join(", ")}.` : "";
+  const fileList = combo.files.join(", ");
+  const sys =
+    `You write ONE beginner multi-file coding lesson for the combo: ${combo.label}. ` +
+    `The lesson MUST use exactly these files: ${fileList}. The entry file (the one that runs) is the one named main (or Main.java). ` +
+    `The whole point is the files WORK TOGETHER: ${combo.how}. A lesson where the entry file ignores the other file(s) is WRONG. ` +
+    "The learner is given starter files (entry file partly blank to complete; helper file(s) complete). Completing the entry file correctly must print a specific expectedOutput. " +
+    "CRITICAL: Respond with ONLY valid JSON, no prose, no fences. Start with { end with }. " +
+    "Schema: {" +
+    "\"title\":string, " +
+    "\"teach\":string (3-5 sentences teaching how these files work together), " +
+    "\"expectedOutput\":string (exact text the finished program prints), " +
+    "\"files\":[ {\"name\":string, \"lang\":string, \"starter\":string, \"solution\":string} ], " +
+    "\"why\":string " +
+    "}. " +
+    `Every required file must appear. The entry file's starter should be missing the line(s) that USE the other file; its solution includes them. Helper files: starter and solution identical. ${diff}${avoid}`;
+  let raw;
+  try { raw = await callClaude([{ role: "user", content: `Write one ${combo.label} multi-file lesson now using files ${fileList}.` }], { system: sys, maxTokens: 3000, signal }); }
+  catch (e) { throw new Error("ai-failed: " + (e?.message || "unknown")); }
+  let parsed; try { parsed = extractJSON(raw); } catch (e) { throw new Error("bad-json: " + (e?.message || "parse")); }
+  const lesson = await validateMultiFileLesson(parsed, combo);
+  if (!lesson) throw new Error("none-valid");
+  return lesson;
+}
+
+async function validateMultiFileLesson(parsed, combo) {
+  if (!parsed || !parsed.title || !parsed.teach || parsed.expectedOutput == null) return null;
+  if (!Array.isArray(parsed.files) || parsed.files.length !== combo.files.length) return null;
+  const want = combo.files.map((n) => n.toLowerCase()).sort();
+  const got = parsed.files.map((f) => String(f.name || "").toLowerCase()).sort();
+  if (JSON.stringify(want) !== JSON.stringify(got)) return null;
+  const entryName = combo.files.find((n) => fileBaseName(n) === "main") || combo.files[0];
+  const entry = parsed.files.find((f) => String(f.name).toLowerCase() === entryName.toLowerCase());
+  const helpers = parsed.files.filter((f) => f !== entry);
+  if (!entry || !entry.solution || !entry.starter) return null;
+  if (helpers.some((h) => !h.solution)) return null;
+  // Interlink: the entry SOLUTION must reference a helper (by import/include/
+  // require or the helper's basename). Otherwise it isn't genuinely multi-file.
+  const refsHelper = helpers.some((h) => {
+    const base = fileBaseName(h.name).replace(/[^a-z0-9]/gi, "");
+    return new RegExp("import|include|require|" + base, "i").test(entry.solution);
+  });
+  if (!refsHelper) return null;
+  const mkFiles = (useStarterForEntry) => parsed.files.map((f) => ({
+    name: f.name, lang: f.lang || extToProjectLang(f.name),
+    code: (f === entry && useStarterForEntry) ? f.starter : f.solution,
+  }));
+  const canRunHere = combo.entry === "py" || combo.entry === "js";
+  if (canRunHere) {
+    const runSet = async (fileSet) => {
+      const hasSql = fileSet.some((f) => /\.sql$/i.test(f.name));
+      const ent = fileSet.find((f) => String(f.name).toLowerCase() === entryName.toLowerCase());
+      if (combo.entry === "js" && hasSql) return await runProjectJSWithSQL(fileSet, ent.name);
+      if (combo.entry === "js") return runProjectJS(ent.code, fileSet, ent.name);
+      return await runProjectPython(ent.code, fileSet, ent.name);
+    };
+    try {
+      const sol = await runSet(mkFiles(false));
+      if (!sol.ok || !outputMatches(sol.output || "", parsed.expectedOutput)) return null;
+      const start = await runSet(mkFiles(true));
+      if (start.ok && outputMatches(start.output || "", parsed.expectedOutput)) return null;
+    } catch { return null; }
+  }
+  return {
+    type: "multifile", lang: combo.entry, title: parsed.title, teach: parsed.teach,
+    expectedOutput: parsed.expectedOutput,
+    files: parsed.files.map((f) => ({ name: f.name, lang: f.lang || extToProjectLang(f.name), code: f.starter })),
+    solutionFiles: parsed.files.map((f) => ({ name: f.name, code: f.solution })),
+    why: parsed.why || "The files ran together for real.",
+    id: "mf_" + Math.random().toString(36).slice(2, 7), chapter: combo.label, generated: true,
+  };
+}
+
+async function generateConceptLessons(section, { customTopic = null, count = null, priorTitles = [], priorConcepts = [], difficulty = null, signal } = {}) {
   const cfg = CONCEPT_SECTIONS[section];
   if (!cfg) throw new Error("unknown-section");
   const howMany = count && count >= 1 && count <= 10 ? count : 4;
@@ -3144,41 +3457,73 @@ async function generateConceptLessons(section, { customTopic = null, count = nul
   const lane = siblings.length
     ? ` STAY IN THIS CLASS'S LANE — this matters more than anything else here. This class is ONLY about ${cfg.label}, meaning: ${cfg.scope}. These topics belong to OTHER, SEPARATE classes and must never be the subject of a lesson you write here: ${siblings.join("; ")}. You may refer to them in a passing sentence for context, but every lesson's actual subject must sit inside this class's scope. A learner who opened this class expects to find only ${cfg.label}.`
     : "";
+  // Real anti-repetition: forbid re-teaching an idea already covered, not just a
+  // title already used. The old version only avoided duplicate TITLES, so the AI
+  // wrote "What is a circuit?" then "Understanding circuits" — new words, same
+  // lesson. Now we hand it the actual concepts learned and demand each new lesson
+  // advance to a genuinely different sub-topic of the scope.
+  const covered = [...new Set([...(priorConcepts || []), ...(priorTitles || [])])].filter(Boolean);
+  const noRepeat = covered.length
+    ? ` The learner has ALREADY learned these ideas — do NOT write another lesson whose core subject is any of them; pick DIFFERENT, more advanced sub-topics of the scope and go deeper: ${covered.join("; ")}.`
+    : "";
   const focus = customTopic
-    ? `Focus every lesson specifically on: "${customTopic}" (within ${cfg.label}).${lane}`
-    : `Cover fresh sub-topics drawn from: ${cfg.scope}. Avoid repeating these already-covered titles: ${(priorTitles || []).join(", ") || "none"}.${lane}`;
+    ? `Focus every lesson specifically on: "${customTopic}" (within ${cfg.label}). Each lesson must teach a DIFFERENT angle of it — never restate the same point twice.${lane}`
+    : `Each lesson must cover a DIFFERENT, specific sub-topic drawn from this scope, moving from foundational to more advanced across the set: ${cfg.scope}.${noRepeat}${lane}`;
   const sys =
-    `You generate beginner lessons about ${cfg.label}. Each lesson TEACHES with a clear plain-language explanation, then asks ONE multiple-choice question to check understanding. ` +
+    `You write beginner lessons about ${cfg.label}. This is a real course, not a quiz deck — every lesson must genuinely TEACH.\n` +
+    `Each lesson has: a short title; a "teach" body of 4-7 sentences that actually explains the idea to someone who has never seen it — introduce the concept, explain the MECHANISM (how/why it works, not just what it is), and give ONE concrete everyday example or analogy; then ONE multiple-choice question that tests real understanding of what was just taught (not a trivia recall).\n` +
+    "Rules that matter: never use a term without explaining it in plain words; each lesson in the set must teach something genuinely NEW — no two lessons may restate the same core idea; ramp from simpler to deeper across the set. A learner should finish each lesson knowing something they did not know before.\n" +
     "CRITICAL: Respond with ONLY valid JSON. No prose before or after. No markdown fences. Start with { and end with }. " +
     "Schema: {\"lessons\":[ {" +
     "\"type\":\"puzzle\", " +
-    "\"title\":string (short), " +
-    "\"intro\":string (2-4 plain sentences that TEACH the idea to a total beginner, no jargon without explaining it), " +
-    "\"q\":string (a question testing the idea), " +
-    "\"choices\":[string, string, string] (2-4 options), " +
+    "\"concept\":string (2-5 words naming the SPECIFIC sub-topic this lesson teaches, e.g. 'series vs parallel circuits' or 'how a transistor switches' — must be different from every other lesson's concept), " +
+    "\"title\":string (short, specific to THIS lesson's sub-topic — not a generic class name), " +
+    "\"intro\":string (the TEACH body: 5-8 plain sentences. Sentence 1-2 introduce the idea; 3-5 explain the MECHANISM — the actual how and why it works, step by step, not just a restatement of what it is; 6-8 give ONE concrete worked example or vivid analogy that a beginner could picture. This is the real teaching — a learner must finish it knowing something specific they didn't know before. Do NOT write a vague summary.), " +
+    "\"q\":string (a question that tests understanding of the MECHANISM just taught, not simple recall of a definition), " +
+    "\"choices\":[string, string, string] (2-4 options, all plausible), " +
     "\"correctIndex\":number (0-based index of the correct choice), " +
-    "\"why\":string (1-2 sentences explaining why that answer is right) " +
+    "\"why\":string (2-3 sentences explaining why that answer is right AND why the others are wrong — reinforce the lesson) " +
     "} ] }. " +
-    "Example of a valid response: {\"lessons\":[{\"type\":\"puzzle\",\"title\":\"What is X?\",\"intro\":\"X is a thing that does Y. It works by...\",\"q\":\"What does X do?\",\"choices\":[\"does Y\",\"does Z\",\"nothing\"],\"correctIndex\":0,\"why\":\"X's purpose is to do Y.\"}]}. " +
-    `Make ${howMany} lessons, ramping from easier to harder. ${diff} Keep it accurate and beginner-friendly. ${focus}`;
+    `Make ${howMany} lessons, each a DIFFERENT sub-topic with a DIFFERENT concept tag, ramping from easier to harder. Depth over breadth — a shallow one-fact lesson is a failure. ${diff} ${focus}`;
   let raw;
-  try { raw = await callClaude([{ role: "user", content: `Generate ${howMany} lessons about ${cfg.label} now. ${focus}` }], { system: sys, maxTokens: 4000, signal }); }
+  try { raw = await callClaude([{ role: "user", content: `Write ${howMany} genuinely-teaching lessons about ${cfg.label} now, each on a different sub-topic. ${focus}` }], { system: sys, maxTokens: 6000, signal }); }
   catch (e) { throw new Error("ai-failed: " + (e?.message || "unknown")); }
   let parsed; try { parsed = extractJSON(raw); } catch (e) { throw new Error("bad-json: " + (e?.message || "parse failed")); }
   const lessons = Array.isArray(parsed.lessons) ? parsed.lessons : [];
   const out = [];
   const chapter = customTopic ? `${customTopic}` : "More to explore";
+  // Guard against the AI repeating itself WITHIN a single batch: drop a lesson
+  // whose teaching body is near-identical to one already accepted this round.
+  const seenBodies = [];
+  const tooSimilar = (a, b) => {
+    const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9 ]/g, "").split(/\s+/).filter((w) => w.length > 3);
+    const wa = new Set(norm(a)), wb = norm(b);
+    if (!wb.length) return false;
+    const overlap = wb.filter((w) => wa.has(w)).length / wb.length;
+    return overlap > 0.75; // 3/4 of the significant words shared → same lesson reworded
+  };
   for (const L of lessons) {
     if (!L || !L.title || !L.intro || !L.q || !L.why) continue;
     if (!Array.isArray(L.choices) || L.choices.length < 2) continue;
     if (!Number.isFinite(L.correctIndex) || L.correctIndex < 0 || L.correctIndex >= L.choices.length || Math.floor(L.correctIndex) !== L.correctIndex) continue;
-    // The real fix for the wrong-section bug: drop a lesson that is actually
-    // about a different class in this tab (e.g. a CPU lesson generated inside
-    // "How Circuits Work"). Prompt wording asks Gemini not to; this enforces it.
+    // Depth floor: a teaching body that's too short can't have taught a mechanism
+    // plus an example. Drop the thin ones rather than show a flashcard. ~45 words
+    // is roughly 4+ real sentences — below that it isn't a lesson.
+    const wordCount = String(L.intro).trim().split(/\s+/).filter(Boolean).length;
+    if (wordCount < 45) continue;
+    // Drop a lesson that is actually about a different class in this tab (e.g. a
+    // CPU lesson generated inside "How Circuits Work").
     if (customTopic ? false : conceptLessonOffTopic(L, section)) continue;
+    // Drop a lesson that just re-teaches one already in this same batch.
+    if (seenBodies.some((b) => tooSimilar(L.intro, b))) continue;
+    seenBodies.push(L.intro);
     out.push({
       type: "puzzle", title: L.title, intro: L.intro, q: L.q, choices: L.choices,
       correctIndex: L.correctIndex, why: L.why,
+      // Record the lesson's core concept so the NEXT batch can be told not to
+      // repeat it. Without this, priorConcepts was empty and anti-repetition had
+      // nothing to work with — the reason lessons kept circling the same ideas.
+      concept: (L.concept && String(L.concept).trim()) || L.title,
       id: "cc_" + Math.random().toString(36).slice(2, 7), chapter, generated: true,
     });
   }
@@ -3921,6 +4266,7 @@ function visualStepFor(langId) {
 
 const CLASSES = [
   { id: "general", tab: "coding", label: "General Coding", emoji: "🧠", mode: "concept", blurb: "Start here. Learn to THINK like a coder — patterns, steps, and the universal building blocks (functions, return, loops…) that exist in every language.", steps: GENERAL_STEPS },
+  { id: "general_multifile", tab: "coding", label: "General Multi-file", emoji: "📁", mode: "concept", blurb: "How real programs span many files — entry points, imports, and how files work together. General throughout, then real two-file programs you run in each language.", steps: [...GENERAL_MULTIFILE_STEPS, ...MULTIFILE_SEED_LESSONS] },
   ...LANGUAGE_CATALOG.map((l) => {
     // Every language with real graphics gets a hands-on "draw a shape" visual
     // lesson appended to its steps (via visualStepFor). Languages without
@@ -4083,7 +4429,7 @@ const GEN_STORE = {
   subscribe(fn) { this.subs.add(fn); return () => this.subs.delete(fn); },
 };
 
-function AppInner({ initialState, onPersist, onSignOut } = {}) {
+function AppInner({ initialState, onPersist, onSignOut, user } = {}) {
   // Screen state is remembered in sessionStorage so a tab-away → tab-back
   // doesn't bounce you out of the lesson/class you were in. sessionStorage
   // survives navigation and remounts within the tab but clears when the tab closes.
@@ -4253,9 +4599,27 @@ function AppInner({ initialState, onPersist, onSignOut } = {}) {
       if (cls.id === "general") {
         return await withRetry(() => generateGeneralLessons(progress || {}, signal, { customTopic, count, difficulty }), 3, 400, signal);
       }
+      if (cls.id === "general_multifile") {
+        // "Add more" here generates real graded multi-file lessons, one per combo,
+        // cycling through the combos we can run. Each is validated before it's
+        // shown, so a combo whose AI output fails validation is simply skipped.
+        const comboIds = Object.keys(MULTIFILE_COMBOS);
+        const want = Math.max(1, Math.min(count || 3, comboIds.length));
+        const picks = customTopic
+          ? comboIds.filter((id) => MULTIFILE_COMBOS[id].label.toLowerCase().includes(customTopic.toLowerCase())).slice(0, want)
+          : comboIds.slice(0, want);
+        const chosen = picks.length ? picks : comboIds.slice(0, want);
+        const out = [];
+        for (const id of chosen) {
+          try { out.push(await withRetry(() => generateMultiFileLesson(id, { difficulty, priorTitles: priorTitles || [], signal }), 2, 400, signal)); }
+          catch { /* skip a combo whose generation/validation failed */ }
+        }
+        if (!out.length) throw new Error("none-valid");
+        return out;
+      }
       if (cls.tab === "hardware" || cls.tab === "ai") {
         // cls.id, not cls.tab — the generator needs to know WHICH class this is.
-        return await withRetry(() => generateConceptLessons(cls.id, { customTopic, count, priorTitles: priorTitles || [], difficulty, signal }), 3, 400, signal);
+        return await withRetry(() => generateConceptLessons(cls.id, { customTopic, count, priorTitles: priorTitles || [], priorConcepts: [...(priorConcepts || []), ...(priorTopics || [])], difficulty, signal }), 3, 400, signal);
       }
       if (cls.mode === "real") {
         const covered = [...new Set([...(priorTopics || []), ...(priorTitles || []), ...(priorConcepts || [])])];
@@ -4490,6 +4854,7 @@ function AppInner({ initialState, onPersist, onSignOut } = {}) {
           {isOnline && pendingSync && <span className="cq-offline-badge syncing" title="Syncing your latest progress to your account">🔄 Syncing…</span>}
           <button className="cq-projbtn" onClick={() => setScreen({ name: "projectPick" })}>🛠️ Projects</button>
           <button className="cq-projbtn" onClick={() => setScreen({ name: "labs" })}>🔬 Labs</button>
+          <FeedbackWidget user={user} />
           {totalDone > 0 && <div className="cq-xp">{totalDone} lessons complete</div>}
           {onSignOut && <button className="cq-projbtn" onClick={onSignOut}>Sign out</button>}
         </div>
@@ -4497,7 +4862,18 @@ function AppInner({ initialState, onPersist, onSignOut } = {}) {
 
       {screen.name === "home" && (
         <Home progress={progress} aiLessons={aiLessons} savedProjects={savedProjects}
-          profileDescription={profileDescription} onSaveProfileDescription={setProfileDescription}
+          profileDescription={profileDescription} onSaveProfileDescription={(desc) => {
+            // Set state AND flush to storage synchronously. The debounced persist
+            // effect would normally catch this, but if the tab closes right after
+            // Save (common — people type then leave), the effect may not have run.
+            // Writing the snapshot now guarantees the description survives a reload.
+            setProfileDescription(desc);
+            try {
+              const snap = { ...buildSnapshot(), profileDescription: desc };
+              CQ_STORE.set(LOCAL_SAVE_KEY, JSON.stringify(snap));
+              if (onPersist && (typeof navigator === "undefined" || navigator.onLine !== false)) onPersist(snap);
+            } catch {}
+          }}
           onOpenClass={(id) => setScreen({ name: "class", id })}
           onOpenProjects={() => setScreen({ name: "projectPick" })}
           onOpenSavedProject={(plan) => setScreen({ name: "project", plan, review: true })} />
@@ -4669,6 +5045,89 @@ export default function App(props) {
 }
 
 // ---------- HOME ----------
+function FeedbackWidget({ user }) {
+  const [open, setOpen] = React.useState(false);
+  const [mode, setMode] = React.useState("send"); // "send" | "view" (view = owner only)
+  const [message, setMessage] = React.useState("");
+  const [category, setCategory] = React.useState("idea");
+  const [busy, setBusy] = React.useState(false);
+  const [note, setNote] = React.useState("");
+  const [rows, setRows] = React.useState(null);
+  const [loadErr, setLoadErr] = React.useState("");
+  const isOwner = user && user.id === FEEDBACK_OWNER_ID;
+
+  const send = async () => {
+    setBusy(true); setNote("");
+    const r = await submitFeedback({ message, category, user });
+    setBusy(false);
+    if (r.ok) { setNote("Thanks — got it! 🎉"); setMessage(""); }
+    else setNote(r.error);
+  };
+  const loadFeedback = async () => {
+    setMode("view"); setRows(null); setLoadErr("");
+    const r = await fetchAllFeedback();
+    if (r.ok) setRows(r.rows); else { setRows([]); setLoadErr(r.error || "Couldn't load."); }
+  };
+
+  return (
+    <>
+      <button className="cq-projbtn" onClick={() => { setOpen(true); setMode("send"); setNote(""); }}>💬 Feedback</button>
+      {open && (
+        <div className="cq-modal-backdrop" onClick={() => setOpen(false)}>
+          <div className="cq-modal cq-feedback" onClick={(e) => e.stopPropagation()}>
+            {mode === "send" ? (
+              <>
+                <h2 className="cq-modal-title">Send feedback</h2>
+                <p className="cq-modal-sub">Found a bug, have an idea, or just want to say something? Tell me here.</p>
+                <div className="cq-fb-cats">
+                  {[["bug", "🐞 Bug"], ["idea", "💡 Idea"], ["other", "💬 Other"]].map(([v, label]) => (
+                    <button key={v} className={`cq-fb-cat ${category === v ? "active" : ""}`} onClick={() => setCategory(v)}>{label}</button>
+                  ))}
+                </div>
+                <textarea className="cq-fb-text" value={message} onChange={(e) => setMessage(e.target.value)}
+                  placeholder="What's on your mind?" rows={5} maxLength={4000} />
+                {note && <div className="cq-fb-note">{note}</div>}
+                <div className="cq-fb-row">
+                  {isOwner && <button className="cq-clearbtn" onClick={loadFeedback}>📥 View all feedback</button>}
+                  <span className="cq-fb-spacer" />
+                  <button className="cq-clearbtn" onClick={() => setOpen(false)}>Close</button>
+                  <button className="cq-genbtn" onClick={send} disabled={busy || !message.trim()}>{busy ? "Sending…" : "Send"}</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <h2 className="cq-modal-title">All feedback {rows ? `(${rows.length})` : ""}</h2>
+                {loadErr && <div className="cq-fb-note">{loadErr}</div>}
+                {rows === null ? <p className="cq-modal-sub">Loading…</p>
+                  : rows.length === 0 ? <p className="cq-modal-sub">No feedback yet.</p>
+                  : (
+                    <div className="cq-fb-list">
+                      {rows.map((r) => (
+                        <div key={r.id} className="cq-fb-item">
+                          <div className="cq-fb-item-head">
+                            <span className={`cq-fb-badge ${r.category}`}>{r.category}</span>
+                            <span className="cq-fb-date">{new Date(r.created_at).toLocaleString()}</span>
+                          </div>
+                          <div className="cq-fb-msg">{r.message}</div>
+                          {r.user_email && <div className="cq-fb-from">{r.user_email}</div>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                <div className="cq-fb-row">
+                  <span className="cq-fb-spacer" />
+                  <button className="cq-clearbtn" onClick={() => setMode("send")}>← Back</button>
+                  <button className="cq-clearbtn" onClick={() => setOpen(false)}>Close</button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 function Home({ progress, aiLessons, savedProjects = [], profileDescription = "", onSaveProfileDescription, onOpenClass, onOpenProjects, onOpenSavedProject }) {
   const [query, setQuery] = useState("");
   const [sortMode, setSortMode] = useState("default"); // default | grading | alpha
@@ -5402,6 +5861,7 @@ function LessonRunner({ cls, idx, doneSet, onDone, onUndone, onBack, goStep }) {
       {activeStep.type === "build" && <BuildStep key={stepKey} step={activeStep} onDone={complete} />}
       {activeStep.type === "fill" && <FillStep key={stepKey} step={activeStep} onDone={complete} />}
       {activeStep.type === "run" && <RunStep key={stepKey} step={activeStep} onDone={complete} />}
+      {activeStep.type === "multifile" && <MultiFileStep key={stepKey} step={activeStep} onDone={complete} />}
       {activeStep.type === "airun" && <AiRunStep key={stepKey} step={activeStep} onDone={complete} />}
       {activeStep.type === "visual" && <VisualStep key={stepKey} step={activeStep} onDone={complete} />}
       {activeStep.type === "type" && <TypeStep key={stepKey} step={activeStep} onDone={complete} />}
@@ -5993,6 +6453,91 @@ function RunStep({ step, onDone }) {
         </div>
       )}
       {out?.passed && <div className="cq-takeaway big">{step.why || "It compiled, ran, and printed exactly the right thing — for real."}</div>}
+    </div>
+  );
+}
+
+function MultiFileStep({ step, onDone }) {
+  // A real multi-file lesson: the learner edits a set of files and runs the
+  // ENTRY file (`main`). We run them together for real (Python via Pyodide, or
+  // JS) and check the combined output. It only passes if the files genuinely
+  // work together — the starter is written so main depends on the helper.
+  const initial = (step.files || []).map((f) => ({ ...f }));
+  const [files, setFiles] = React.useState(initial);
+  const [active, setActive] = React.useState(0);
+  const [out, setOut] = React.useState(null);
+  const [running, setRunning] = React.useState(false);
+  const [err, setErr] = React.useState("");
+  const stats = useLessonStats();
+  const cur = files[active] || files[0];
+  const setCode = (code) => setFiles((fs) => fs.map((f, i) => (i === active ? { ...f, code } : f)));
+
+  const run = async () => {
+    const entry = files.find((f) => fileBaseName(f.name) === "main") || files[0];
+    if (!entry.code.trim()) { setErr("The main file is empty — write some code first."); return; }
+    setRunning(true); setErr(""); setOut(null);
+    try {
+      const lang = entry.lang || step.lang || "py";
+      // A JS entry with a SQL file present = JS querying a real database.
+      const hasSql = files.some((f) => /\.sql$/i.test(f.name));
+      const r = (lang === "js" && hasSql) ? await runProjectJSWithSQL(files, entry.name)
+        : lang === "js" ? runProjectJS(entry.code, files, entry.name)
+        : lang === "py" ? await runProjectPython(entry.code, files, entry.name)
+        : lang === "lua" ? await runProjectLua(entry.code, files)
+        : lang === "php" ? await runProjectPHP(entry.code, files)
+        : lang === "c" ? await runProjectCFamily(entry.code, false, files, entry.name)
+        : lang === "cpp" ? await runProjectCFamily(entry.code, true, files, entry.name)
+        : lang === "java" ? await runProjectJava(entry.code, null, null, files)
+        : await runProjectPython(entry.code, files, entry.name);
+      const passed = r.ok && (step.expectedOutput != null ? outputMatches(r.output || "", step.expectedOutput) : true);
+      setOut({ ...r, passed });
+      if (passed) onDone(stats.buildStats());
+      else stats.recordWrong();
+    } catch (e) {
+      stats.recordWrong();
+      setErr("Couldn't run it: " + (e && e.message ? e.message : "unknown error"));
+    } finally { setRunning(false); }
+  };
+  const onKeyDown = makeCodeKeyDown(cur.code, setCode);
+  const entryName = (files.find((f) => fileBaseName(f.name) === "main") || files[0]).name;
+
+  return (
+    <div className="cq-card2">
+      <h1 className="cq-h1">{step.title} <span className="cq-universal">runs for real</span></h1>
+      {(step.teach || step.example) ? (
+        <div className="cq-teach">
+          {step.teach && <p className="cq-teach-text">{step.teach}</p>}
+          {step.example && <div className="cq-teach-example"><span className="cq-teach-label">Example</span><pre>{step.example}</pre></div>}
+          <p className="cq-teach-now">Now you try 👇</p>
+        </div>
+      ) : (step.intro && <p className="cq-intro">{step.intro}</p>)}
+      {step.expectedOutput != null && (
+        <div className="cq-expected"><span className="cq-expected-label">Make it print:</span><pre>{step.expectedOutput}</pre></div>
+      )}
+
+      <div className="cq-mf-tabs">
+        {files.map((f, i) => {
+          const isMain = fileBaseName(f.name) === "main";
+          return (
+            <button key={i} className={"cq-mf-tab " + (i === active ? "active" : "")} onClick={() => { setActive(i); setOut(null); }}>
+              {f.name}{isMain && <span className="cq-mf-runs"> \u00b7 runs</span>}
+            </button>
+          );
+        })}
+      </div>
+      <CodeEditor code={cur.code} setCode={setCode} onChange={() => setOut(null)} onKeyDown={onKeyDown} lang={cur.lang || step.lang} minHeight={180} />
+      <div className="cq-buildrow"><button className="cq-run" onClick={run} disabled={running}>{running ? "Running\u2026" : "\u25b6 Run " + entryName}</button></div>
+
+      {err && <div className="cq-nudge">{err}</div>}
+      {out && (
+        <div className="cq-runout">
+          <div className="cq-runout-label">Output</div>
+          <pre className="cq-console">{out.output || out.error || "(no output)"}</pre>
+          {out.error && !out.output && <div className="cq-runout-note">\u26a0 There was an error (see above).</div>}
+          {step.expectedOutput != null && !out.passed && out.ok && <div className="cq-nudge">Close \u2014 the output doesn't match yet. Check how main uses the other file.</div>}
+        </div>
+      )}
+      {out && out.passed && <div className="cq-takeaway big">{step.why || "The files ran together for real \u2014 main used the code from your other file."}</div>}
     </div>
   );
 }
@@ -6804,6 +7349,7 @@ function ProjectBuilder({ plan, onBack, onComplete, onHome, reviewMode = false, 
           : runLang === "c" ? await runProjectCFamily(runCode, false, files, runName)
           : runLang === "cpp" ? await runProjectCFamily(runCode, true, files, runName)
           : runLang === "sql" ? await runProjectSQL(runCode)
+          : runLang === "scheme" ? await runProjectScheme(runCode)
           : runProjectJS(runCode, files, runName);
         setOutput(r);
         if (r.ok) {
@@ -7288,7 +7834,11 @@ function AILab({ onBack, challenge = null, onChallengeComplete = null }) {
     if (typeof st.hidden === "number") setHidden(st.hidden);
     if (typeof st.useCustom === "boolean") setUseCustom(st.useCustom);
     if (st.customTargets) setCustomTargets(st.customTargets);
-    if (st.net) setNet(st.net);
+    // Only accept a saved net if its shape is self-consistent — a corrupt or
+    // truncated auto-save could otherwise restore a net whose forward pass gives
+    // NaN, leaving the lab visibly broken. If it's malformed, start fresh.
+    if (st.net && nnNetIsValid(st.net)) setNet(st.net);
+    else if (st.net) setNet(nnNewNetwork(typeof st.hidden === "number" ? st.hidden : 4));
     setEpoch(0); setError(null); setTraining(false);
   };
   useEffect(() => { if (!challenge) { const a = LAB_SAVE.loadAuto("ailab"); if (a) restore(a); } }, []);
@@ -8012,6 +8562,21 @@ function nnTrainEpoch(net, data, lr = 0.5) {
   return totalErr / data.length;
 }
 function nnPredict(net, inp) { return nnForward(net, inp).out; }
+// A saved net is valid only if its arrays match its declared shape and every
+// weight is a finite number — guards restore() against corrupt auto-saves.
+function nnNetIsValid(net) {
+  if (!net || typeof net !== "object") return false;
+  const nIn = net.nIn || 2;
+  const h = net.hidden;
+  if (!Number.isInteger(h) || h < 1 || h > 512) return false;
+  const fin = (x) => typeof x === "number" && Number.isFinite(x);
+  if (!Array.isArray(net.w1) || net.w1.length !== h) return false;
+  if (!net.w1.every((row) => Array.isArray(row) && row.length === nIn && row.every(fin))) return false;
+  if (!Array.isArray(net.b1) || net.b1.length !== h || !net.b1.every(fin)) return false;
+  if (!Array.isArray(net.w2) || net.w2.length !== h || !net.w2.every(fin)) return false;
+  if (!fin(net.b2)) return false;
+  return true;
+}
 
 // ---------- BREADBOARD: real analog circuits with named legs ----------
 // Components have NAMED LEGS (battery +/−, LED anode/cathode, resistor two ends).
@@ -8818,6 +9383,26 @@ const CSS = `
 @keyframes cqFadeIn { from { opacity: 0 } to { opacity: 1 } }
 @keyframes cqPopIn { from { opacity: 0; transform: scale(.94) translateY(6px) } to { opacity: 1; transform: scale(1) translateY(0) } }
 .cq-modal-title{font-family:var(--display);font-size:22px;font-weight:600;margin:0 0 8px;letter-spacing:-.4px}
+.cq-feedback{max-width:560px}
+.cq-fb-cats{display:flex;gap:8px;margin:14px 0 12px}
+.cq-fb-cat{background:var(--bg-2);color:var(--ink-soft);border:1px solid var(--line);border-radius:10px;padding:7px 14px;font-size:14px;cursor:pointer;transition:background var(--hover-ease),color var(--hover-ease),border-color var(--hover-ease)}
+.cq-fb-cat:hover{background:var(--bg-1);color:var(--ink)}
+.cq-fb-cat.active{background:var(--bg-0);color:var(--ink);border-color:var(--neon-deep)}
+.cq-fb-text{width:100%;box-sizing:border-box;background:var(--bg-0);color:var(--ink);border:1px solid var(--line);border-radius:12px;padding:12px 14px;font-family:inherit;font-size:15px;line-height:1.5;resize:vertical;min-height:110px}
+.cq-fb-text:focus{outline:none;border-color:var(--neon-deep)}
+.cq-fb-note{margin:10px 0 0;font-size:14px;color:var(--ink-soft)}
+.cq-fb-row{display:flex;align-items:center;gap:10px;margin-top:16px}
+.cq-fb-spacer{flex:1}
+.cq-fb-list{margin:14px 0 0;max-height:52vh;overflow-y:auto;display:flex;flex-direction:column;gap:10px}
+.cq-fb-item{background:var(--bg-0);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.cq-fb-item-head{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.cq-fb-badge{font-size:11px;text-transform:uppercase;letter-spacing:.5px;padding:2px 8px;border-radius:20px;border:1px solid var(--line);color:var(--ink-soft)}
+.cq-fb-badge.bug{color:#ff9db1;border-color:#7a3a48}
+.cq-fb-badge.idea{color:#7ee787;border-color:#2f6b3a}
+.cq-fb-badge.other{color:var(--ink-soft)}
+.cq-fb-date{font-size:12px;color:var(--ink-faint)}
+.cq-fb-msg{font-size:15px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
+.cq-fb-from{font-size:12px;color:var(--ink-faint);margin-top:6px}
 .cq-modal-sub{color:var(--ink-soft);font-size:14px;line-height:1.5;margin:0 0 16px}
 .cq-modal-textarea{width:100%;box-sizing:border-box;min-height:96px;resize:vertical;padding:12px 14px;border-radius:12px;background:var(--bg-0);border:1.5px solid var(--line);color:var(--ink);font-family:inherit;font-size:14px;line-height:1.5;outline:none;transition:border-color .15s}
 .cq-modal-textarea:focus{border-color:var(--violet)}
@@ -9068,6 +9653,11 @@ const CSS = `
 .cq-manual-open{margin:14px 0 2px}
 .cq-manual-create{margin-top:16px}
 .cq-file-err{font-size:12px;color:var(--rose);margin-left:10px}
+.cq-mf-tabs{display:flex;gap:6px;margin:14px 0 0;flex-wrap:wrap}
+.cq-mf-tab{background:var(--bg-2);color:var(--ink-soft);border:1px solid var(--line);border-bottom:none;border-radius:8px 8px 0 0;padding:7px 14px;font-family:var(--mono);font-size:13px;cursor:pointer;transition:background var(--hover-ease),color var(--hover-ease)}
+.cq-mf-tab:hover{background:var(--bg-1);color:var(--ink)}
+.cq-mf-tab.active{background:var(--bg-0);color:var(--ink);border-color:var(--neon-deep)}
+.cq-mf-runs{color:var(--neon);font-size:11px}
 .cq-tpl-row{display:flex;align-items:center;gap:12px;margin:14px 0 2px;flex-wrap:wrap}
 .cq-tpl-label{font-size:13px;color:var(--ink-soft);font-weight:600}
 .cq-tpl-select{background:var(--bg-2);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:9px 13px;font-family:inherit;font-size:14px;cursor:pointer;min-width:280px;transition:border-color var(--hover-ease),box-shadow var(--hover-ease)}
