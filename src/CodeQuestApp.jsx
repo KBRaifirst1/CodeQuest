@@ -7,7 +7,7 @@ import { supabase } from "./lib/supabase";
 // Build marker — check this in the browser console to confirm which version is
 // actually running: type  window.__CQ_VERSION  in DevTools. If it's not the
 // value below, your browser/Vercel is serving an older bundle.
-const CQ_VERSION = "2026-07-12-v107-editor-undo";
+const CQ_VERSION = "2026-07-12-v110-mobile-header-fix2";
 
 // Only this account (by Supabase user id) can read submitted feedback. Gating by
 // id, not email, so it survives email changes / adding Google login later.
@@ -249,7 +249,7 @@ const GENERAL_MULTIFILE_STEPS = [
     why: "Every multi-file program has exactly one entry point — the file that runs first. The rest wait to be used by it." },
   { type: "pick", chapter: "2 · The file that runs", title: "Which file runs first?",
     intro: "A project has three files: helpers.py, main.py, and data.py.",
-    q: "Which one does the program start from?", options: ["helpers.py", "main.py", "data.py", "whichever is biggest"], correctIndex: 1,
+    q: "Which one does the program start from?", choices: ["helpers.py", "main.py", "data.py", "whichever is biggest"], correctIndex: 1,
     why: "main is the entry point — the program always begins there. The others only run when main reaches out and uses them." },
 
   { type: "concept", chapter: "3 · Pulling in other files", title: "How one file uses another",
@@ -6194,6 +6194,23 @@ function ConceptStep({ step, onDone }) {
   const [picked, setPicked] = useState(null);
   const stats = useLessonStats();
   const correct = picked === step.answer;
+
+  // Some concept steps (e.g. the General Multi-file chapters) teach a general
+  // idea with a `teach` body and no per-language code table. Those have no
+  // `langs`, so render a simple teaching card instead of the language-tabs
+  // layout — calling step.langs.map on them would crash.
+  if (!Array.isArray(step.langs)) {
+    return (
+      <div className="cq-card2">
+        <h1 className="cq-h1">{step.title}</h1>
+        {step.teach && <p className="cq-teach-text">{step.teach}</p>}
+        {step.plain && <p className="cq-concept-plain">{step.plain}</p>}
+        {step.example && <div className="cq-teach-example"><span className="cq-teach-label">Example</span><pre>{step.example}</pre></div>}
+        {step.why && <div className="cq-takeaway big">{step.why}</div>}
+        <button className="cq-run" style={{ marginTop: 18 }} onClick={() => onDone(stats.buildStats({ applicable: false }))}>Got it →</button>
+      </div>
+    );
+  }
   return (
     <div className="cq-card2">
       <h1 className="cq-h1">{step.title} <span className="cq-universal">in every language</span></h1>
@@ -9445,6 +9462,7 @@ const CSS = `
     radial-gradient(820px 460px at 2% 4%, #191033 0%, transparent 52%),
     var(--bg-0);
   min-height:100vh; -webkit-font-smoothing:antialiased;
+  width:100%; max-width:100%;
 }
 .cq-root *{box-sizing:border-box}
 .cq-root button{color:inherit}
@@ -10004,12 +10022,23 @@ const CSS = `
 .cq-root button:focus-visible{outline:2px solid var(--teal);outline-offset:2px}
 @media(prefers-reduced-motion:reduce){.cq-root *{animation:none!important;transition:none!important}}
 @media(max-width:640px){
-  .cq-main{padding:24px 16px 60px}
+  .cq-main{padding:24px 16px 60px;max-width:100%}
   .cq-card2{padding:22px}
   .cq-h1{font-size:21px}.cq-home-title{font-size:28px}
   .cq-piece,.cq-banktok{font-size:15px}
   .cq-navlabel{display:none}
   .cq-classhero{padding:20px}
+  /* Header was using desktop padding/gaps (20px 40px, gap 48px) with no mobile
+     shrink — on a phone that made it oversized and pushed content wider than the
+     screen, causing the sideways slide + white gutter. Tighten it here. */
+  .cq-header{padding:11px 14px;gap:10px}
+  .cq-headerright{gap:8px;justify-content:flex-end}
+  .cq-brand{gap:8px;min-width:0}
+  .cq-projbtn,.cq-xp{font-size:13px;padding:6px 10px}
+  .cq-brandname{font-size:16px;min-width:0}
+  /* Belt-and-suspenders against any residual sideways scroll on phones. Scoped
+     to mobile so it can't affect the sticky header's behaviour on desktop. */
+  .cq-main,.cq-classhero,.cq-card2{overflow-x:hidden}
 }
 
 /* ============================================================
