@@ -7,7 +7,7 @@ import { supabase } from "./lib/supabase";
 // Build marker — check this in the browser console to confirm which version is
 // actually running: type  window.__CQ_VERSION  in DevTools. If it's not the
 // value below, your browser/Vercel is serving an older bundle.
-const CQ_VERSION = "2026-07-12-v122-arena-rebuild";
+const CQ_VERSION = "2026-07-12-v140-circuit-guard";
 
 // Only this account (by Supabase user id) can read submitted feedback. Gating by
 // id, not email, so it survives email changes / adding Google login later.
@@ -68,8 +68,72 @@ if (typeof window !== "undefined") {
 // writes `while(true){}` gets a clean error instead of a frozen browser tab.
 function injectLoopGuard(code, limit = 100000) {
   const gvar = "__cq_i__";
-  const preamble = `let ${gvar}=0; const ${gvar}_g=()=>{if(++${gvar}>${limit})throw new Error("Loop ran too long — likely an infinite loop");};`;
-  return preamble + String(code || "").replace(/(\b(?:while|for)\s*\([^{}]*\)\s*\{|\bdo\s*\{)/g, `$1${gvar}_g();`);
+  const preamble = `let ${gvar}=0; const ${gvar}_g=()=>{if(++${gvar}>${limit})throw new Error("Loop ran too long — likely an infinite loop");return true;};`;
+  const src = String(code || "");
+  // Guard the CONDITION, not the body, so it fires every iteration whether or not
+  // the loop uses braces. `while(cond)` → `while(guard()&&(cond))`, and the C-style
+  // `for(init;cond;step)` → `for(init;guard()&&(cond);step)`. This closes the gap
+  // where a brace-less `while(true) x++;` slipped past and could freeze the tab.
+  const out = [];
+  let i = 0;
+  // Skip over a string/template/comment starting at index i, copying it verbatim,
+  // so loop keywords INSIDE a string like 'while(true)' aren't mangled.
+  const skipLiteral = (idx) => {
+    const ch = src[idx];
+    if (ch === '"' || ch === "'" || ch === "`") {
+      let j = idx + 1;
+      for (; j < src.length; j++) { if (src[j] === "\\") { j++; continue; } if (src[j] === ch) { j++; break; } }
+      out.push(src.slice(idx, j)); return j;
+    }
+    if (ch === "/" && src[idx + 1] === "/") {
+      let j = idx + 2; while (j < src.length && src[j] !== "\n") j++;
+      out.push(src.slice(idx, j)); return j;
+    }
+    if (ch === "/" && src[idx + 1] === "*") {
+      let j = idx + 2; while (j < src.length && !(src[j] === "*" && src[j + 1] === "/")) j++;
+      j = Math.min(src.length, j + 2); out.push(src.slice(idx, j)); return j;
+    }
+    return -1;
+  };
+  const injectCond = (openIdx) => {
+    // openIdx points at '(' ; find matching ')'
+    let depth = 0, j = openIdx;
+    for (; j < src.length; j++) { if (src[j] === "(") depth++; else if (src[j] === ")") { depth--; if (depth === 0) break; } }
+    return j; // index of matching ')'
+  };
+  while (i < src.length) {
+    // copy strings/templates/comments verbatim so keywords inside them are safe
+    const skipped = skipLiteral(i);
+    if (skipped !== -1) { i = skipped; continue; }
+    // match `while(` or `for(` at a word boundary
+    const rest = src.slice(i);
+    const mWhile = /^while\s*\(/.exec(rest);
+    const mFor = /^for\s*\(/.exec(rest);
+    if (mWhile) {
+      const openIdx = i + mWhile[0].length - 1;
+      const closeIdx = injectCond(openIdx);
+      const cond = src.slice(openIdx + 1, closeIdx);
+      out.push(`while(${gvar}_g()&&(${cond}))`);
+      i = closeIdx + 1;
+    } else if (mFor) {
+      const openIdx = i + mFor[0].length - 1;
+      const closeIdx = injectCond(openIdx);
+      const inside = src.slice(openIdx + 1, closeIdx);
+      // for-in / for-of have no `;` — guard by wrapping body isn't needed; these
+      // iterate a finite collection, so leave them (can't run forever).
+      const parts = inside.split(";");
+      if (parts.length === 3) {
+        const cond = parts[1].trim();
+        out.push(`for(${parts[0]};${gvar}_g()&&(${cond === "" ? "true" : cond});${parts[2]})`);
+      } else {
+        out.push(src.slice(i, closeIdx + 1)); // for-of/for-in, leave as-is
+      }
+      i = closeIdx + 1;
+    } else {
+      out.push(src[i]); i++;
+    }
+  }
+  return preamble + out.join("");
 }
 
 function verifyRuns(code, fnName, tests) {
@@ -98,6 +162,9 @@ async function verifyTypeScript(code, fnName, tests) {
     if (!B) return { ok: false, why: "the TypeScript compiler didn't load", engineError: true };
     js = B.transform(code, { presets: ["typescript"], filename: "sol.ts" }).code;
   } catch (e) { return { ok: false, why: "syntax error: " + (e && e.message ? e.message.slice(0, 60) : e) }; }
+  // Same infinite-loop guard as the JS checker: transpiled TS runs via new Function,
+  // so an unguarded while(true) would freeze the tab.
+  js = injectLoopGuard(js, 100000);
   let fn;
   try { fn = new Function(`${js}; return typeof ${fnName}==='function'?${fnName}:undefined;`)(); }
   catch (e) { return { ok: false, why: "it couldn't run: " + e.message }; }
@@ -111,9 +178,39 @@ async function verifyTypeScript(code, fnName, tests) {
   return { ok: true };
 }
 // Real lesson checker for SQL: seed a fresh database, run the learner's query,
+// The C/C++/Java/PHP verifiers print each result as a single scalar line, so
+// they can only grade scalar return values (number/string/boolean). An array or
+// object expected can't be represented by these harnesses — rather than emit
+// source that won't compile or silently misgrade, we flag it as a lesson we
+// can't verify honestly. Returns an error object to return, or null if fine.
+function scalarExpectedGuard(tests, langLabel) {
+  if (!Array.isArray(tests)) return null;
+  for (const t of tests) {
+    const e = t && t.expected;
+    if (e !== null && typeof e === "object") {
+      return { ok: false, why: `${langLabel} exercises here can only check a single value (number, text, or true/false), not a list or object.`, engineError: true };
+    }
+  }
+  return null;
+}
+// A string argument dropped into generated C/C++/Java/PHP source must be a valid
+// source-level string literal. All four use C-style escaping, so escape the
+// characters that would otherwise change meaning or break the literal: backslash
+// first (so we don't double-escape our own additions), then quotes and the
+// whitespace controls that would split the literal across lines.
+function cStyleStringLit(a) {
+  if (typeof a !== "string") return String(a);
+  const esc = a
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, "\\n")
+    .replace(/\r/g, "\\r")
+    .replace(/\t/g, "\\t");
+  return '"' + esc + '"';
+}
 // and compare the result rows to the expected answer. This is the query-check
 // model (different from function-tests) — the honest way to test SQL.
-async function verifySQL(code, seed, expected) {
+async function verifySQL(code, seed, expected, orderMatters = false) {
   if (!code.trim()) return { ok: false, why: "write a query first" };
   let SQL;
   try {
@@ -126,16 +223,22 @@ async function verifySQL(code, seed, expected) {
     let res;
     try { res = db.exec(code); } catch (e) { return { ok: false, why: "SQL error: " + (e && e.message ? e.message.slice(0, 70) : e) }; }
     const rows = res.length ? res[0].values.map((r) => r.map((v) => v)) : [];
-    // Compare as sets of rows if order isn't specified, else exact. Default: exact.
     const norm = (rr) => JSON.stringify(rr);
-    if (norm(rows) !== norm(expected)) {
-      // try order-insensitive
+    if (norm(rows) === norm(expected)) return { ok: true };
+    // Row ORDER is only part of the answer when the lesson is about ordering. If
+    // the solution used ORDER BY (orderMatters), we require the exact order — a
+    // wrongly-sorted answer must NOT be accepted, or we'd teach the wrong thing.
+    // Otherwise order is irrelevant, so compare as unordered sets of rows.
+    if (!orderMatters) {
+      const sortRows = (rr) => [...rr].map((r) => JSON.stringify(r)).sort();
+      if (JSON.stringify(sortRows(rows)) === JSON.stringify(sortRows(expected))) return { ok: true };
+    } else {
+      // Give a targeted hint when the rows are right but the order is wrong.
       const sortRows = (rr) => [...rr].map((r) => JSON.stringify(r)).sort();
       if (JSON.stringify(sortRows(rows)) === JSON.stringify(sortRows(expected)))
-        return { ok: true };
-      return { ok: false, why: `the query returned ${rows.length} row(s) that don't match the expected answer. Got: ${JSON.stringify(rows).slice(0, 80)}` };
+        return { ok: false, why: "right rows, wrong order — check your ORDER BY direction (ASC vs DESC) or column." };
     }
-    return { ok: true };
+    return { ok: false, why: `the query returned ${rows.length} row(s) that don't match the expected answer. Got: ${JSON.stringify(rows).slice(0, 80)}` };
   } finally { try { db.close(); } catch {} }
 }
 // Real lesson checker for C/C++ via Wasmer's in-browser clang. Wraps the learner's
@@ -146,9 +249,18 @@ async function verifySQL(code, seed, expected) {
 async function verifyPHP(code, fnName, tests) {
   if (typeof window === "undefined") return { ok: false, why: "PHP needs a browser", engineError: true };
   if (!code.trim()) return { ok: false, why: "write some code first" };
-  const argLit = (a) => (typeof a === "string" ? '"' + String(a).replace(/"/g, '\\"') + '"' : String(a));
+  { const g = scalarExpectedGuard(tests, "PHP"); if (g) return g; }
+  const argLit = cStyleStringLit;
   const src = /^<\?php/.test(code.trim()) ? code : "<?php\n" + code;
-  const calls = tests.map((t, i) => `echo "CQ${i}:" . ${fnName}(${t.args.map(argLit).join(", ")}) . "\\n";`).join("\n");
+  // A boolean-returning function: PHP echoes true as "1" and false as "" (empty),
+  // which would never match the expected JS true/false. Print "true"/"false" so
+  // the comparison is honest.
+  const phpBool = (i, call) => `echo "CQ${i}:" . (( ${call} ) ? "true" : "false") . "\\n";`;
+  const calls = tests.map((t, i) => {
+    const call = `${fnName}(${t.args.map(argLit).join(", ")})`;
+    if (typeof t.expected === "boolean") return phpBool(i, call);
+    return `echo "CQ${i}:" . ${call} . "\\n";`;
+  }).join("\n");
   const harness = src + "\n" + calls;
   let r;
   try { r = await runProjectPHP(harness); }
@@ -166,12 +278,31 @@ async function verifyPHP(code, fnName, tests) {
 async function verifyCFamily(code, fnName, tests, isCpp) {
   if (typeof window === "undefined") return { ok: false, why: "C/C++ needs a browser", engineError: true };
   if (!code.trim()) return { ok: false, why: "write some code first" };
-  const argLit = (a) => (typeof a === "string" ? '"' + String(a).replace(/"/g, '\\"') + '"' : String(a));
+  { const g = scalarExpectedGuard(tests, isCpp ? "C++" : "C"); if (g) return g; }
+  const argLit = cStyleStringLit;
+  // Choose the print format from the FUNCTION's return type, which is consistent
+  // across all its tests — not per-test. A double-returning function can have an
+  // integer-valued expected (avg → 3.0); deciding per-test would print that one
+  // with %d and garble it. If any expected is a string, it returns a string; else
+  // if any expected is a non-integer, it returns a floating type (so use %g for
+  // all, including the whole-number ones); else it's integer.
+  const anyStr = tests.some((t) => typeof t.expected === "string");
+  const anyBool = tests.some((t) => typeof t.expected === "boolean");
+  const anyFloat = tests.some((t) => typeof t.expected === "number" && !Number.isInteger(t.expected));
+  // A boolean-returning function must print "true"/"false" to match the expected
+  // JS booleans; C's %d would print 1/0 and false-reject a correct answer.
+  const retKind = anyStr ? "str" : anyBool ? "bool" : anyFloat ? "float" : "int";
   const calls = tests.map((t, i) => {
     const args = t.args.map(argLit).join(", ");
-    const isStr = typeof t.expected === "string";
-    if (isCpp) return `std::cout << "CQ${i}:" << ${fnName}(${args}) << std::endl;`;
-    return isStr ? `printf("CQ${i}:%s\\n", ${fnName}(${args}));` : `printf("CQ${i}:%d\\n", ${fnName}(${args}));`;
+    if (isCpp) {
+      if (retKind === "bool") return `std::cout << "CQ${i}:" << ((${fnName}(${args})) ? "true" : "false") << std::endl;`;
+      if (retKind === "float") return `{ std::cout << "CQ${i}:"; std::cout.precision(10); std::cout << ${fnName}(${args}) << std::endl; }`;
+      return `std::cout << "CQ${i}:" << ${fnName}(${args}) << std::endl;`;
+    }
+    if (retKind === "str") return `printf("CQ${i}:%s\\n", ${fnName}(${args}));`;
+    if (retKind === "bool") return `printf("CQ${i}:%s\\n", (${fnName}(${args})) ? "true" : "false");`;
+    if (retKind === "float") return `printf("CQ${i}:%g\\n", (double)(${fnName}(${args})));`;
+    return `printf("CQ${i}:%d\\n", ${fnName}(${args}));`;
   }).join("\n  ");
   const harness = isCpp
     ? `#include <iostream>\n#include <string>\nusing namespace std;\n${code}\nint main(){\n  ${calls}\n  return 0;\n}`
@@ -193,7 +324,8 @@ async function verifyCFamily(code, fnName, tests, isCpp) {
 async function verifyJava(code, fnName, tests, consoleEl, displayEl) {
   if (typeof window === "undefined") return { ok: false, why: "Java needs a browser", engineError: true };
   if (!code.trim()) return { ok: false, why: "write some code first" };
-  const argLit = (a) => (typeof a === "string" ? '"' + String(a).replace(/"/g, '\\"') + '"' : String(a));
+  { const g = scalarExpectedGuard(tests, "Java"); if (g) return g; }
+  const argLit = cStyleStringLit;
   const calls = tests.map((t, i) => `System.out.println("CQ" + ${i} + ":" + ${fnName}(${t.args.map(argLit).join(", ")}));`).join("\n    ");
   const harness = `public class Main {\n  ${code}\n  public static void main(String[] args) {\n    ${calls}\n  }\n}`;
   let r;
@@ -1381,9 +1513,11 @@ function _scoreRetries(classStats) {
   return 1 - avgRetries / 5;
 }
 
-function computeSkillScore({ cls, doneSet, progressMap, allClasses, customTopic, aiLessonCount = 0, lessonStats = {} }) {
+function computeSkillScore({ cls, doneSet, progressMap, allClasses, customTopic, aiLessonCount = 0, lessonStats = {} } = {}) {
   // Defensive null guards — callers should pass valid values but this is
   // user-critical code and a single null slip shouldn't crash generation.
+  // A missing class can't be scored at all, so fall back to absolute-beginner.
+  if (!cls || typeof cls !== "object") return 1;
   const progMap = progressMap || {};
   const stats = lessonStats || {};
   const all = Array.isArray(allClasses) ? allClasses : [];
@@ -1487,7 +1621,8 @@ async function generateTopicBatch({ classId, langLabel, priorTopics, learnedConc
   // or "Print" instead of "print" to sneak a known concept past the filter.
   const CONCEPT_SYNONYMS = {
     "printing": "print", "print statement": "print", "printing output": "print", "output": "print", "console output": "print",
-    "printing values": "print", "display": "print", "show output": "print",
+    "printing values": "print", "display": "print", "show output": "print", "displaying": "print", "displaying output": "print",
+    "displaying values": "print", "displaying text": "print", "printing text": "print", "printing to the console": "print", "outputting": "print",
     "for loops": "for loop", "for-loop": "for loop", "looping": "for loop", "loops": "for loop", "iterate": "for loop", "iteration": "for loop",
     "while loops": "while loop",
     "f string": "f-strings", "fstring": "f-strings", "fstrings": "f-strings", "formatted strings": "f-strings", "string formatting": "f-strings",
@@ -1503,8 +1638,9 @@ async function generateTopicBatch({ classId, langLabel, priorTopics, learnedConc
     let s = (c || "").toString().toLowerCase().trim();
     s = s.replace(/\(\s*\)/g, "").replace(/[^a-z0-9 /+-]/g, "").replace(/\s+/g, " ").trim(); // drop (), punctuation
     if (CONCEPT_SYNONYMS[s]) s = CONCEPT_SYNONYMS[s];
-    // Singularize a trailing plural "s" as a last-ditch match (loops→loop), but
-    // only after synonym mapping so we don't mangle "f-strings".
+    // Plurals are handled explicitly in the synonym map above (e.g. loops→for
+    // loop, arrays→lists) rather than by blind trailing-s stripping, which would
+    // wrongly mangle concepts like "f-strings".
     return s;
   };
   const learnedSet = new Set((learnedConcepts || []).map(normConcept).filter(Boolean));
@@ -1666,7 +1802,6 @@ const CONCEPT_CODE_SIGNATURES = {
   "while loop": (s) => /\bwhile\b/.test(s),
   "conditionals": (s) => /\bif\b/.test(s) || /\?[^?:]+:/.test(s),
   "dictionary": (s) => /\{[^}]*:[^}]*\}|\bdict\s*\(|\bnew\s+Map\b|=>/.test(s) || /\[["'][^"']+["']\]\s*=/.test(s),
-  "recursion ": null,
 };
 // A few concepts imply a loop of SOME kind; accept either loop keyword.
 const CONCEPT_LOOP_ANY = new Set(["for loop", "while loop", "loop", "iteration"]);
@@ -2229,11 +2364,18 @@ function runProjectJS(code, files = null, activeName = null) {
   const push = (...a) => logs.push(a.map((x) => (typeof x === "object" && x !== null ? JSON.stringify(x) : String(x))).join(" "));
   const fakeConsole = { log: push, error: push, warn: push, info: push };
 
-  // Single-file: run directly (unchanged behavior).
+  // Single-file: run directly (unchanged behavior). Fall back to the entry
+  // file's own code if the caller passed files but not the code string, so a
+  // one-file project can never silently run nothing and report success.
   if (!Array.isArray(files) || files.filter((f) => /\.(js|ts|jsx)$/i.test(f.name)).length <= 1) {
+    let single = code;
+    if ((!single || !String(single).trim()) && Array.isArray(files)) {
+      const entry = files.find((f) => f.name === activeName) || files.find((f) => /\.(js|ts|jsx)$/i.test(f.name));
+      if (entry) single = entry.code;
+    }
     try {
       // eslint-disable-next-line no-new-func
-      const fn = new Function("console", injectLoopGuard(code, 10000000));
+      const fn = new Function("console", injectLoopGuard(single, 10000000));
       fn(fakeConsole);
       return { ok: true, output: logs.join("\n") };
     } catch (e) {
@@ -2316,7 +2458,7 @@ async function runProjectJSWithSQL(files, activeName) {
   if (!active) return { ok: false, output: "", error: "No JavaScript file to run." };
   try {
     // eslint-disable-next-line no-new-func
-    const fn = new Function("console", "db", "query", active.code);
+    const fn = new Function("console", "db", "query", injectLoopGuard(active.code, 10000000));
     fn(fakeConsole, db, query);
     return { ok: true, output: logs.join("\n") };
   } catch (e) {
@@ -2349,12 +2491,34 @@ function schemeLiteral(v) {
   return String(v);
 }
 function schemeValueToJS(v) {
-  // BiwaScheme returns JS numbers/strings/booleans directly; pairs/lists come
-  // back as BiwaScheme.Pair with a to_array() method (underscore — confirmed
-  // against BiwaScheme 0.8). Normalize to plain JS for comparison.
-  if (v && typeof v.to_array === "function") return v.to_array().map(schemeValueToJS);
-  if (v && typeof v.toArray === "function") return v.toArray().map(schemeValueToJS);
+  // BiwaScheme returns JS numbers/strings/booleans directly. Other Scheme values
+  // come back as tagged objects; normalize to plain JS for comparison. We
+  // duck-type on the shape rather than constructor names, since the CDN build's
+  // minified class names can differ from the source names.
+  if (v === null || v === undefined) return v;
+  if (typeof v !== "object") return v; // number, string, boolean
   if (v === BiwaSchemeNil()) return [];
+  // Symbol → its name ("'abc" ⇒ "abc"); Char → its character ("#\\a" ⇒ "a").
+  // Without this, a lesson returning a symbol or char would false-reject a
+  // correct answer because the raw tagged object never equals the expected string.
+  if (typeof v.name === "string" && !("car" in v) && !("to_array" in v)) return v.name;
+  if (typeof v.value === "string" && !("car" in v) && Object.keys(v).length === 1) return v.value;
+  // Pairs: a proper list flattens via to_array(); an IMPROPER pair (cdr isn't a
+  // list) must not be truncated to just its car, which silently loses data —
+  // walk it and mark the dotted tail so the value is represented faithfully.
+  if (v && "car" in v && "cdr" in v) {
+    const items = [];
+    let cur = v;
+    const nil = BiwaSchemeNil();
+    while (cur && typeof cur === "object" && "car" in cur && "cdr" in cur) {
+      items.push(schemeValueToJS(cur.car));
+      cur = cur.cdr;
+    }
+    if (cur === nil || cur === null || cur === undefined) return items; // proper list
+    return [...items, { __dotted: schemeValueToJS(cur) }]; // improper: keep the tail visible
+  }
+  if (typeof v.to_array === "function") return v.to_array().map(schemeValueToJS);
+  if (typeof v.toArray === "function") return v.toArray().map(schemeValueToJS);
   return v;
 }
 function BiwaSchemeNil() { try { return _biwa && _biwa.nil; } catch { return undefined; } }
@@ -2383,14 +2547,14 @@ async function runProjectScheme(code) {
         interp.stdout = port;
         if (_biwa.Port) _biwa.Port.current_output = port;
         const val = interp.evaluate(code);
-        // BiwaScheme's StringOutput accumulates writes in `buffer` as an ARRAY
-        // of strings and exposes output_string() to join them. Using the array
-        // directly produced comma-joined garbage for any program with more than
-        // one (display …). Prefer the official method, else join the array.
+        // BiwaScheme's StringOutput exposes output_string() to read accumulated
+        // writes, and stores them in a `buffer` array. Both confirmed against the
+        // real engine; output_string() is preferred, buffer.join("") is the
+        // fallback if a build ever lacks the method. (Using the array without
+        // joining produced comma-garbled output for multi-(display …) programs.)
         const capture = (pp) => {
           try { if (typeof pp.output_string === "function") return pp.output_string(); } catch {}
           if (Array.isArray(pp.buffer)) return pp.buffer.join("");
-          if (typeof pp.output_buffer === "string") return pp.output_buffer;
           return typeof pp.buffer === "string" ? pp.buffer : "";
         };
         out = capture(port) || "";
@@ -2675,7 +2839,18 @@ async function verifyRuby(code, fnName, tests) {
 }
 // Mirror Ruby's .inspect formatting for expected values so comparisons match.
 function rubyInspect(v) {
-  if (typeof v === "string") return '"' + v + '"';
+  if (typeof v === "string") {
+    // Ruby's String#inspect wraps in double quotes and escapes backslash, quote,
+    // and the common control characters — mirror that so a correct answer whose
+    // string contains a quote or newline isn't false-rejected.
+    const esc = v
+      .replace(/\\/g, "\\\\")
+      .replace(/"/g, '\\"')
+      .replace(/\n/g, "\\n")
+      .replace(/\t/g, "\\t")
+      .replace(/\r/g, "\\r");
+    return '"' + esc + '"';
+  }
   if (Array.isArray(v)) return "[" + v.map(rubyInspect).join(", ") + "]";
   if (v === null) return "nil";
   if (v === true) return "true";
@@ -2860,6 +3035,9 @@ const CIRCUIT_CHALLENGES = [
 // Check a built circuit against a challenge's target truth table, using the real
 // engine. Returns { pass, detail } — detail lists any mismatched rows.
 function checkCircuitChallenge(challenge, comps, wires) {
+  if (!challenge || !Array.isArray(challenge.inputs) || !challenge.output || !challenge.truth || typeof challenge.truth !== "object") {
+    return { pass: false, detail: "This challenge didn't load correctly — try going back and picking it again." };
+  }
   const inputSwitches = challenge.inputs.map((label) => comps.find((c) => c.kind === "switch" && c.label === label));
   const outLight = comps.find((c) => c.kind === "light" && c.label === challenge.output);
   if (inputSwitches.some((s) => !s) || !outLight) {
@@ -3060,6 +3238,20 @@ function priorKnowledgeClause(learned, langLabel) {
 }
 
 // ---------- Per-language course generation ----------
+// The real-run verifiers wrap the learner's/author's code in a harness that
+// calls fnName directly. Some languages need the solution shaped so that call
+// works — most importantly Java, whose harness calls fnName from a static main,
+// so the method MUST be static or it won't compile. Without this note the model
+// often writes an instance method and a correct solution would fail to compile.
+const REAL_HARNESS_NOTE = (label) => {
+  if (label === "Java")
+    return " IMPORTANT (Java): write fnName as a `public static` method (e.g. `public static int fnName(int n)`) directly — do NOT wrap it in your own class and do NOT make it an instance method; the grader supplies the class and a static main that calls fnName, so a non-static method will not compile.";
+  if (label === "C" || label === "C++")
+    return ` IMPORTANT (${label}): write fnName as a top-level function (the grader supplies main() and calls it); include any needed headers in the solution.`;
+  if (label === "PHP")
+    return " IMPORTANT (PHP): write fnName as a top-level function; the grader calls it directly (no class wrapper).";
+  return "";
+};
 const langGenSystem = (cfg) =>
   `You generate a short beginner course (an array of ${cfg.count} lessons) for the ${cfg.label} programming language. ` +
   `EVERY lesson must TEACH before it tests: explain the new idea plainly, then show a worked example. ` +
@@ -3067,7 +3259,7 @@ const langGenSystem = (cfg) =>
   (cfg.mode === "sql"
     ? `Each lesson teaches ONE SQL idea via a real query challenge: {"title":string, "teach":string (2-3 plain sentences explaining the SQL concept to a beginner), "example":string (a short example query), "concept":string (e.g. "filtering rows with WHERE"), "seed":string (SQL that CREATEs one small table and INSERTs ~4-6 rows of data), "schema":string (a human-readable description of the table and its columns, shown to the learner), "starter":string (a partial query like "SELECT " for them to complete), "solution":string (the correct full query), "expected":array of rows (each row an array of values) that the solution returns}. The solution run against the seed MUST produce exactly the expected rows. Keep tables tiny and relatable (pets, books, students). Order from SELECT-all → WHERE → ORDER BY → COUNT/aggregate → GROUP BY.`
     : cfg.mode === "real"
-    ? `Each lesson: {"title":string, "teach":string (2-3 plain sentences that EXPLAIN the new concept to a total beginner, may use \`inline code\`), "example":string (a short worked example in ${cfg.label} showing the idea), "concept":string (the underlying idea, e.g. "doubling a number"), "fnName":string, "starter":string (a ${cfg.label} function skeleton with the right name and an empty body + a comment, NOT a working solution), "solution":string (complete correct ${cfg.label} code), "tests":array of >=2 {"args":array,"expected":any}}. Starters must NOT pass; solutions MUST pass. Use ${cfg.label} syntax exactly.`
+    ? `Each lesson: {"title":string, "teach":string (2-3 plain sentences that EXPLAIN the new concept to a total beginner, may use \`inline code\`), "example":string (a short worked example in ${cfg.label} showing the idea), "concept":string (the underlying idea, e.g. "doubling a number"), "fnName":string, "starter":string (a ${cfg.label} function skeleton with the right name and an empty body + a comment, NOT a working solution), "solution":string (complete correct ${cfg.label} code), "tests":array of >=2 {"args":array,"expected":any}}. Starters must NOT pass; solutions MUST pass. Use ${cfg.label} syntax exactly.` + REAL_HARNESS_NOTE(cfg.label)
     : `Each lesson: {"title":string, "teach":string (2-3 plain sentences that EXPLAIN the new concept to a total beginner), "example":string (a short worked example in ${cfg.label} showing the idea), "concept":string, "starter":string (a ${cfg.label} code skeleton to fill in), "checks":array of >=2 short strings (criteria a correct answer meets)}. Use real ${cfg.label} syntax.`) +
   ` Order lessons from easiest to hardest, each building on the last. Keep them small and beginner-friendly.`;
 
@@ -3557,11 +3749,12 @@ async function generateCourse(classId, progressMap, signal) {
     if (cfg.mode === "sql") {
       // Validate: the author's solution query, run on the seed, must yield expected.
       if (!L.title || !L.seed || !L.solution || !Array.isArray(L.expected)) continue;
-      const check = await verifySQL(L.solution, L.seed, L.expected);
+      const check = await verifySQL(L.solution, L.seed, L.expected, /order\s+by/i.test(L.solution || ""));
       if (!check.engineError && !check.ok) continue; // skip lessons whose own solution fails
       out.push({ id: "g_" + Math.random().toString(36).slice(2, 7), type: "sqlquery", chapter: `${cfg.label} course`, generated: true,
         title: L.title, teach: L.teach || "", example: L.example || "", concept: L.concept || L.title,
         schema: L.schema || "", seed: L.seed, starter: L.starter || "SELECT ", expected: L.expected, lang: "sql",
+        orderMatters: /order\s+by/i.test(L.solution || ""),
         why: "That query ran on a real database — correct!" });
       continue;
     }
@@ -6189,6 +6382,34 @@ function useLessonStats() {
   return { recordWrong, buildStats };
 }
 
+// Defensive fallback for step components. Real lessons always have valid step
+// data (render-safety.cjs guards this), but if a malformed step ever slips
+// through generation, we render a skip card instead of crashing the whole lesson.
+// Usage: `const bad = stepGuard(step, ["items"]); if (bad) return bad;`
+function stepGuard(step, requiredArrays = [], onDone) {
+  const missing = !step || requiredArrays.some((k) => !Array.isArray(step[k]));
+  if (!missing) return null;
+  return (
+    <div className="cq-card2">
+      <h1 className="cq-h1">Hmm, this step didn't load right.</h1>
+      <p className="cq-lead">Something went wrong building this exercise. You can skip ahead — it won't count against you.</p>
+      <button className="cq-run" onClick={() => onDone && onDone({ applicable: false })}>Continue →</button>
+    </div>
+  );
+}
+
+// Coerce any value to something React can render as text. Choice/item/token
+// arrays are supposed to hold strings or numbers, but a malformed generated
+// lesson (or corrupt saved state) can slip in an object — rendering that
+// directly throws "Objects are not valid as a React child" and blanks the whole
+// lesson. This makes the worst case a harmless string instead of a crash.
+function renderText(v) {
+  if (v === null || v === undefined) return "";
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  try { return JSON.stringify(v); } catch { return String(v); }
+}
+
 function ConceptStep({ step, onDone }) {
   const [tab, setTab] = useState(0); // which language tab
   const [picked, setPicked] = useState(null);
@@ -6199,7 +6420,7 @@ function ConceptStep({ step, onDone }) {
   // idea with a `teach` body and no per-language code table. Those have no
   // `langs`, so render a simple teaching card instead of the language-tabs
   // layout — calling step.langs.map on them would crash.
-  if (!Array.isArray(step.langs)) {
+  if (!Array.isArray(step.langs) || step.langs.length === 0) {
     return (
       <div className="cq-card2">
         <h1 className="cq-h1">{step.title}</h1>
@@ -6228,10 +6449,10 @@ function ConceptStep({ step, onDone }) {
             <button key={i} className={`cq-langtab ${tab === i ? "active" : ""}`} onClick={() => setTab(i)}>{l[0]}</button>
           ))}
         </div>
-        <div className="cq-neutralcode lang"><pre>{step.langs[tab][1]}</pre></div>
+        <div className="cq-neutralcode lang"><pre>{Array.isArray(step.langs[tab]) ? step.langs[tab][1] : ""}</pre></div>
       </div>
 
-      <div className="cq-concept-section">
+      {Array.isArray(step.choices) && <div className="cq-concept-section">
         <div className="cq-concept-label">Quick check</div>
         <div className="cq-puzzleq small">{step.q}</div>
         <div className="cq-choices">
@@ -6244,14 +6465,14 @@ function ConceptStep({ step, onDone }) {
                   if (i === step.answer) onDone(stats.buildStats());
                   else stats.recordWrong();
                 }}>
-                <span className="cq-choice-plain">{c}</span>
+                <span className="cq-choice-plain">{renderText(c)}</span>
                 {picked !== null && i === step.answer && <span className="cq-choice-mark">✓</span>}
                 {picked === i && i !== step.answer && <span className="cq-choice-mark">try again</span>}
               </button>
             );
           })}
         </div>
-      </div>
+      </div>}
 
       {picked !== null && !correct && <div className="cq-nudge">Not quite — re-read the explanation up top and try again.</div>}
       {correct && <div className="cq-takeaway">✅ {step.why}</div>}
@@ -6263,6 +6484,7 @@ function PuzzleStep({ step, onDone }) {
   const [picked, setPicked] = useState(null);
   const stats = useLessonStats();
   const correct = picked === step.correctIndex;
+  const bad = stepGuard(step, ["choices"], onDone); if (bad) return bad;
   return (
     <div className="cq-card2">
       <h1 className="cq-h1">{step.title}</h1>
@@ -6278,7 +6500,7 @@ function PuzzleStep({ step, onDone }) {
                 if (i === step.correctIndex) onDone(stats.buildStats());
                 else stats.recordWrong();
               }}>
-              <span className="cq-choice-plain">{c}</span>
+              <span className="cq-choice-plain">{renderText(c)}</span>
               {picked !== null && i === step.correctIndex && <span className="cq-choice-mark">✓</span>}
               {picked === i && i !== step.correctIndex && <span className="cq-choice-mark">try again</span>}
             </button>
@@ -6295,6 +6517,7 @@ function PredictStep({ step, onDone }) {
   const [picked, setPicked] = useState(null);
   const stats = useLessonStats();
   const correct = picked === step.correctIndex;
+  const bad = stepGuard(step, ["choices"], onDone); if (bad) return bad;
   return (
     <div className="cq-card2">
       <h1 className="cq-h1">{step.title}</h1>
@@ -6311,7 +6534,7 @@ function PredictStep({ step, onDone }) {
                 if (i === step.correctIndex) onDone(stats.buildStats());
                 else stats.recordWrong();
               }}>
-              <code>{c}</code>
+              <code>{renderText(c)}</code>
               {picked !== null && i === step.correctIndex && <span className="cq-choice-mark">✓</span>}
               {picked === i && i !== step.correctIndex && <span className="cq-choice-mark">try again</span>}
             </button>
@@ -6329,6 +6552,7 @@ function OrderStep({ step, onDone }) {
   const [arranged, setArranged] = useState([]);
   const [result, setResult] = useState(null);
   const stats = useLessonStats();
+  const bad = stepGuard(step, ["items"], onDone); if (bad) return bad;
   const remaining = step.items.map((_, i) => i).filter((i) => !arranged.includes(i));
 
   const place = (i) => { if (result?.ok) return; setArranged((a) => [...a, i]); setResult(null); };
@@ -6352,13 +6576,13 @@ function OrderStep({ step, onDone }) {
         {arranged.length === 0 && <span className="cq-buildslot-empty">tap the steps below in the right order…</span>}
         {arranged.map((itemIdx, pos) => (
           <button key={pos} className={`cq-orderitem ${result && !result.ok && result.firstWrong === pos ? "wrong" : ""}`} onClick={() => removeAt(pos)}>
-            <span className="cq-ordernum">{pos + 1}</span>{step.items[itemIdx]}
+            <span className="cq-ordernum">{pos + 1}</span>{renderText(step.items[itemIdx])}
           </button>
         ))}
       </div>
 
       <div className="cq-orderbank">
-        {remaining.map((i) => (<button key={i} className="cq-orderchoice" onClick={() => place(i)}>{step.items[i]}</button>))}
+        {remaining.map((i) => (<button key={i} className="cq-orderchoice" onClick={() => place(i)}>{renderText(step.items[i])}</button>))}
         {remaining.length === 0 && <span className="cq-bank-empty">all steps placed</span>}
       </div>
 
@@ -6383,7 +6607,8 @@ function ReadStep({ step, onDone }) {
   const [open, setOpen] = useState(null);
   const [seen, setSeen] = useState(new Set());
   const stats = useLessonStats();
-  useEffect(() => { if (seen.size >= step.line.length) onDone(stats.buildStats({ applicable: false })); }, [seen]);
+  useEffect(() => { if (Array.isArray(step.line) && seen.size >= step.line.length) onDone(stats.buildStats({ applicable: false })); }, [seen]);
+  const bad = stepGuard(step, ["line"], onDone); if (bad) return bad;
   return (
     <div className="cq-card2">
       <h1 className="cq-h1">{step.title}</h1>
@@ -6405,6 +6630,7 @@ function PickStep({ step, onDone }) {
   const [picked, setPicked] = useState(null);
   const stats = useLessonStats();
   const correct = picked === step.correctIndex;
+  const bad = stepGuard(step, ["choices"], onDone); if (bad) return bad;
   return (
     <div className="cq-card2">
       <h1 className="cq-h1">{step.title}</h1>
@@ -6420,7 +6646,7 @@ function PickStep({ step, onDone }) {
                 if (i === step.correctIndex) onDone(stats.buildStats());
                 else stats.recordWrong();
               }}>
-              <code>{c}</code>
+              <code>{renderText(c)}</code>
               {picked !== null && i === step.correctIndex && <span className="cq-choice-mark">✓</span>}
               {picked === i && i !== step.correctIndex && <span className="cq-choice-mark">try again</span>}
             </button>
@@ -6437,6 +6663,7 @@ function BuildStep({ step, onDone }) {
   const [placed, setPlaced] = useState([]);
   const [result, setResult] = useState(null);
   const stats = useLessonStats();
+  const bad = stepGuard(step, ["bank"], onDone); if (bad) return bad;
   const remaining = step.bank.map((tok, i) => ({ tok, i })).filter(({ i }) => !placed.some((p) => p.bankIdx === i));
   const tapBank = (tok, bankIdx) => { if (result?.ok) return; setPlaced((p) => [...p, { tok, bankIdx }]); setResult(null); };
   const tapPlaced = (slotIdx) => { if (result?.ok) return; setPlaced((p) => p.filter((_, i) => i !== slotIdx)); setResult(null); };
@@ -6484,6 +6711,7 @@ function FillStep({ step, onDone }) {
   const [choice, setChoice] = useState(null);
   const stats = useLessonStats();
   const correct = choice === step.answer;
+  const fillBad = stepGuard(step, ["blankChoices"], onDone);
   const pick = (c) => {
     setChoice(c);
     if (c === step.answer) {
@@ -6493,6 +6721,7 @@ function FillStep({ step, onDone }) {
       stats.recordWrong();
     }
   };
+  if (fillBad) return fillBad;
   return (
     <div className="cq-card2">
       <h1 className="cq-h1">{step.title}</h1>
@@ -6581,6 +6810,7 @@ function MultiFileStep({ step, onDone }) {
   const [err, setErr] = React.useState("");
   const stats = useLessonStats();
   const cur = files[active] || files[0];
+  if (!cur) return stepGuard({ files: undefined }, ["files"], onDone);
   const setCode = (code) => setFiles((fs) => fs.map((f, i) => (i === active ? { ...f, code } : f)));
 
   const run = async () => {
@@ -6836,7 +7066,7 @@ function VisualStep({ step, onDone }) {
 }
 
 function TypeStep({ step, onDone }) {
-  const [code, setCode] = useState(step.starter);
+  const [code, setCode] = useState(step.starter || "");
   const [result, setResult] = useState(null);
   const [running, setRunning] = useState(false);
   const [showHint, setShowHint] = useState(false);
@@ -6861,7 +7091,7 @@ function TypeStep({ step, onDone }) {
     else v = verifyRuns(code, step.fnName, step.tests);
     setResult(v); setRunning(false);
     if (v.ok) onDone(stats.buildStats());
-    else stats.recordWrong();
+    else if (!v.engineError) stats.recordWrong();
   };
   const onKeyDown = makeCodeKeyDown(code, setCode);
   const fileName = step.lang === "py" ? "solution.py" : step.lang === "java" ? "Main.java" : "your-code.js";
@@ -6914,10 +7144,10 @@ function SQLStep({ step, onDone }) {
   const run = async () => {
     if (!code.trim()) return;
     setRunning(true);
-    const v = await verifySQL(code, step.seed, step.expected);
+    const v = await verifySQL(code, step.seed, step.expected, step.orderMatters);
     setResult(v); setRunning(false);
     if (v.ok) onDone(stats.buildStats());
-    else stats.recordWrong();
+    else if (!v.engineError) stats.recordWrong();
   };
   const onKeyDown = makeCodeKeyDown(code, setCode);
   return (
@@ -7912,9 +8142,13 @@ const AI_TOOLS = [
 // through it frame by frame (scientist mode) or sit back and watch (calm mode).
 // SPEEDS map to ms-per-step; "slow" is deliberately unhurried so each move lands.
 const AI_SPEEDS = { slow: 900, normal: 380, fast: 90 };
-function useAiRunner(stepFn) {
-  // stepFn() should advance one step and return false when there's nothing left
-  // to do (converged), which auto-stops the loop.
+function useAiRunner(stepFn, opts = {}) {
+  // stepFn() advances one step and returns false when there's nothing left to do.
+  // opts.batch (optional) = { slow, normal, fast } internal steps per visible tick.
+  // High-iteration tools (RL needs ~hundreds of episodes, genetic ~hundreds of
+  // generations) would take minutes if each tick were one step, so they batch:
+  // even on "slow" the whole run finishes in a watchable ~10-20s while each frame
+  // still visibly advances. Tools that converge in a few steps omit batch entirely.
   const [running, setRunning] = useState(false);
   const [speed, setSpeed] = useState("normal");
   const timer = useRef(null);
@@ -7923,10 +8157,13 @@ function useAiRunner(stepFn) {
   const speedRef = useRef(speed);
   speedRef.current = speed;
 
+  const batchFor = (s) => (opts.batch ? Math.max(1, opts.batch[s] || 1) : 1);
   const stop = () => { if (timer.current) { clearInterval(timer.current); timer.current = null; } setRunning(false); };
   const tick = () => {
-    const more = stepRef.current();
-    if (more === false) stop();
+    const n = batchFor(speedRef.current);
+    let more = true;
+    for (let i = 0; i < n && more; i++) more = stepRef.current() !== false;
+    if (!more) stop();
   };
   const start = () => {
     if (timer.current) clearInterval(timer.current);
@@ -7934,7 +8171,6 @@ function useAiRunner(stepFn) {
     timer.current = setInterval(tick, AI_SPEEDS[speedRef.current]);
   };
   const toggle = () => { if (running) stop(); else start(); };
-  // when speed changes mid-run, restart the interval at the new rate
   const changeSpeed = (s) => {
     setSpeed(s);
     if (timer.current) { clearInterval(timer.current); timer.current = setInterval(tick, AI_SPEEDS[s]); }
@@ -8366,7 +8602,7 @@ function RLPanel() {
     });
     return !done;
   };
-  const runner = useAiRunner(runEpisode);
+  const runner = useAiRunner(runEpisode, { batch: { slow: 8, normal: 18, fast: 40 } });
   const reset = () => {
     runner.stop();
     setAgent(rlNewAgent(worldRef.current)); setEpisode(0); setLastSteps(null); setPathLen(null);
@@ -8447,7 +8683,7 @@ function GeneticPanel() {
   };
   // one generation; returns false when solved so the loop stops on its own
   const step = () => { gaStep(state); force((n) => n + 1); return !state.solved; };
-  const runner = useAiRunner(step);
+  const runner = useAiRunner(step, { batch: { slow: 4, normal: 9, fast: 20 } });
 
   const pct = state.target.length ? Math.round((state.bestFit / state.target.length) * 100) : 0;
 
@@ -9117,9 +9353,9 @@ function CircuitLab({ onBack, onHome, challenge = null, onChallengeComplete = nu
   // In lesson mode, seed the canvas with exactly the switches + light the
   // challenge needs. In free mode, the default A/B/Y starter.
   const [comps, setComps] = useState(() => {
-    if (challenge) {
+    if (challenge && Array.isArray(challenge.inputs)) {
       const cs = challenge.inputs.map((label, i) => ({ id: "in_" + label, kind: "switch", label, x: 40, y: 70 + i * 90, on: false }));
-      cs.push({ id: "out_" + challenge.output, kind: "light", label: challenge.output, x: 340, y: 110 });
+      cs.push({ id: "out_" + (challenge.output ?? "Y"), kind: "light", label: challenge.output ?? "Y", x: 340, y: 110 });
       return cs;
     }
     return [
@@ -9792,18 +10028,29 @@ function gaStep(state) {
 // acc() its accuracy, and predict() a point (for drawing decision boundaries).
 // This wraps the real engines above — no new learning logic, just a common API.
 function arenaMakeClassifiers() {
+  // Each racer must be GUARANTEED to finish, even on data it can't perfectly
+  // separate. A perceptron on circular data never reaches zero errors, so without
+  // a cap the race would spin forever. We stop when converged OR after a step
+  // budget — which is also honest: "this is as good as this algorithm gets here."
+  const MAX = 120; // step budget for the iterative learners
   return [
     {
       id: "perceptron", label: "Perceptron", emoji: "➗", color: "#3ac9e0",
-      make: () => ({ m: perceptronNew(2), done: false }),
-      step(s, data) { const wrong = perceptronStep(s.m, data); s.done = wrong === 0; return s.done; },
+      make: () => ({ m: perceptronNew(2), done: false, n: 0 }),
+      step(s, data) { const wrong = perceptronStep(s.m, data); s.n++; s.done = wrong === 0 || s.n >= MAX; return s.done; },
       acc: (s, data) => perceptronAccuracy(s.m, data),
       predict: (s, x) => perceptronPredict(s.m, x),
     },
     {
       id: "logreg", label: "Logistic reg.", emoji: "📈", color: "#e6b980",
-      make: () => ({ m: logregNew(2), done: false, prev: Infinity }),
-      step(s, data) { const loss = logregStep(s.m, data); if (Math.abs(s.prev - loss) < 1e-5) s.done = true; s.prev = loss; return s.done; },
+      make: () => ({ m: logregNew(2), done: false, prev: Infinity, n: 0 }),
+      step(s, data) {
+        const loss = logregStep(s.m, data); s.n++;
+        // finish when the loss stops changing, OR it's classifying everything
+        // correctly (nothing left to learn), OR the step budget runs out
+        if (Math.abs(s.prev - loss) < 1e-5 || logregAccuracy(s.m, data) >= 1 || s.n >= MAX) s.done = true;
+        s.prev = loss; return s.done;
+      },
       acc: (s, data) => logregAccuracy(s.m, data),
       predict: (s, x) => logregPredict(s.m, x),
     },
@@ -9823,8 +10070,14 @@ function arenaMakeClassifiers() {
     },
     {
       id: "nn", label: "Neural net", emoji: "🧠", color: "#ff6ba8",
-      make: () => ({ m: nnNewNetwork(4, 2), done: false, prev: Infinity }),
-      step(s, data) { const loss = nnTrainEpoch(s.m, data); if (Math.abs(s.prev - loss) < 1e-6) s.done = true; s.prev = loss; return s.done; },
+      make: () => ({ m: nnNewNetwork(4, 2), done: false, prev: Infinity, n: 0 }),
+      step(s, data) {
+        const loss = nnTrainEpoch(s.m, data); s.n++;
+        let ok = 0; for (const [x, t] of data) if ((nnForward(s.m, x).out >= 0.5 ? 1 : 0) === t) ok++;
+        const acc = data.length ? ok / data.length : 0;
+        if (Math.abs(s.prev - loss) < 1e-6 || acc >= 1 || s.n >= MAX) s.done = true;
+        s.prev = loss; return s.done;
+      },
       acc(s, data) { let ok = 0; for (const [x, t] of data) if ((nnForward(s.m, x).out >= 0.5 ? 1 : 0) === t) ok++; return data.length ? ok / data.length : 0; },
       predict: (s, x) => (nnForward(s.m, x).out >= 0.5 ? 1 : 0),
     },
