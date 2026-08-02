@@ -7,7 +7,7 @@ import { supabase } from "./lib/supabase";
 // Build marker — check this in the browser console to confirm which version is
 // actually running: type  window.__CQ_VERSION  in DevTools. If it's not the
 // value below, your browser/Vercel is serving an older bundle.
-const CQ_VERSION = "2026-07-12-v121-scroll-fix";
+const CQ_VERSION = "2026-07-12-v122-arena-rebuild";
 
 // Only this account (by Supabase user id) can read submitted feedback. Gating by
 // id, not email, so it survives email changes / adding Google login later.
@@ -7905,6 +7905,57 @@ const AI_TOOLS = [
   { id: "arena", emoji: "🏁", label: "Arena (race them!)", blurb: "Race five classifiers on one dataset — live leaderboard" },
 ];
 
+// ---- SHARED PACING: a speed control every panel uses ----
+// The #1 reason the lab felt "boring" was that training finished faster than the
+// eye could follow — clusters snapped into place, lines teleported. This gives
+// every tool a Slow/Normal/Fast dial AND a real Step button, so you can crawl
+// through it frame by frame (scientist mode) or sit back and watch (calm mode).
+// SPEEDS map to ms-per-step; "slow" is deliberately unhurried so each move lands.
+const AI_SPEEDS = { slow: 900, normal: 380, fast: 90 };
+function useAiRunner(stepFn) {
+  // stepFn() should advance one step and return false when there's nothing left
+  // to do (converged), which auto-stops the loop.
+  const [running, setRunning] = useState(false);
+  const [speed, setSpeed] = useState("normal");
+  const timer = useRef(null);
+  const stepRef = useRef(stepFn);
+  stepRef.current = stepFn;
+  const speedRef = useRef(speed);
+  speedRef.current = speed;
+
+  const stop = () => { if (timer.current) { clearInterval(timer.current); timer.current = null; } setRunning(false); };
+  const tick = () => {
+    const more = stepRef.current();
+    if (more === false) stop();
+  };
+  const start = () => {
+    if (timer.current) clearInterval(timer.current);
+    setRunning(true);
+    timer.current = setInterval(tick, AI_SPEEDS[speedRef.current]);
+  };
+  const toggle = () => { if (running) stop(); else start(); };
+  // when speed changes mid-run, restart the interval at the new rate
+  const changeSpeed = (s) => {
+    setSpeed(s);
+    if (timer.current) { clearInterval(timer.current); timer.current = setInterval(tick, AI_SPEEDS[s]); }
+  };
+  const stepOnce = () => { stop(); stepRef.current(); };
+  useEffect(() => () => { if (timer.current) clearInterval(timer.current); }, []);
+  return { running, speed, toggle, stop, start, stepOnce, changeSpeed };
+}
+function SpeedControl({ speed, onChange }) {
+  return (
+    <div className="cq-ai-speed" role="group" aria-label="Speed">
+      <span className="cq-ai-speedlbl">Speed</span>
+      {["slow", "normal", "fast"].map((s) => (
+        <button key={s} className={`cq-ai-speedbtn ${speed === s ? "active" : ""}`} onClick={() => onChange(s)}>
+          {s === "slow" ? "🐢 Slow" : s === "fast" ? "⚡ Fast" : "▸ Normal"}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 // ---- K-MEANS PANEL: watch the algorithm discover clusters live ----
 function KMeansPanel() {
   const [k, setK] = useState(3);
@@ -7912,37 +7963,32 @@ function KMeansPanel() {
   const [points, setPoints] = useState(() => aiMakePoints("CLUSTERS").map((p) => p[0]));
   const [state, setState] = useState(() => kmeansInit(points, 3, 1));
   const [iters, setIters] = useState(0);
-  const [running, setRunning] = useState(false);
   const [inertia, setInertia] = useState(null);
-  const runRef = useRef(null);
 
   const CLUSTER_COLORS = ["#3ac9e0", "#bd54dd", "#e6b980", "#7ee787", "#ff6ba8", "#8c9dff"];
 
   const restart = (nk = k, sd = seed, pts = points) => {
-    if (runRef.current) { clearInterval(runRef.current); runRef.current = null; }
+    runner.stop();
     const st = kmeansInit(pts, nk, sd);
-    setState(st); setIters(0); setInertia(null); setRunning(false);
+    setState(st); setIters(0); setInertia(null);
   };
   const regenPoints = () => {
     const pts = aiMakePoints("CLUSTERS").map((p) => p[0]);
     setPoints(pts); restart(k, seed, pts);
   };
+  // one step; returns false when clusters stop moving (converged) so the loop halts
   const step = () => {
+    let changed = true;
     setState((prev) => {
       const st = { centers: prev.centers.map((c) => [...c]), assignments: [...prev.assignments], k: prev.k, done: prev.done };
-      const changed = kmeansStep(st, points);
+      changed = kmeansStep(st, points);
       setInertia(kmeansInertia(st, points));
       setIters((n) => n + 1);
-      if (!changed && runRef.current) { clearInterval(runRef.current); runRef.current = null; setRunning(false); }
       return st;
     });
+    return changed;
   };
-  const toggleRun = () => {
-    if (running) { clearInterval(runRef.current); runRef.current = null; setRunning(false); return; }
-    setRunning(true);
-    runRef.current = setInterval(step, 600);
-  };
-  useEffect(() => () => { if (runRef.current) clearInterval(runRef.current); }, []);
+  const runner = useAiRunner(step);
 
   // scale points (0..1) into the SVG viewbox
   const VB = 300, PAD = 20;
@@ -7978,15 +8024,16 @@ function KMeansPanel() {
       </div>
 
       <div className="cq-ai-actions">
-        <button className="cq-run" onClick={toggleRun}>{running ? "⏸ Pause" : state.done ? "✓ Settled" : "▶ Run"}</button>
-        <button className="cq-ai-chip" onClick={step} disabled={running || state.done}>Step once</button>
+        <button className="cq-run" onClick={runner.toggle}>{runner.running ? "⏸ Pause" : state.done ? "↻ Run again" : "▶ Run"}</button>
+        <button className="cq-ai-chip" onClick={() => { if (state.done) restart(); runner.stepOnce(); }} disabled={runner.running}>Step once</button>
         <button className="cq-ai-chip" onClick={() => restart()}>↺ Reset</button>
+        <SpeedControl speed={runner.speed} onChange={runner.changeSpeed} />
       </div>
 
       <div className="cq-ai-stats">
         <div className="cq-ai-stat"><span className="cq-ai-statlbl">Iterations</span><span className="cq-ai-statval">{iters}</span></div>
         <div className="cq-ai-stat"><span className="cq-ai-statlbl">Spread (inertia)</span><span className="cq-ai-statval">{inertia === null ? "—" : inertia.toFixed(2)}</span></div>
-        <div className="cq-ai-stat"><span className="cq-ai-statlbl">Status</span><span className="cq-ai-statval">{state.done ? "Settled ✓" : running ? "Running…" : "Ready"}</span></div>
+        <div className="cq-ai-stat"><span className="cq-ai-statlbl">Status</span><span className="cq-ai-statval">{state.done ? "Settled ✓" : runner.running ? "Running…" : "Ready"}</span></div>
       </div>
       <p className="cq-ai-hint">💡 Lower spread = tighter clusters. Try a "new start" — k-means can settle differently depending on where the centers begin. That's a real quirk of the algorithm!</p>
     </div>
@@ -8164,34 +8211,34 @@ function LinearClassifierPanel({ kind }) {
   const [data, setData] = useState(() => aiMakePoints("DIAGONAL"));
   const [model, setModel] = useState(() => (isLog ? logregNew(2) : perceptronNew(2)));
   const [steps, setSteps] = useState(0);
-  const [running, setRunning] = useState(false);
   const [acc, setAcc] = useState(0);
   const [loss, setLoss] = useState(null);
-  const runRef = useRef(null);
+  const [solved, setSolved] = useState(false);
   const COLORS = { 0: "#3ac9e0", 1: "#bd54dd" };
   const VB = 300, PAD = 20;
   const sx = (x) => PAD + x * (VB - 2 * PAD);
   const sy = (y) => PAD + (1 - y) * (VB - 2 * PAD); // flip y so up is up
 
   const reset = (pts = data) => {
-    if (runRef.current) { clearInterval(runRef.current); runRef.current = null; }
-    setModel(isLog ? logregNew(2) : perceptronNew(2)); setSteps(0); setAcc(0); setLoss(null); setRunning(false);
+    runner.stop();
+    setModel(isLog ? logregNew(2) : perceptronNew(2)); setSteps(0); setAcc(0); setLoss(null); setSolved(false);
   };
+  // one step; returns false to auto-stop once it hits 100% (perfect separation)
   const step = () => {
+    let keepGoing = true;
     setModel((prev) => {
       const m = { w: [...prev.w], b: prev.b, nIn: prev.nIn };
-      if (isLog) { const l = logregStep(m, data); setLoss(l); setAcc(logregAccuracy(m, data)); }
-      else { perceptronStep(m, data); setAcc(perceptronAccuracy(m, data)); }
+      let a;
+      if (isLog) { const l = logregStep(m, data); setLoss(l); a = logregAccuracy(m, data); }
+      else { perceptronStep(m, data); a = perceptronAccuracy(m, data); }
+      setAcc(a);
       setSteps((n) => n + 1);
+      if (a >= 1) { setSolved(true); keepGoing = false; }
       return m;
     });
+    return keepGoing;
   };
-  const toggleRun = () => {
-    if (running) { clearInterval(runRef.current); runRef.current = null; setRunning(false); return; }
-    setRunning(true);
-    runRef.current = setInterval(step, isLog ? 60 : 250);
-  };
-  useEffect(() => () => { if (runRef.current) clearInterval(runRef.current); }, []);
+  const runner = useAiRunner(step);
   const changeShape = (s) => { const pts = aiMakePoints(s); setShape(s); setData(pts); reset(pts); };
 
   // the dividing line: w0*x + w1*y + b = 0  →  y = -(w0*x + b)/w1
@@ -8232,9 +8279,10 @@ function LinearClassifierPanel({ kind }) {
       </div>
 
       <div className="cq-ai-actions">
-        <button className="cq-run" onClick={toggleRun}>{running ? "⏸ Pause" : "▶ Train"}</button>
-        <button className="cq-ai-chip" onClick={step} disabled={running}>Step once</button>
+        <button className="cq-run" onClick={runner.toggle}>{runner.running ? "⏸ Pause" : solved ? "↻ Train again" : "▶ Train"}</button>
+        <button className="cq-ai-chip" onClick={() => { if (solved) reset(); runner.stepOnce(); }} disabled={runner.running}>Step once</button>
         <button className="cq-ai-chip" onClick={() => reset()}>↺ Reset</button>
+        <SpeedControl speed={runner.speed} onChange={runner.changeSpeed} />
       </div>
 
       <div className="cq-ai-stats">
@@ -8301,31 +8349,28 @@ function RLPanel() {
   const [episode, setEpisode] = useState(0);
   const [lastSteps, setLastSteps] = useState(null);
   const [pathLen, setPathLen] = useState(null);
-  const [running, setRunning] = useState(false);
-  const runRef = useRef(null);
   const OPTIMAL = 2 * (SIZE - 1); // 8 for a 5x5
 
+  // one episode; returns false once the greedy path is optimal (learned!) so it stops
   const runEpisode = () => {
+    let done = false;
     setAgent((prev) => {
-      // deep copy Q so React sees a change
       const a = { ...prev, Q: Object.fromEntries(Object.entries(prev.Q).map(([k, v]) => [k, [...v]])) };
       const steps = rlEpisode(worldRef.current, a, episode + 1);
       setLastSteps(steps);
       setEpisode((e) => e + 1);
-      setPathLen(rlGreedyPathLength(worldRef.current, a));
+      const pl = rlGreedyPathLength(worldRef.current, a);
+      setPathLen(pl);
+      if (pl === OPTIMAL) done = true;
       return a;
     });
+    return !done;
   };
-  const toggleRun = () => {
-    if (running) { clearInterval(runRef.current); runRef.current = null; setRunning(false); return; }
-    setRunning(true);
-    runRef.current = setInterval(runEpisode, 120);
-  };
+  const runner = useAiRunner(runEpisode);
   const reset = () => {
-    if (runRef.current) { clearInterval(runRef.current); runRef.current = null; }
-    setAgent(rlNewAgent(worldRef.current)); setEpisode(0); setLastSteps(null); setPathLen(null); setRunning(false);
+    runner.stop();
+    setAgent(rlNewAgent(worldRef.current)); setEpisode(0); setLastSteps(null); setPathLen(null);
   };
-  useEffect(() => () => { if (runRef.current) clearInterval(runRef.current); }, []);
 
   // build the greedy path for display
   const world = worldRef.current;
@@ -8373,9 +8418,10 @@ function RLPanel() {
       </div>
 
       <div className="cq-ai-actions">
-        <button className="cq-run" onClick={toggleRun}>{running ? "⏸ Pause" : "▶ Train"}</button>
-        <button className="cq-ai-chip" onClick={runEpisode} disabled={running}>One episode</button>
+        <button className="cq-run" onClick={runner.toggle}>{runner.running ? "⏸ Pause" : solved ? "↻ Train again" : "▶ Train"}</button>
+        <button className="cq-ai-chip" onClick={() => { if (solved) reset(); runner.stepOnce(); }} disabled={runner.running}>One episode</button>
         <button className="cq-ai-chip" onClick={reset}>↺ Reset</button>
+        <SpeedControl speed={runner.speed} onChange={runner.changeSpeed} />
       </div>
 
       <div className="cq-ai-stats">
@@ -8392,23 +8438,16 @@ function RLPanel() {
 function GeneticPanel() {
   const [target, setTarget] = useState("hello world");
   const [state, setState] = useState(() => gaInit("hello world", { seed: 1 }));
-  const [running, setRunning] = useState(false);
   const [, force] = useState(0);
-  const runRef = useRef(null);
 
   const restart = (t = target) => {
-    if (runRef.current) { clearInterval(runRef.current); runRef.current = null; }
+    runner.stop();
     const clean = t.toLowerCase().replace(/[^a-z .!]/g, "").slice(0, 40) || "hello world";
-    setState(gaInit(clean, { seed: Date.now() % 100000 })); setRunning(false); force((n) => n + 1);
+    setState(gaInit(clean, { seed: Date.now() % 100000 })); force((n) => n + 1);
   };
-  const step = () => { gaStep(state); force((n) => n + 1); if (state.solved) { clearInterval(runRef.current); runRef.current = null; setRunning(false); } };
-  const toggleRun = () => {
-    if (running) { clearInterval(runRef.current); runRef.current = null; setRunning(false); return; }
-    if (state.solved) restart();
-    setRunning(true);
-    runRef.current = setInterval(step, 60);
-  };
-  useEffect(() => () => { if (runRef.current) clearInterval(runRef.current); }, []);
+  // one generation; returns false when solved so the loop stops on its own
+  const step = () => { gaStep(state); force((n) => n + 1); return !state.solved; };
+  const runner = useAiRunner(step);
 
   const pct = state.target.length ? Math.round((state.bestFit / state.target.length) * 100) : 0;
 
@@ -8434,15 +8473,16 @@ function GeneticPanel() {
       </div>
 
       <div className="cq-ai-actions">
-        <button className="cq-run" onClick={toggleRun}>{running ? "⏸ Pause" : state.solved ? "✓ Evolve again" : "▶ Evolve"}</button>
-        <button className="cq-ai-chip" onClick={step} disabled={running || state.solved}>One generation</button>
+        <button className="cq-run" onClick={() => { if (state.solved) restart(); runner.toggle(); }}>{runner.running ? "⏸ Pause" : state.solved ? "↻ Evolve again" : "▶ Evolve"}</button>
+        <button className="cq-ai-chip" onClick={() => { if (state.solved) restart(); runner.stepOnce(); }} disabled={runner.running}>One generation</button>
         <button className="cq-ai-chip" onClick={() => restart()}>↺ Reset</button>
+        <SpeedControl speed={runner.speed} onChange={runner.changeSpeed} />
       </div>
 
       <div className="cq-ai-stats">
         <div className="cq-ai-stat"><span className="cq-ai-statlbl">Generation</span><span className="cq-ai-statval">{state.gen}</span></div>
         <div className="cq-ai-stat"><span className="cq-ai-statlbl">Match</span><span className="cq-ai-statval">{pct}%</span></div>
-        <div className="cq-ai-stat"><span className="cq-ai-statlbl">Status</span><span className="cq-ai-statval">{state.solved ? "Solved ✓" : running ? "Evolving…" : "Ready"}</span></div>
+        <div className="cq-ai-stat"><span className="cq-ai-statlbl">Status</span><span className="cq-ai-statval">{state.solved ? "Solved ✓" : runner.running ? "Evolving…" : "Ready"}</span></div>
       </div>
       <p className="cq-ai-hint">💡 Green letters are correct. Notice it's slow near the end — the last few letters are luck, since mutation is random. Real genetic algorithms design bridges, antennas, and game strategies the same way.</p>
     </div>
@@ -8454,70 +8494,64 @@ function ArenaPanel() {
   const [shape, setShape] = useState("CLUSTERS");
   const [data, setData] = useState(() => aiMakePoints("CLUSTERS"));
   const [racers, setRacers] = useState(() => arenaMakeClassifiers().map((c) => ({ def: c, state: c.make(), steps: 0, acc: 0, ms: 0, done: false })));
-  const [running, setRunning] = useState(false);
-  const [selected, setSelected] = useState("perceptron");
-  const runRef = useRef(null);
 
   const rebuild = (pts) => {
-    if (runRef.current) { clearInterval(runRef.current); runRef.current = null; }
+    runner.stop();
     setRacers(arenaMakeClassifiers().map((c) => ({ def: c, state: c.make(), steps: 0, acc: 0, ms: 0, done: false })));
-    setRunning(false);
   };
   const changeShape = (s) => { const pts = aiMakePoints(s); setShape(s); setData(pts); rebuild(pts); };
   const newPoints = () => { const pts = aiMakePoints(shape); setData(pts); rebuild(pts); };
 
+  // advance every racer one step; returns false when all have finished
   const stepAll = () => {
-    setRacers((prev) => prev.map((r) => {
-      if (r.done) return r;
-      const t0 = (typeof performance !== "undefined" ? performance.now() : Date.now());
-      const done = r.def.step(r.state, data);
-      const t1 = (typeof performance !== "undefined" ? performance.now() : Date.now());
-      return { ...r, steps: r.steps + 1, acc: r.def.acc(r.state, data), ms: r.ms + (t1 - t0), done };
-    }));
-  };
-  const toggleRun = () => {
-    if (running) { clearInterval(runRef.current); runRef.current = null; setRunning(false); return; }
-    setRunning(true);
-    runRef.current = setInterval(() => {
-      setRacers((prev) => {
-        if (prev.every((r) => r.done)) { clearInterval(runRef.current); runRef.current = null; setRunning(false); return prev; }
-        return prev.map((r) => {
-          if (r.done) return r;
-          const t0 = (typeof performance !== "undefined" ? performance.now() : Date.now());
-          const done = r.def.step(r.state, data);
-          const t1 = (typeof performance !== "undefined" ? performance.now() : Date.now());
-          return { ...r, steps: r.steps + 1, acc: r.def.acc(r.state, data), ms: r.ms + (t1 - t0), done };
-        });
+    let allDone = false;
+    setRacers((prev) => {
+      const next = prev.map((r) => {
+        if (r.done) return r;
+        const t0 = (typeof performance !== "undefined" ? performance.now() : Date.now());
+        const done = r.def.step(r.state, data);
+        const t1 = (typeof performance !== "undefined" ? performance.now() : Date.now());
+        return { ...r, steps: r.steps + 1, acc: r.def.acc(r.state, data), ms: r.ms + (t1 - t0), done };
       });
-    }, 120);
+      allDone = next.every((r) => r.done);
+      return next;
+    });
+    return !allDone;
   };
-  useEffect(() => () => { if (runRef.current) clearInterval(runRef.current); }, []);
+  const runner = useAiRunner(stepAll);
 
   // leaderboard: sort by accuracy desc, then fewest steps
   const board = [...racers].sort((a, b) => b.acc - a.acc || a.steps - b.steps);
   const COLORS = { 0: "#3ac9e0", 1: "#bd54dd" };
-  const VB = 300, PAD = 20;
-  const sx = (x) => PAD + x * (VB - 2 * PAD);
-  const sy = (y) => PAD + (1 - y) * (VB - 2 * PAD);
+  const allDone = racers.length > 0 && racers.every((r) => r.done);
+  const started = racers.some((r) => r.steps > 0);
+  const leader = board[0];
+  // the winner: highest accuracy, tie broken by fewest steps (only meaningful once racing)
+  const maxAcc = Math.max(...racers.map((r) => r.acc));
+  const winners = started ? board.filter((r) => r.acc === maxAcc && maxAcc > 0) : [];
 
-  // decision boundary of the selected racer, sampled on a grid
-  const sel = racers.find((r) => r.def.id === selected);
-  const GRID = 24;
-  const boundary = useMemo(() => {
-    if (!sel) return [];
-    const cells = [];
-    for (let gx = 0; gx < GRID; gx++) for (let gy = 0; gy < GRID; gy++) {
-      const x = (gx + 0.5) / GRID, y = (gy + 0.5) / GRID;
-      let cls = 0; try { cls = sel.def.predict(sel.state, [x, y]); } catch { cls = 0; }
-      cells.push({ x, y, cls });
-    }
-    return cells;
-  }, [sel, sel && sel.steps, selected]);
+  // one small decision-boundary grid per racer, recomputed as they learn
+  const MINI = 14; // 14x14 cells per mini-arena — small enough for 5 live at once
+  const miniGrids = useMemo(() => {
+    return racers.map((r) => {
+      const cells = [];
+      for (let gx = 0; gx < MINI; gx++) for (let gy = 0; gy < MINI; gy++) {
+        const x = (gx + 0.5) / MINI, y = (gy + 0.5) / MINI;
+        let cls = 0; try { cls = r.def.predict(r.state, [x, y]); } catch { cls = 0; }
+        cells.push({ gx, gy, cls });
+      }
+      return cells;
+    });
+  }, [racers]);
+
+  const MB = 100, cell = MB / MINI; // mini viewbox 100x100
+  const mx = (x) => x * MB;
+  const my = (y) => (1 - y) * MB;
 
   return (
     <div className="cq-ai-panel">
       <h1 className="cq-home-title">🏁 The Arena.</h1>
-      <p className="cq-home-sub">Five different algorithms, <b>one dataset</b>, same goal: split the two colors. They all learn in totally different ways — watch them race, and see who's fastest, who's most accurate, and how each one carves up the space differently. Same problem, five personalities.</p>
+      <p className="cq-home-sub">Five algorithms, <b>one dataset</b>, racing at the same time. Each little board is the same points — watch every algorithm carve up the space its own way, live. The straight-line racers flail on the circle while the tree, KNN and neural net bend around it. Same problem, five personalities.</p>
 
       <div className="cq-ai-controls">
         {["CLUSTERS", "DIAGONAL", "CIRCLE"].map((s) => (
@@ -8527,54 +8561,60 @@ function ArenaPanel() {
       </div>
 
       <div className="cq-ai-actions">
-        <button className="cq-run" onClick={toggleRun}>{running ? "⏸ Pause" : racers.every((r) => r.done) ? "✓ Finished" : "🏁 Race!"}</button>
-        <button className="cq-ai-chip" onClick={stepAll} disabled={running || racers.every((r) => r.done)}>Step all</button>
+        <button className="cq-run" onClick={() => { if (allDone) rebuild(data); runner.toggle(); }}>{runner.running ? "⏸ Pause" : allDone ? "↻ Race again" : "🏁 Race!"}</button>
+        <button className="cq-ai-chip" onClick={runner.stepOnce} disabled={runner.running || allDone}>Step all</button>
         <button className="cq-ai-chip" onClick={() => rebuild(data)}>↺ Reset</button>
+        <SpeedControl speed={runner.speed} onChange={runner.changeSpeed} />
       </div>
 
-      {/* decision boundary viewer */}
-      <div className="cq-ai-diagram">
-        <div className="cq-arena-boundhead">
-          <span>Decision boundary:</span>
-          <div className="cq-arena-tabs">
-            {racers.map((r) => (
-              <button key={r.def.id} className={`cq-arena-tab ${selected === r.def.id ? "active" : ""}`}
-                onClick={() => setSelected(r.def.id)} style={selected === r.def.id ? { borderColor: r.def.color, color: r.def.color } : {}}>
-                {r.def.emoji}
-              </button>
-            ))}
-          </div>
+      {/* finish banner */}
+      {allDone && winners.length > 0 && (
+        <div className="cq-arena-finish">
+          🏆 {winners.length === 1
+            ? <>Winner: <b style={{ color: winners[0].def.color }}>{winners[0].def.emoji} {winners[0].def.label}</b> — {(winners[0].acc * 100).toFixed(0)}% accuracy</>
+            : <>Tie at {(maxAcc * 100).toFixed(0)}%: {winners.map((w) => `${w.def.emoji} ${w.def.label}`).join(", ")}</>}
         </div>
-        <svg viewBox={`0 0 ${VB} ${VB}`} className="cq-ai-svg" style={{ maxHeight: 320 }}>
-          {/* shaded prediction regions */}
-          {boundary.map((c, i) => (
-            <rect key={i} x={sx(c.x) - (VB - 2 * PAD) / GRID / 2} y={sy(c.y) - (VB - 2 * PAD) / GRID / 2}
-              width={(VB - 2 * PAD) / GRID} height={(VB - 2 * PAD) / GRID}
-              fill={COLORS[c.cls]} opacity="0.13" />
-          ))}
-          {/* data points */}
-          {data.map(([p, label], i) => (
-            <circle key={"d" + i} cx={sx(p[0])} cy={sy(p[1])} r="6" fill={COLORS[label]} opacity="0.9" />
-          ))}
-        </svg>
+      )}
+
+      {/* grid of five live mini-arenas */}
+      <div className="cq-arena-grid">
+        {racers.map((r, ri) => {
+          const isLeader = started && r.acc === maxAcc && maxAcc > 0;
+          return (
+            <div key={r.def.id} className={`cq-arena-mini ${isLeader ? "lead" : ""}`} style={{ borderColor: isLeader ? r.def.color : undefined }}>
+              <div className="cq-arena-minihead">
+                <span className="cq-arena-mininame" style={{ color: r.def.color }}>{r.def.emoji} {r.def.label}</span>
+                <span className="cq-arena-miniacc">{(r.acc * 100).toFixed(0)}%{r.done && " ✓"}{isLeader && " 👑"}</span>
+              </div>
+              <svg viewBox={`0 0 ${MB} ${MB}`} className="cq-arena-minisvg">
+                {miniGrids[ri].map((c, i) => (
+                  <rect key={i} x={c.gx * cell} y={(MINI - 1 - c.gy) * cell} width={cell + 0.5} height={cell + 0.5}
+                    fill={COLORS[c.cls]} opacity="0.16" />
+                ))}
+                {data.map(([p, label], i) => (
+                  <circle key={"d" + i} cx={mx(p[0])} cy={my(p[1])} r="2.6" fill={COLORS[label]} opacity="0.95" />
+                ))}
+              </svg>
+            </div>
+          );
+        })}
       </div>
 
-      {/* live leaderboard */}
-      <div className="cq-arena-board">
-        <div className="cq-arena-row cq-arena-hdr">
-          <span>#</span><span>Algorithm</span><span>Accuracy</span><span className="cq-arena-steps">Steps</span><span>Time</span>
-        </div>
+      {/* race-style leaderboard: rows physically reorder as ranks change */}
+      <div className="cq-arena-race">
         {board.map((r, i) => (
-          <div key={r.def.id} className="cq-arena-row" style={{ borderLeft: `3px solid ${r.def.color}` }}>
-            <span className="cq-arena-rank">{r.acc > 0 || r.steps > 0 ? i + 1 : "—"}</span>
-            <span className="cq-arena-name">{r.def.emoji} {r.def.label}{r.done && <span className="cq-arena-flag"> ✓</span>}</span>
-            <span className="cq-arena-acc"><span className="cq-arena-bar" style={{ width: `${r.acc * 100}%`, background: r.def.color }} />{(r.acc * 100).toFixed(0)}%</span>
-            <span className="cq-arena-steps">{r.steps}</span>
-            <span>{r.ms < 1 ? "<1" : r.ms.toFixed(0)}ms</span>
+          <div key={r.def.id} className={`cq-arena-lane ${r.done ? "done" : ""} ${i === 0 && started ? "leader" : ""}`}>
+            <span className="cq-arena-medal">{started ? (i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : i + 1) : "—"}</span>
+            <span className="cq-arena-lanename">{r.def.emoji} {r.def.label}</span>
+            <span className="cq-arena-track">
+              <span className="cq-arena-fill" style={{ width: `${r.acc * 100}%`, background: r.def.color }} />
+              <span className="cq-arena-pct">{(r.acc * 100).toFixed(0)}%</span>
+            </span>
+            <span className="cq-arena-meta">{r.steps}st{r.done ? " ✓" : ""}</span>
           </div>
         ))}
       </div>
-      <p className="cq-ai-hint">💡 Tap an emoji above to see how that algorithm splits the space. Notice on the "circle" shape: the perceptron and logistic regression (straight lines) can't win, but the tree, KNN and neural net can bend around it. Fastest isn't always most accurate!</p>
+      <p className="cq-ai-hint">💡 Watch the boards diverge: on the "circle" shape the straight-line racers (perceptron, logistic reg.) hit a wall below 100%, while the tree, KNN and neural net wrap around it. Fastest to finish isn't always the most accurate!</p>
     </div>
   );
 }
@@ -8598,6 +8638,8 @@ function AILab({ onBack, challenge = null, onChallengeComplete = null }) {
   const [epoch, setEpoch] = useState(0);
   const [error, setError] = useState(null);
   const [training, setTraining] = useState(false);
+  const [nnSpeed, setNnSpeed] = useState("normal");
+  const nnSpeedRef = useRef("normal"); nnSpeedRef.current = nnSpeed;
   const trainRef = useRef(null);
   const [chat, setChat] = useState([]);
   const [question, setQuestion] = useState("");
@@ -8661,16 +8703,25 @@ function AILab({ onBack, challenge = null, onChallengeComplete = null }) {
   const train = () => {
     if (training) { clearInterval(trainRef.current); trainRef.current = null; setTraining(false); return; }
     setTraining(true);
-    trainRef.current = setInterval(() => {
+    const runTick = () => {
+      // epochs-per-tick scales with speed so "slow" shows the error easing down
+      // gradually instead of the network snapping to a solution in one frame
+      const epk = nnSpeedRef.current === "slow" ? 1 : nnSpeedRef.current === "fast" ? 25 : 6;
       setNet((prev) => {
         const n = { ...prev, w1: prev.w1.map((r) => [...r]), b1: [...prev.b1], w2: [...prev.w2] };
         let err = 0;
-        for (let i = 0; i < 20; i++) err = nnTrainEpoch(n, data); // 20 epochs per tick
-        setError(err); setEpoch((e) => e + 20);
+        for (let i = 0; i < epk; i++) err = nnTrainEpoch(n, data);
+        setError(err); setEpoch((e) => e + epk);
         if (err < 0.02) { clearInterval(trainRef.current); trainRef.current = null; setTraining(false); }
         return n;
       });
-    }, 60);
+    };
+    const ms = AI_SPEEDS[nnSpeedRef.current] || 380;
+    trainRef.current = setInterval(runTick, ms);
+  };
+  const changeNnSpeed = (s) => {
+    setNnSpeed(s);
+    if (trainRef.current) { clearInterval(trainRef.current); trainRef.current = null; setTraining(false); }
   };
 
   useEffect(() => () => { if (trainRef.current) clearInterval(trainRef.current); }, []);
@@ -8855,6 +8906,7 @@ function AILab({ onBack, challenge = null, onChallengeComplete = null }) {
         <button className="cq-run" onClick={train}>{training ? "⏸ Pause" : epoch > 0 ? "▶ Keep training" : "▶ Train it"}</button>
         <button className="cq-clearbtn" onClick={() => reset()}>↺ Reset</button>
         <button className={`cq-clearbtn ${tuneMode ? "active" : ""}`} onClick={() => setTuneMode((t) => !t)}>🎛️ {tuneMode ? "Hide" : "Tune"} weights</button>
+        <SpeedControl speed={nnSpeed} onChange={changeNnSpeed} />
         <span className="cq-ai-stat">Rounds: {epoch}{error !== null && ` · error: ${error.toFixed(3)}`}</span>
       </div>
 
@@ -10495,31 +10547,40 @@ body{overflow-x:clip}
 .cq-ai-stat{flex:1;min-width:120px;background:var(--bg-1);border:1px solid var(--line);border-radius:12px;padding:11px 14px;display:flex;flex-direction:column;gap:3px}
 .cq-ai-statlbl{font-size:12px;color:var(--ink-faint);text-transform:uppercase;letter-spacing:.5px}
 .cq-ai-statval{font-size:20px;font-weight:700;color:var(--ink);font-family:var(--mono)}
+.cq-ai-speed{display:inline-flex;align-items:center;gap:4px;margin-left:auto;background:var(--bg-1);border:1px solid var(--line);border-radius:10px;padding:3px}
+.cq-ai-speedlbl{font-size:11px;color:var(--ink-faint);text-transform:uppercase;letter-spacing:.5px;padding:0 6px}
+.cq-ai-speedbtn{background:none;border:none;border-radius:7px;color:var(--ink-soft);font-size:12.5px;font-weight:600;padding:5px 9px;cursor:pointer;font-family:inherit;transition:background var(--hover-ease),color var(--hover-ease)}
+.cq-ai-speedbtn:hover{color:var(--ink)}
+.cq-ai-speedbtn.active{background:var(--bg-3);color:var(--neon)}
+@media(max-width:560px){.cq-ai-speed{margin-left:0;width:100%;justify-content:space-between}}
 .cq-ai-fieldlbl{display:block;font-size:13px;color:var(--ink-soft);margin:6px 0}
 .cq-ai-textarea{width:100%;box-sizing:border-box;background:var(--bg-0);color:var(--ink);border:1px solid var(--line);border-radius:12px;padding:12px 14px;font-family:inherit;font-size:14px;line-height:1.5;resize:vertical;min-height:90px}
 .cq-ai-textarea:focus{outline:none;border-color:var(--neon-deep)}
 .cq-ai-output{background:var(--bg-1);border:1px solid var(--neon-deep);border-radius:12px;padding:14px 16px;margin:12px 0}
 .cq-ai-outlbl{font-size:12px;color:var(--ink-faint);text-transform:uppercase;letter-spacing:.5px}
 .cq-ai-outtext{margin:6px 0 0;font-size:15px;line-height:1.6;color:var(--ink);overflow-wrap:anywhere;word-break:break-word}
-/* --- arena: leaderboard + boundary viewer --- */
-.cq-arena-boundhead{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:8px;font-size:13px;color:var(--ink-soft)}
-.cq-arena-tabs{display:flex;gap:6px;flex-wrap:wrap}
-.cq-arena-tab{background:var(--bg-2);border:1.5px solid var(--line);border-radius:8px;padding:4px 9px;font-size:15px;cursor:pointer;line-height:1;transition:background var(--hover-ease),border-color var(--hover-ease),transform var(--hover-ease)}
-.cq-arena-tab:hover{background:var(--bg-0);transform:translateY(-1px)}
-.cq-arena-tab.active{background:var(--bg-0)}
-.cq-arena-board{display:flex;flex-direction:column;gap:5px;margin:6px 0 12px}
-.cq-arena-row{display:grid;grid-template-columns:26px 1fr 78px 46px 52px;align-items:center;gap:6px;background:var(--bg-1);border:1px solid var(--line);border-radius:9px;padding:8px 10px;font-size:13px;color:var(--ink)}
-.cq-arena-hdr{background:transparent;border:none;padding:2px 10px;font-size:11px;color:var(--ink-faint);text-transform:uppercase;letter-spacing:.5px}
-.cq-arena-rank{font-family:var(--mono);font-weight:700;color:var(--ink-soft)}
-.cq-arena-name{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
-.cq-arena-flag{color:#7ee787}
-.cq-arena-acc{position:relative;font-family:var(--mono);font-size:12px;display:flex;align-items:center;min-width:0;z-index:1}
-.cq-arena-bar{position:absolute;left:0;top:50%;transform:translateY(-50%);height:16px;border-radius:4px;opacity:.28;z-index:0}
+/* --- arena: five live mini-boards + race-style leaderboard --- */
+.cq-arena-finish{background:linear-gradient(90deg,var(--bg-2),var(--bg-1));border:1px solid var(--neon-deep);border-radius:12px;padding:12px 16px;margin:4px 0 14px;font-size:15px;color:var(--ink);text-align:center;animation:cqFadeIn .3s ease-out}
+.cq-arena-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin:6px 0 16px}
+.cq-arena-mini{background:var(--bg-1);border:1.5px solid var(--line);border-radius:12px;padding:8px;transition:border-color var(--hover-ease),box-shadow var(--hover-ease),transform var(--hover-ease)}
+.cq-arena-mini.lead{box-shadow:0 0 18px -4px var(--neon-ghost);transform:translateY(-2px)}
+.cq-arena-minihead{display:flex;align-items:center;justify-content:space-between;gap:4px;margin-bottom:5px}
+.cq-arena-mininame{font-size:11.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cq-arena-miniacc{font-family:var(--mono);font-size:11px;color:var(--ink-soft);white-space:nowrap}
+.cq-arena-minisvg{width:100%;height:auto;display:block;border-radius:7px;background:var(--bg-0)}
+.cq-arena-race{display:flex;flex-direction:column;gap:6px;margin:6px 0 12px}
+.cq-arena-lane{display:grid;grid-template-columns:30px 1fr 2.2fr 52px;align-items:center;gap:8px;background:var(--bg-1);border:1px solid var(--line);border-radius:10px;padding:7px 10px;font-size:13px;color:var(--ink);transition:background var(--hover-ease),border-color var(--hover-ease)}
+.cq-arena-lane.leader{border-color:var(--neon-deep);background:var(--bg-2)}
+.cq-arena-lane.done{opacity:.92}
+.cq-arena-medal{font-size:15px;text-align:center;font-family:var(--mono);font-weight:700;color:var(--ink-soft)}
+.cq-arena-lanename{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.cq-arena-track{position:relative;height:20px;background:var(--bg-0);border-radius:6px;overflow:hidden;display:flex;align-items:center}
+.cq-arena-fill{position:absolute;left:0;top:0;bottom:0;border-radius:6px;opacity:.55;transition:width .28s cubic-bezier(.3,.7,.3,1)}
+.cq-arena-pct{position:relative;z-index:1;font-family:var(--mono);font-size:11.5px;padding-left:8px;color:var(--ink)}
+.cq-arena-meta{font-family:var(--mono);font-size:11px;color:var(--ink-faint);text-align:right;white-space:nowrap}
 @media(max-width:560px){
-  .cq-arena-row{grid-template-columns:20px 1fr 56px 44px;gap:5px;padding:8px 7px;font-size:12px}
-  .cq-arena-steps{display:none}
-  .cq-arena-name{font-size:12px}
-  .cq-arena-boundhead{font-size:12px}
+  .cq-arena-grid{grid-template-columns:repeat(2,1fr);gap:8px}
+  .cq-arena-lane{grid-template-columns:26px 1fr 1.6fr 44px;gap:6px;padding:7px;font-size:12px}
   /* stat cards: 3 equal columns that shrink together, never a lonely stretched 2+1 */
   .cq-ai-stats{gap:7px}
   .cq-ai-stat{min-width:0;flex:1 1 0;padding:9px 8px}
