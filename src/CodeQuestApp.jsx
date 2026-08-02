@@ -7,7 +7,7 @@ import { supabase } from "./lib/supabase";
 // Build marker — check this in the browser console to confirm which version is
 // actually running: type  window.__CQ_VERSION  in DevTools. If it's not the
 // value below, your browser/Vercel is serving an older bundle.
-const CQ_VERSION = "2026-07-12-v120-mobile-edges2";
+const CQ_VERSION = "2026-07-12-v121-scroll-fix";
 
 // Only this account (by Supabase user id) can read submitted feedback. Gating by
 // id, not email, so it survives email changes / adding Google login later.
@@ -10430,7 +10430,12 @@ const CSS = `
       Safari). Vertical scroll is untouched, so the page still scrolls down and
       pull-to-refresh still works. */
 html{background:#070a12}
-html,body{margin:0;max-width:100%;min-height:100%;overflow-x:hidden;background:#070a12;overscroll-behavior:none}
+html,body{margin:0;max-width:100%;min-height:100%;background:#070a12}
+/* Horizontal clip lives on body only, via overflow-x:clip. Using hidden here
+   forces the browser to compute overflow-y:auto too, which on some engines makes
+   body its own scroll container and traps/blocks page scrolling entirely. clip
+   stops sideways scroll without touching vertical scroll at all. */
+body{overflow-x:clip}
 .cq-circ-palette{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:14px 0 16px}
 .cq-circ-plabel{font-size:13px;color:var(--ink-soft);font-weight:600;margin-right:2px}
 .cq-circ-pbtn{background:var(--bg-2);border:1px solid var(--line);border-radius:8px;color:var(--ink-soft);font-family:var(--mono);font-size:12px;font-weight:600;padding:7px 10px;cursor:pointer}
@@ -11248,7 +11253,7 @@ html,body{margin:0;max-width:100%;min-height:100%;overflow-x:hidden;background:#
   .cq-brandname{font-size:16px;min-width:0}
   /* Belt-and-suspenders against any residual sideways scroll on phones. Scoped
      to mobile so it can't affect the sticky header's behaviour on desktop. */
-  .cq-main,.cq-classhero,.cq-card2{overflow-x:hidden}
+  .cq-main,.cq-classhero,.cq-card2{overflow-x:clip}
 }
 
 /* ============================================================
