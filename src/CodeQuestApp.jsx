@@ -7,7 +7,7 @@ import { supabase } from "./lib/supabase";
 // Build marker — check this in the browser console to confirm which version is
 // actually running: type  window.__CQ_VERSION  in DevTools. If it's not the
 // value below, your browser/Vercel is serving an older bundle.
-const CQ_VERSION = "2026-07-12-v110-mobile-header-fix2";
+const CQ_VERSION = "2026-07-12-v120-mobile-edges2";
 
 // Only this account (by Supabase user id) can read submitted feedback. Gating by
 // id, not email, so it survives email changes / adding Google login later.
@@ -7890,7 +7890,699 @@ function LabSaveBar({ lab, getState, onLoad }) {
     </div>
   );
 }
+// The tools available in the AI Lab. The neural net is always here; others are
+// added as their panels are built (nothing is listed before it genuinely works).
+const AI_TOOLS = [
+  { id: "nn", emoji: "🧠", label: "Neural net", blurb: "Neurons that adjust from examples" },
+  { id: "kmeans", emoji: "🌸", label: "K-means", blurb: "Finds groups in data on its own (unsupervised)" },
+  { id: "knn", emoji: "📍", label: "K-nearest", blurb: "Classifies a point by its closest neighbors" },
+  { id: "tree", emoji: "🌳", label: "Decision tree", blurb: "Learns a flowchart of yes/no questions" },
+  { id: "perceptron", emoji: "➗", label: "Perceptron", blurb: "The 1958 original — draws one dividing line" },
+  { id: "logreg", emoji: "📈", label: "Logistic reg.", blurb: "A smooth line-drawer that gives probabilities" },
+  { id: "markov", emoji: "✍️", label: "Markov text", blurb: "Learns word patterns and writes new text (baby LLM)" },
+  { id: "rl", emoji: "🎯", label: "Reinforcement", blurb: "An agent learns a path by reward (how AI plays games)" },
+  { id: "genetic", emoji: "🧬", label: "Genetic algo", blurb: "Evolves a solution over generations, like natural selection" },
+  { id: "arena", emoji: "🏁", label: "Arena (race them!)", blurb: "Race five classifiers on one dataset — live leaderboard" },
+];
+
+// ---- K-MEANS PANEL: watch the algorithm discover clusters live ----
+function KMeansPanel() {
+  const [k, setK] = useState(3);
+  const [seed, setSeed] = useState(1);
+  const [points, setPoints] = useState(() => aiMakePoints("CLUSTERS").map((p) => p[0]));
+  const [state, setState] = useState(() => kmeansInit(points, 3, 1));
+  const [iters, setIters] = useState(0);
+  const [running, setRunning] = useState(false);
+  const [inertia, setInertia] = useState(null);
+  const runRef = useRef(null);
+
+  const CLUSTER_COLORS = ["#3ac9e0", "#bd54dd", "#e6b980", "#7ee787", "#ff6ba8", "#8c9dff"];
+
+  const restart = (nk = k, sd = seed, pts = points) => {
+    if (runRef.current) { clearInterval(runRef.current); runRef.current = null; }
+    const st = kmeansInit(pts, nk, sd);
+    setState(st); setIters(0); setInertia(null); setRunning(false);
+  };
+  const regenPoints = () => {
+    const pts = aiMakePoints("CLUSTERS").map((p) => p[0]);
+    setPoints(pts); restart(k, seed, pts);
+  };
+  const step = () => {
+    setState((prev) => {
+      const st = { centers: prev.centers.map((c) => [...c]), assignments: [...prev.assignments], k: prev.k, done: prev.done };
+      const changed = kmeansStep(st, points);
+      setInertia(kmeansInertia(st, points));
+      setIters((n) => n + 1);
+      if (!changed && runRef.current) { clearInterval(runRef.current); runRef.current = null; setRunning(false); }
+      return st;
+    });
+  };
+  const toggleRun = () => {
+    if (running) { clearInterval(runRef.current); runRef.current = null; setRunning(false); return; }
+    setRunning(true);
+    runRef.current = setInterval(step, 600);
+  };
+  useEffect(() => () => { if (runRef.current) clearInterval(runRef.current); }, []);
+
+  // scale points (0..1) into the SVG viewbox
+  const VB = 300, PAD = 20;
+  const sx = (x) => PAD + x * (VB - 2 * PAD);
+  const sy = (y) => PAD + y * (VB - 2 * PAD);
+
+  return (
+    <div className="cq-ai-panel">
+      <h1 className="cq-home-title">Watch it find the groups.</h1>
+      <p className="cq-home-sub">K-means is <b>unsupervised</b> — no labels, no right answers given. It drops {k} centers, assigns each point to its nearest center, moves the centers to the middle of their points, and repeats. Watch it settle into clusters on its own.</p>
+
+      <div className="cq-ai-controls">
+        <label className="cq-ai-ctl">Clusters (k): <b>{k}</b>
+          <input type="range" min={2} max={6} value={k} onChange={(e) => { const nk = +e.target.value; setK(nk); restart(nk, seed); }} />
+        </label>
+        <button className="cq-ai-chip" onClick={() => { const sd = seed + 1; setSeed(sd); restart(k, sd); }}>🎲 New start</button>
+        <button className="cq-ai-chip" onClick={regenPoints}>✨ New points</button>
+      </div>
+
+      <div className="cq-ai-diagram">
+        <svg viewBox={`0 0 ${VB} ${VB}`} className="cq-ai-svg" style={{ maxHeight: 340 }}>
+          {points.map((p, i) => (
+            <circle key={"p" + i} cx={sx(p[0])} cy={sy(p[1])} r="5"
+              fill={CLUSTER_COLORS[state.assignments[i] % CLUSTER_COLORS.length]} opacity="0.85" />
+          ))}
+          {state.centers.map((c, i) => (
+            <g key={"c" + i}>
+              <circle cx={sx(c[0])} cy={sy(c[1])} r="11" fill="none" stroke={CLUSTER_COLORS[i % CLUSTER_COLORS.length]} strokeWidth="3" />
+              <circle cx={sx(c[0])} cy={sy(c[1])} r="3" fill={CLUSTER_COLORS[i % CLUSTER_COLORS.length]} />
+            </g>
+          ))}
+        </svg>
+      </div>
+
+      <div className="cq-ai-actions">
+        <button className="cq-run" onClick={toggleRun}>{running ? "⏸ Pause" : state.done ? "✓ Settled" : "▶ Run"}</button>
+        <button className="cq-ai-chip" onClick={step} disabled={running || state.done}>Step once</button>
+        <button className="cq-ai-chip" onClick={() => restart()}>↺ Reset</button>
+      </div>
+
+      <div className="cq-ai-stats">
+        <div className="cq-ai-stat"><span className="cq-ai-statlbl">Iterations</span><span className="cq-ai-statval">{iters}</span></div>
+        <div className="cq-ai-stat"><span className="cq-ai-statlbl">Spread (inertia)</span><span className="cq-ai-statval">{inertia === null ? "—" : inertia.toFixed(2)}</span></div>
+        <div className="cq-ai-stat"><span className="cq-ai-statlbl">Status</span><span className="cq-ai-statval">{state.done ? "Settled ✓" : running ? "Running…" : "Ready"}</span></div>
+      </div>
+      <p className="cq-ai-hint">💡 Lower spread = tighter clusters. Try a "new start" — k-means can settle differently depending on where the centers begin. That's a real quirk of the algorithm!</p>
+    </div>
+  );
+}
+
+// ---- K-NEAREST NEIGHBORS PANEL: move a test point, watch neighbors vote ----
+function KNNPanel() {
+  const [k, setK] = useState(3);
+  const [data, setData] = useState(() => aiMakePoints("CLUSTERS"));
+  const [test, setTest] = useState([0.5, 0.5]);
+  const svgRef = useRef(null);
+  const VB = 300, PAD = 20;
+  const sx = (x) => PAD + x * (VB - 2 * PAD);
+  const sy = (y) => PAD + y * (VB - 2 * PAD);
+  const unx = (px) => Math.max(0, Math.min(1, (px - PAD) / (VB - 2 * PAD)));
+
+  // nearest k neighbors of the test point (for the highlight lines + vote)
+  const neighbors = useMemo(() => {
+    return data
+      .map(([p, label], i) => ({ i, p, label, d: Math.hypot(p[0] - test[0], p[1] - test[1]) }))
+      .sort((a, b) => a.d - b.d)
+      .slice(0, Math.max(1, Math.min(k, data.length)));
+  }, [data, test, k]);
+  const prediction = knnPredict(data, test, k);
+  const votes = neighbors.reduce((acc, n) => { acc[n.label] = (acc[n.label] || 0) + 1; return acc; }, {});
+  const COLORS = { 0: "#3ac9e0", 1: "#bd54dd" };
+
+  const moveTest = (e) => {
+    const svg = svgRef.current; if (!svg) return;
+    const pt = svg.getBoundingClientRect();
+    const cx = ((e.touches ? e.touches[0].clientX : e.clientX) - pt.left) / pt.width * VB;
+    const cy = ((e.touches ? e.touches[0].clientY : e.clientY) - pt.top) / pt.height * VB;
+    setTest([unx(cx), unx(cy)]);
+  };
+
+  return (
+    <div className="cq-ai-panel">
+      <h1 className="cq-home-title">Classify by your neighbors.</h1>
+      <p className="cq-home-sub">K-nearest neighbors does <b>no training at all</b> — it just remembers every example. To classify the white point, it finds the {k} closest known points and takes a majority vote. Drag the white point around and watch the answer flip.</p>
+
+      <div className="cq-ai-controls">
+        <label className="cq-ai-ctl">Neighbors (k): <b>{k}</b>
+          <input type="range" min={1} max={9} step={2} value={k} onChange={(e) => setK(+e.target.value)} />
+        </label>
+        <button className="cq-ai-chip" onClick={() => setData(aiMakePoints("CLUSTERS"))}>✨ New points</button>
+      </div>
+
+      <div className="cq-ai-diagram">
+        <svg ref={svgRef} viewBox={`0 0 ${VB} ${VB}`} className="cq-ai-svg" style={{ maxHeight: 340, touchAction: "none", cursor: "crosshair" }}
+          onMouseDown={moveTest} onMouseMove={(e) => { if (e.buttons === 1) moveTest(e); }}
+          onTouchStart={moveTest} onTouchMove={moveTest}>
+          {/* lines to the k neighbors */}
+          {neighbors.map((n) => (
+            <line key={"l" + n.i} x1={sx(test[0])} y1={sy(test[1])} x2={sx(n.p[0])} y2={sy(n.p[1])}
+              stroke={COLORS[n.label]} strokeWidth="1.5" opacity="0.5" />
+          ))}
+          {/* all data points */}
+          {data.map(([p, label], i) => (
+            <circle key={"d" + i} cx={sx(p[0])} cy={sy(p[1])} r={neighbors.some((n) => n.i === i) ? 7 : 5}
+              fill={COLORS[label]} opacity={neighbors.some((n) => n.i === i) ? 1 : 0.5}
+              stroke={neighbors.some((n) => n.i === i) ? "#fff" : "none"} strokeWidth="1.5" />
+          ))}
+          {/* the test point */}
+          <circle cx={sx(test[0])} cy={sy(test[1])} r="9" fill="#fff" stroke={COLORS[prediction]} strokeWidth="4" />
+        </svg>
+      </div>
+
+      <div className="cq-ai-stats">
+        <div className="cq-ai-stat"><span className="cq-ai-statlbl">Prediction</span><span className="cq-ai-statval" style={{ color: COLORS[prediction] }}>Class {prediction}</span></div>
+        <div className="cq-ai-stat"><span className="cq-ai-statlbl">Votes</span><span className="cq-ai-statval">{(votes[0] || 0)}–{(votes[1] || 0)}</span></div>
+        <div className="cq-ai-stat"><span className="cq-ai-statlbl">Leave-one-out acc.</span><span className="cq-ai-statval">{(knnAccuracy(data, k) * 100).toFixed(0)}%</span></div>
+      </div>
+      <p className="cq-ai-hint">💡 Try k=1 vs k=9. Small k follows every little wiggle (can overfit); large k is smoother but blurs the boundary. There's no single "right" k — it's a real tradeoff.</p>
+    </div>
+  );
+}
+
+// ---- DECISION TREE PANEL: build a tree and SEE the flowchart it learned ----
+function TreePanel() {
+  const [shape, setShape] = useState("CLUSTERS");
+  const [maxDepth, setMaxDepth] = useState(4);
+  const [data, setData] = useState(() => aiMakePoints("CLUSTERS"));
+  const tree = useMemo(() => treeBuild(data, 0, maxDepth), [data, maxDepth]);
+  const acc = treeAccuracy(tree, data);
+  const depth = treeDepth(tree);
+  const COLORS = { 0: "#3ac9e0", 1: "#bd54dd" };
+  const FEAT = ["x", "y"];
+
+  // Lay the tree out so nodes NEVER overlap, at any depth: give every leaf its
+  // own evenly-spaced column, then place each parent above the midpoint of its
+  // children. The canvas width grows with the number of leaves (so a big tree
+  // scrolls horizontally instead of collapsing into an unreadable pile).
+  const nodes = []; const edges = [];
+  const COL_W = 68;   // horizontal room per leaf (box is 62px, so 6px gap)
+  const ROW_H = 58;   // vertical room per level
+  let leafCursor = 0;
+  const place = (node, depth, parentId) => {
+    const id = nodes.length;
+    const rec = { id, node, x: 0, y: 30 + depth * ROW_H };
+    nodes.push(rec);
+    if (parentId != null) edges.push({ from: parentId, to: id });
+    if (node.leaf) {
+      rec.x = COL_W / 2 + (leafCursor++) * COL_W; // next free column
+    } else {
+      place(node.left, depth + 1, id);
+      place(node.right, depth + 1, id);
+      // sit above the midpoint of my two children
+      const kids = edges.filter((e) => e.from === id).map((e) => nodes[e.to].x);
+      rec.x = (Math.min(...kids) + Math.max(...kids)) / 2;
+    }
+  };
+  place(tree, 0, null);
+  const leafCount = Math.max(1, leafCursor);
+  const svgW = Math.max(320, leafCount * COL_W);
+  const svgH = (depth) * ROW_H + 40;
+  // resolve edge endpoints now that every node has an x/y
+  edges.forEach((e) => { e.x1 = nodes[e.from].x; e.y1 = nodes[e.from].y; e.x2 = nodes[e.to].x; e.y2 = nodes[e.to].y; });
+
+  return (
+    <div className="cq-ai-panel">
+      <h1 className="cq-home-title">Learn by asking questions.</h1>
+      <p className="cq-home-sub">A decision tree learns a <b>flowchart</b>, not weights. At each step it picks the yes/no question that best splits the classes apart, then repeats. The whole "brain" is readable — you can see exactly why it decides what it does. Unlike a straight-line classifier, it can carve up any shape.</p>
+
+      <div className="cq-ai-controls">
+        <label className="cq-ai-ctl">Max depth: <b>{maxDepth}</b>
+          <input type="range" min={1} max={6} value={maxDepth} onChange={(e) => setMaxDepth(+e.target.value)} />
+        </label>
+        {["CLUSTERS", "DIAGONAL", "CIRCLE"].map((s) => (
+          <button key={s} className={`cq-ai-chip ${shape === s ? "active" : ""}`} onClick={() => { setShape(s); setData(aiMakePoints(s)); }}>{s.toLowerCase()}</button>
+        ))}
+        <button className="cq-ai-chip" onClick={() => setData(aiMakePoints(shape))}>✨ New points</button>
+      </div>
+
+      <div className="cq-ai-diagram" style={{ overflowX: "auto" }}>
+        <svg viewBox={`0 0 ${svgW} ${svgH}`} className="cq-ai-svg" style={{ maxHeight: 340, minWidth: svgW > 560 ? svgW : undefined, width: svgW > 560 ? svgW : "100%" }}>
+          {edges.map((e, i) => (
+            <line key={"e" + i} x1={e.x1} y1={e.y1} x2={e.x2} y2={e.y2} stroke="var(--line)" strokeWidth="1.5" />
+          ))}
+          {nodes.map(({ id, node, x, y }) => (
+            <g key={id}>
+              {node.leaf ? (
+                <>
+                  <circle cx={x} cy={y} r="16" fill={COLORS[node.label]} opacity="0.9" />
+                  <text x={x} y={y + 4} textAnchor="middle" fontSize="12" fill="#0a0e17" fontWeight="700">{node.label}</text>
+                </>
+              ) : (
+                <>
+                  <rect x={x - 31} y={y - 13} width="62" height="26" rx="7" fill="var(--bg-2)" stroke="var(--neon-deep)" strokeWidth="1.5" />
+                  <text x={x} y={y + 4} textAnchor="middle" fontSize="10.5" fill="var(--ink)" fontFamily="var(--mono)">{FEAT[node.feature]} ≤ {node.threshold.toFixed(2)}</text>
+                </>
+              )}
+            </g>
+          ))}
+        </svg>
+      </div>
+
+      <div className="cq-ai-stats">
+        <div className="cq-ai-stat"><span className="cq-ai-statlbl">Accuracy</span><span className="cq-ai-statval">{(acc * 100).toFixed(0)}%</span></div>
+        <div className="cq-ai-stat"><span className="cq-ai-statlbl">Tree depth</span><span className="cq-ai-statval">{depth}</span></div>
+        <div className="cq-ai-stat"><span className="cq-ai-statlbl">Questions</span><span className="cq-ai-statval">{nodes.filter((n) => !n.node.leaf).length}</span></div>
+      </div>
+      <p className="cq-ai-hint">💡 Each box is a question; each colored circle is a final answer. More depth = more questions = usually higher accuracy — but too deep and it just memorizes the points instead of learning the pattern.</p>
+    </div>
+  );
+}
+
+// ---- LINEAR CLASSIFIER PANEL (perceptron & logistic regression) ----
+// Both learn a single straight dividing line. We draw that line live as it
+// trains, so you SEE it rotate into place — and see it fail on XOR-like data
+// that no straight line can separate.
+function LinearClassifierPanel({ kind }) {
+  const isLog = kind === "logreg";
+  const [shape, setShape] = useState("DIAGONAL");
+  const [data, setData] = useState(() => aiMakePoints("DIAGONAL"));
+  const [model, setModel] = useState(() => (isLog ? logregNew(2) : perceptronNew(2)));
+  const [steps, setSteps] = useState(0);
+  const [running, setRunning] = useState(false);
+  const [acc, setAcc] = useState(0);
+  const [loss, setLoss] = useState(null);
+  const runRef = useRef(null);
+  const COLORS = { 0: "#3ac9e0", 1: "#bd54dd" };
+  const VB = 300, PAD = 20;
+  const sx = (x) => PAD + x * (VB - 2 * PAD);
+  const sy = (y) => PAD + (1 - y) * (VB - 2 * PAD); // flip y so up is up
+
+  const reset = (pts = data) => {
+    if (runRef.current) { clearInterval(runRef.current); runRef.current = null; }
+    setModel(isLog ? logregNew(2) : perceptronNew(2)); setSteps(0); setAcc(0); setLoss(null); setRunning(false);
+  };
+  const step = () => {
+    setModel((prev) => {
+      const m = { w: [...prev.w], b: prev.b, nIn: prev.nIn };
+      if (isLog) { const l = logregStep(m, data); setLoss(l); setAcc(logregAccuracy(m, data)); }
+      else { perceptronStep(m, data); setAcc(perceptronAccuracy(m, data)); }
+      setSteps((n) => n + 1);
+      return m;
+    });
+  };
+  const toggleRun = () => {
+    if (running) { clearInterval(runRef.current); runRef.current = null; setRunning(false); return; }
+    setRunning(true);
+    runRef.current = setInterval(step, isLog ? 60 : 250);
+  };
+  useEffect(() => () => { if (runRef.current) clearInterval(runRef.current); }, []);
+  const changeShape = (s) => { const pts = aiMakePoints(s); setShape(s); setData(pts); reset(pts); };
+
+  // the dividing line: w0*x + w1*y + b = 0  →  y = -(w0*x + b)/w1
+  const linePts = useMemo(() => {
+    const [w0, w1] = model.w; const b = model.b;
+    if (Math.abs(w1) < 1e-6) return null;
+    const yAt = (x) => -(w0 * x + b) / w1;
+    return [[0, yAt(0)], [1, yAt(1)]];
+  }, [model]);
+
+  return (
+    <div className="cq-ai-panel">
+      <h1 className="cq-home-title">{isLog ? "A smooth dividing line." : "The very first neuron."}</h1>
+      <p className="cq-home-sub">
+        {isLog
+          ? <>Logistic regression draws one straight line to split the classes, nudging it a little each step to reduce error — and it outputs a <b>probability</b>, not just a yes/no. Like the perceptron, one straight line is all it has, so it can't separate tangled data.</>
+          : <>The perceptron (1958) is a single neuron. It draws a straight line and, every time it misclassifies a point, tilts the line toward fixing it. Watch it snap into place on separable data — then try a shape no straight line can split.</>}
+      </p>
+
+      <div className="cq-ai-controls">
+        {["DIAGONAL", "CLUSTERS", "CIRCLE"].map((s) => (
+          <button key={s} className={`cq-ai-chip ${shape === s ? "active" : ""}`} onClick={() => changeShape(s)}>{s.toLowerCase()}</button>
+        ))}
+        <button className="cq-ai-chip" onClick={() => { const pts = aiMakePoints(shape); setData(pts); reset(pts); }}>✨ New points</button>
+      </div>
+
+      <div className="cq-ai-diagram">
+        <svg viewBox={`0 0 ${VB} ${VB}`} className="cq-ai-svg" style={{ maxHeight: 340 }}>
+          {linePts && (
+            <line x1={sx(linePts[0][0])} y1={sy(linePts[0][1])} x2={sx(linePts[1][0])} y2={sy(linePts[1][1])}
+              stroke="#e6b980" strokeWidth="3" opacity="0.9" />
+          )}
+          {data.map(([p, label], i) => (
+            <circle key={i} cx={sx(p[0])} cy={sy(p[1])} r="6" fill={COLORS[label]} opacity="0.85"
+              stroke={(isLog ? logregPredict(model, p) : perceptronPredict(model, p)) === label ? "none" : "#ff6ba8"} strokeWidth="2" />
+          ))}
+        </svg>
+      </div>
+
+      <div className="cq-ai-actions">
+        <button className="cq-run" onClick={toggleRun}>{running ? "⏸ Pause" : "▶ Train"}</button>
+        <button className="cq-ai-chip" onClick={step} disabled={running}>Step once</button>
+        <button className="cq-ai-chip" onClick={() => reset()}>↺ Reset</button>
+      </div>
+
+      <div className="cq-ai-stats">
+        <div className="cq-ai-stat"><span className="cq-ai-statlbl">Accuracy</span><span className="cq-ai-statval">{(acc * 100).toFixed(0)}%</span></div>
+        <div className="cq-ai-stat"><span className="cq-ai-statlbl">Steps</span><span className="cq-ai-statval">{steps}</span></div>
+        <div className="cq-ai-stat"><span className="cq-ai-statlbl">{isLog ? "Loss" : "Pink = wrong"}</span><span className="cq-ai-statval">{isLog ? (loss === null ? "—" : loss.toFixed(3)) : data.filter(([p, l]) => perceptronPredict(model, p) !== l).length}</span></div>
+      </div>
+      <p className="cq-ai-hint">💡 Try the "circle" shape — the inner dots can't be split from the outer ones by any straight line, so accuracy stalls below 100%. That exact limitation is why neural nets (with hidden layers) were invented.</p>
+    </div>
+  );
+}
+
+// ---- MARKOV TEXT PANEL: feed it text, watch it write new text ----
+const MARKOV_SAMPLE = "the sun rose over the quiet hills and the birds began to sing. the wind moved softly through the trees and the river ran cool and clear. a small fox watched the water and then slipped away into the tall grass. the sun climbed higher and the day grew warm and bright. far away a dog barked once and then the hills were quiet again.";
+function MarkovPanel() {
+  const [text, setText] = useState(MARKOV_SAMPLE);
+  const [order, setOrder] = useState(2);
+  const [seed, setSeed] = useState(1);
+  const [output, setOutput] = useState("");
+  const model = useMemo(() => markovTrain(text, order), [text, order]);
+
+  const generate = () => {
+    const sd = seed + 1; setSeed(sd);
+    setOutput(markovGenerate(model, 40, sd));
+  };
+
+  return (
+    <div className="cq-ai-panel">
+      <h1 className="cq-home-title">How AI writing really works.</h1>
+      <p className="cq-home-sub">A Markov chain reads text and learns <b>which words tend to follow which</b>. To write, it starts somewhere and keeps picking a likely next word. It's the honest baby version of how ChatGPT-style models work — just much simpler. It can only ever use words it has seen.</p>
+
+      <label className="cq-ai-fieldlbl">Training text — edit it or paste your own:</label>
+      <textarea className="cq-ai-textarea" value={text} onChange={(e) => setText(e.target.value)} rows={5} />
+
+      <div className="cq-ai-controls">
+        <label className="cq-ai-ctl">Memory (order): <b>{order}</b>
+          <input type="range" min={1} max={3} value={order} onChange={(e) => setOrder(+e.target.value)} />
+        </label>
+        <button className="cq-run" onClick={generate}>✍️ Generate</button>
+      </div>
+
+      {output && (
+        <div className="cq-ai-output">
+          <span className="cq-ai-outlbl">It wrote:</span>
+          <p className="cq-ai-outtext">{output}</p>
+        </div>
+      )}
+
+      <div className="cq-ai-stats">
+        <div className="cq-ai-stat"><span className="cq-ai-statlbl">Words learned</span><span className="cq-ai-statval">{model.tokens}</span></div>
+        <div className="cq-ai-stat"><span className="cq-ai-statlbl">Unique words</span><span className="cq-ai-statval">{model.vocab}</span></div>
+        <div className="cq-ai-stat"><span className="cq-ai-statlbl">Patterns</span><span className="cq-ai-statval">{model.table.size}</span></div>
+      </div>
+      <p className="cq-ai-hint">💡 Order 1 looks at just the last word (more random). Order 2–3 looks at the last few words (more coherent, but closer to just repeating the source). That's the same tradeoff real language models balance.</p>
+    </div>
+  );
+}
+
+// ---- REINFORCEMENT LEARNING PANEL: watch an agent learn a path by reward ----
+function RLPanel() {
+  const SIZE = 5;
+  const worldRef = useRef(rlNewWorld(SIZE));
+  const [agent, setAgent] = useState(() => rlNewAgent(worldRef.current));
+  const [episode, setEpisode] = useState(0);
+  const [lastSteps, setLastSteps] = useState(null);
+  const [pathLen, setPathLen] = useState(null);
+  const [running, setRunning] = useState(false);
+  const runRef = useRef(null);
+  const OPTIMAL = 2 * (SIZE - 1); // 8 for a 5x5
+
+  const runEpisode = () => {
+    setAgent((prev) => {
+      // deep copy Q so React sees a change
+      const a = { ...prev, Q: Object.fromEntries(Object.entries(prev.Q).map(([k, v]) => [k, [...v]])) };
+      const steps = rlEpisode(worldRef.current, a, episode + 1);
+      setLastSteps(steps);
+      setEpisode((e) => e + 1);
+      setPathLen(rlGreedyPathLength(worldRef.current, a));
+      return a;
+    });
+  };
+  const toggleRun = () => {
+    if (running) { clearInterval(runRef.current); runRef.current = null; setRunning(false); return; }
+    setRunning(true);
+    runRef.current = setInterval(runEpisode, 120);
+  };
+  const reset = () => {
+    if (runRef.current) { clearInterval(runRef.current); runRef.current = null; }
+    setAgent(rlNewAgent(worldRef.current)); setEpisode(0); setLastSteps(null); setPathLen(null); setRunning(false);
+  };
+  useEffect(() => () => { if (runRef.current) clearInterval(runRef.current); }, []);
+
+  // build the greedy path for display
+  const world = worldRef.current;
+  const path = useMemo(() => {
+    const pts = []; let pos = [...world.start]; const seen = new Set();
+    for (let i = 0; i < 40; i++) {
+      pts.push([...pos]);
+      if (pos[0] === world.goal[0] && pos[1] === world.goal[1]) break;
+      const s = pos[1] * SIZE + pos[0];
+      if (seen.has(s)) break; seen.add(s);
+      const q = agent.Q[s]; const a = q.indexOf(Math.max(...q));
+      const mv = [[0, -1], [1, 0], [0, 1], [-1, 0]][a];
+      let nx = pos[0] + mv[0], ny = pos[1] + mv[1];
+      if (nx < 0 || ny < 0 || nx >= SIZE || ny >= SIZE) { nx = pos[0]; ny = pos[1]; }
+      if (nx === pos[0] && ny === pos[1]) break;
+      pos = [nx, ny];
+    }
+    return pts;
+  }, [agent, world]);
+
+  const CELL = 54, GB = SIZE * CELL;
+  const solved = pathLen != null && pathLen === OPTIMAL;
+
+  return (
+    <div className="cq-ai-panel">
+      <h1 className="cq-home-title">Learn by trial and reward.</h1>
+      <p className="cq-home-sub">No examples, no labels — just <b>consequences</b>. The dot (🔵) wants to reach the goal (⭐). It gets a small penalty each step and a reward for arriving. By trying and remembering what worked, it slowly learns the best path — the same idea behind AI that learns to play games. Hit Train and watch the green path straighten out.</p>
+
+      <div className="cq-ai-diagram">
+        <svg viewBox={`0 0 ${GB} ${GB}`} className="cq-ai-svg" style={{ maxHeight: 320 }}>
+          {Array.from({ length: SIZE }).map((_, y) => Array.from({ length: SIZE }).map((_, x) => (
+            <rect key={x + "," + y} x={x * CELL} y={y * CELL} width={CELL - 2} height={CELL - 2} rx="6"
+              fill="var(--bg-1)" stroke="var(--line)" strokeWidth="1" />
+          )))}
+          {/* learned path */}
+          {path.length > 1 && (
+            <polyline points={path.map(([x, y]) => `${x * CELL + CELL / 2 - 1},${y * CELL + CELL / 2 - 1}`).join(" ")}
+              fill="none" stroke="#7ee787" strokeWidth="4" opacity="0.8" strokeLinejoin="round" strokeLinecap="round" />
+          )}
+          {/* goal */}
+          <text x={world.goal[0] * CELL + CELL / 2 - 1} y={world.goal[1] * CELL + CELL / 2 + 6} textAnchor="middle" fontSize="22">⭐</text>
+          {/* agent at start */}
+          <text x={world.start[0] * CELL + CELL / 2 - 1} y={world.start[1] * CELL + CELL / 2 + 6} textAnchor="middle" fontSize="20">🔵</text>
+        </svg>
+      </div>
+
+      <div className="cq-ai-actions">
+        <button className="cq-run" onClick={toggleRun}>{running ? "⏸ Pause" : "▶ Train"}</button>
+        <button className="cq-ai-chip" onClick={runEpisode} disabled={running}>One episode</button>
+        <button className="cq-ai-chip" onClick={reset}>↺ Reset</button>
+      </div>
+
+      <div className="cq-ai-stats">
+        <div className="cq-ai-stat"><span className="cq-ai-statlbl">Episodes</span><span className="cq-ai-statval">{episode}</span></div>
+        <div className="cq-ai-stat"><span className="cq-ai-statlbl">Last run steps</span><span className="cq-ai-statval">{lastSteps ?? "—"}</span></div>
+        <div className="cq-ai-stat"><span className="cq-ai-statlbl">Best path</span><span className="cq-ai-statval">{pathLen == null ? "—" : pathLen >= 200 ? "none yet" : pathLen}{solved ? " ✓" : ""}</span></div>
+      </div>
+      <p className="cq-ai-hint">💡 The best possible path is {OPTIMAL} steps. Early on the dot wanders (lots of steps); as it learns, the green path straightens toward the goal. When "best path" hits {OPTIMAL}, it's found the optimum — purely from reward.</p>
+    </div>
+  );
+}
+
+// ---- GENETIC ALGORITHM PANEL: evolve a random string into a target phrase ----
+function GeneticPanel() {
+  const [target, setTarget] = useState("hello world");
+  const [state, setState] = useState(() => gaInit("hello world", { seed: 1 }));
+  const [running, setRunning] = useState(false);
+  const [, force] = useState(0);
+  const runRef = useRef(null);
+
+  const restart = (t = target) => {
+    if (runRef.current) { clearInterval(runRef.current); runRef.current = null; }
+    const clean = t.toLowerCase().replace(/[^a-z .!]/g, "").slice(0, 40) || "hello world";
+    setState(gaInit(clean, { seed: Date.now() % 100000 })); setRunning(false); force((n) => n + 1);
+  };
+  const step = () => { gaStep(state); force((n) => n + 1); if (state.solved) { clearInterval(runRef.current); runRef.current = null; setRunning(false); } };
+  const toggleRun = () => {
+    if (running) { clearInterval(runRef.current); runRef.current = null; setRunning(false); return; }
+    if (state.solved) restart();
+    setRunning(true);
+    runRef.current = setInterval(step, 60);
+  };
+  useEffect(() => () => { if (runRef.current) clearInterval(runRef.current); }, []);
+
+  const pct = state.target.length ? Math.round((state.bestFit / state.target.length) * 100) : 0;
+
+  return (
+    <div className="cq-ai-panel">
+      <h1 className="cq-home-title">Evolution, as an algorithm.</h1>
+      <p className="cq-home-sub">A genetic algorithm copies <b>natural selection</b>. It starts with a population of random guesses, keeps the fittest, "breeds" them together, and adds small random mutations — generation after generation. Watch pure randomness evolve into your exact phrase, no intelligence required, just survival of the fittest.</p>
+
+      <label className="cq-ai-fieldlbl">Target phrase (letters, spaces, . ! only):</label>
+      <div className="cq-ai-controls">
+        <input className="cq-search" style={{ flex: 1, minWidth: 180 }} value={target} maxLength={40}
+          onChange={(e) => setTarget(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") restart(); }} />
+        <button className="cq-ai-chip" onClick={() => restart()}>Set target</button>
+      </div>
+
+      <div className="cq-ai-output" style={{ textAlign: "center" }}>
+        <span className="cq-ai-outlbl">Best guess this generation</span>
+        <p className="cq-ai-outtext cq-ai-geneticout" style={{ fontFamily: "var(--mono)", fontSize: 22, letterSpacing: 1 }}>
+          {state.best.split("").map((c, i) => (
+            <span key={i} style={{ color: c === state.target[i] ? "#7ee787" : "var(--ink-faint)" }}>{c === " " ? "\u00A0" : c}</span>
+          ))}
+        </p>
+      </div>
+
+      <div className="cq-ai-actions">
+        <button className="cq-run" onClick={toggleRun}>{running ? "⏸ Pause" : state.solved ? "✓ Evolve again" : "▶ Evolve"}</button>
+        <button className="cq-ai-chip" onClick={step} disabled={running || state.solved}>One generation</button>
+        <button className="cq-ai-chip" onClick={() => restart()}>↺ Reset</button>
+      </div>
+
+      <div className="cq-ai-stats">
+        <div className="cq-ai-stat"><span className="cq-ai-statlbl">Generation</span><span className="cq-ai-statval">{state.gen}</span></div>
+        <div className="cq-ai-stat"><span className="cq-ai-statlbl">Match</span><span className="cq-ai-statval">{pct}%</span></div>
+        <div className="cq-ai-stat"><span className="cq-ai-statlbl">Status</span><span className="cq-ai-statval">{state.solved ? "Solved ✓" : running ? "Evolving…" : "Ready"}</span></div>
+      </div>
+      <p className="cq-ai-hint">💡 Green letters are correct. Notice it's slow near the end — the last few letters are luck, since mutation is random. Real genetic algorithms design bridges, antennas, and game strategies the same way.</p>
+    </div>
+  );
+}
+
+// ---- ARENA: race all five classifiers on ONE dataset, live leaderboard ----
+function ArenaPanel() {
+  const [shape, setShape] = useState("CLUSTERS");
+  const [data, setData] = useState(() => aiMakePoints("CLUSTERS"));
+  const [racers, setRacers] = useState(() => arenaMakeClassifiers().map((c) => ({ def: c, state: c.make(), steps: 0, acc: 0, ms: 0, done: false })));
+  const [running, setRunning] = useState(false);
+  const [selected, setSelected] = useState("perceptron");
+  const runRef = useRef(null);
+
+  const rebuild = (pts) => {
+    if (runRef.current) { clearInterval(runRef.current); runRef.current = null; }
+    setRacers(arenaMakeClassifiers().map((c) => ({ def: c, state: c.make(), steps: 0, acc: 0, ms: 0, done: false })));
+    setRunning(false);
+  };
+  const changeShape = (s) => { const pts = aiMakePoints(s); setShape(s); setData(pts); rebuild(pts); };
+  const newPoints = () => { const pts = aiMakePoints(shape); setData(pts); rebuild(pts); };
+
+  const stepAll = () => {
+    setRacers((prev) => prev.map((r) => {
+      if (r.done) return r;
+      const t0 = (typeof performance !== "undefined" ? performance.now() : Date.now());
+      const done = r.def.step(r.state, data);
+      const t1 = (typeof performance !== "undefined" ? performance.now() : Date.now());
+      return { ...r, steps: r.steps + 1, acc: r.def.acc(r.state, data), ms: r.ms + (t1 - t0), done };
+    }));
+  };
+  const toggleRun = () => {
+    if (running) { clearInterval(runRef.current); runRef.current = null; setRunning(false); return; }
+    setRunning(true);
+    runRef.current = setInterval(() => {
+      setRacers((prev) => {
+        if (prev.every((r) => r.done)) { clearInterval(runRef.current); runRef.current = null; setRunning(false); return prev; }
+        return prev.map((r) => {
+          if (r.done) return r;
+          const t0 = (typeof performance !== "undefined" ? performance.now() : Date.now());
+          const done = r.def.step(r.state, data);
+          const t1 = (typeof performance !== "undefined" ? performance.now() : Date.now());
+          return { ...r, steps: r.steps + 1, acc: r.def.acc(r.state, data), ms: r.ms + (t1 - t0), done };
+        });
+      });
+    }, 120);
+  };
+  useEffect(() => () => { if (runRef.current) clearInterval(runRef.current); }, []);
+
+  // leaderboard: sort by accuracy desc, then fewest steps
+  const board = [...racers].sort((a, b) => b.acc - a.acc || a.steps - b.steps);
+  const COLORS = { 0: "#3ac9e0", 1: "#bd54dd" };
+  const VB = 300, PAD = 20;
+  const sx = (x) => PAD + x * (VB - 2 * PAD);
+  const sy = (y) => PAD + (1 - y) * (VB - 2 * PAD);
+
+  // decision boundary of the selected racer, sampled on a grid
+  const sel = racers.find((r) => r.def.id === selected);
+  const GRID = 24;
+  const boundary = useMemo(() => {
+    if (!sel) return [];
+    const cells = [];
+    for (let gx = 0; gx < GRID; gx++) for (let gy = 0; gy < GRID; gy++) {
+      const x = (gx + 0.5) / GRID, y = (gy + 0.5) / GRID;
+      let cls = 0; try { cls = sel.def.predict(sel.state, [x, y]); } catch { cls = 0; }
+      cells.push({ x, y, cls });
+    }
+    return cells;
+  }, [sel, sel && sel.steps, selected]);
+
+  return (
+    <div className="cq-ai-panel">
+      <h1 className="cq-home-title">🏁 The Arena.</h1>
+      <p className="cq-home-sub">Five different algorithms, <b>one dataset</b>, same goal: split the two colors. They all learn in totally different ways — watch them race, and see who's fastest, who's most accurate, and how each one carves up the space differently. Same problem, five personalities.</p>
+
+      <div className="cq-ai-controls">
+        {["CLUSTERS", "DIAGONAL", "CIRCLE"].map((s) => (
+          <button key={s} className={`cq-ai-chip ${shape === s ? "active" : ""}`} onClick={() => changeShape(s)}>{s.toLowerCase()}</button>
+        ))}
+        <button className="cq-ai-chip" onClick={newPoints}>✨ New points</button>
+      </div>
+
+      <div className="cq-ai-actions">
+        <button className="cq-run" onClick={toggleRun}>{running ? "⏸ Pause" : racers.every((r) => r.done) ? "✓ Finished" : "🏁 Race!"}</button>
+        <button className="cq-ai-chip" onClick={stepAll} disabled={running || racers.every((r) => r.done)}>Step all</button>
+        <button className="cq-ai-chip" onClick={() => rebuild(data)}>↺ Reset</button>
+      </div>
+
+      {/* decision boundary viewer */}
+      <div className="cq-ai-diagram">
+        <div className="cq-arena-boundhead">
+          <span>Decision boundary:</span>
+          <div className="cq-arena-tabs">
+            {racers.map((r) => (
+              <button key={r.def.id} className={`cq-arena-tab ${selected === r.def.id ? "active" : ""}`}
+                onClick={() => setSelected(r.def.id)} style={selected === r.def.id ? { borderColor: r.def.color, color: r.def.color } : {}}>
+                {r.def.emoji}
+              </button>
+            ))}
+          </div>
+        </div>
+        <svg viewBox={`0 0 ${VB} ${VB}`} className="cq-ai-svg" style={{ maxHeight: 320 }}>
+          {/* shaded prediction regions */}
+          {boundary.map((c, i) => (
+            <rect key={i} x={sx(c.x) - (VB - 2 * PAD) / GRID / 2} y={sy(c.y) - (VB - 2 * PAD) / GRID / 2}
+              width={(VB - 2 * PAD) / GRID} height={(VB - 2 * PAD) / GRID}
+              fill={COLORS[c.cls]} opacity="0.13" />
+          ))}
+          {/* data points */}
+          {data.map(([p, label], i) => (
+            <circle key={"d" + i} cx={sx(p[0])} cy={sy(p[1])} r="6" fill={COLORS[label]} opacity="0.9" />
+          ))}
+        </svg>
+      </div>
+
+      {/* live leaderboard */}
+      <div className="cq-arena-board">
+        <div className="cq-arena-row cq-arena-hdr">
+          <span>#</span><span>Algorithm</span><span>Accuracy</span><span className="cq-arena-steps">Steps</span><span>Time</span>
+        </div>
+        {board.map((r, i) => (
+          <div key={r.def.id} className="cq-arena-row" style={{ borderLeft: `3px solid ${r.def.color}` }}>
+            <span className="cq-arena-rank">{r.acc > 0 || r.steps > 0 ? i + 1 : "—"}</span>
+            <span className="cq-arena-name">{r.def.emoji} {r.def.label}{r.done && <span className="cq-arena-flag"> ✓</span>}</span>
+            <span className="cq-arena-acc"><span className="cq-arena-bar" style={{ width: `${r.acc * 100}%`, background: r.def.color }} />{(r.acc * 100).toFixed(0)}%</span>
+            <span className="cq-arena-steps">{r.steps}</span>
+            <span>{r.ms < 1 ? "<1" : r.ms.toFixed(0)}ms</span>
+          </div>
+        ))}
+      </div>
+      <p className="cq-ai-hint">💡 Tap an emoji above to see how that algorithm splits the space. Notice on the "circle" shape: the perceptron and logistic regression (straight lines) can't win, but the tree, KNN and neural net can bend around it. Fastest isn't always most accurate!</p>
+    </div>
+  );
+}
+
 function AILab({ onBack, challenge = null, onChallengeComplete = null }) {
+  // The lab is now multi-tool: the neural net is one of several AI algorithms you
+  // can explore. Challenges always use the neural net; free mode lets you pick.
+  const [tool, setTool] = useState("nn");
   const [task, setTask] = useState("gates"); // gates | logic3 | classify
   const taskDef = AI_TASKS[task];
   const [pattern, setPattern] = useState(challenge ? challenge.pattern : "AND");
@@ -8015,6 +8707,32 @@ function AILab({ onBack, challenge = null, onChallengeComplete = null }) {
   return (
     <main className="cq-main">
       <button className="cq-back" onClick={onBack}>← {challenge ? "Back to lessons" : "Home"}</button>
+
+      {!challenge && (
+        <div className="cq-ai-toolbar">
+          <span className="cq-ai-lbl">🧪 Pick an AI to explore</span>
+          <div className="cq-ai-tools">
+            {AI_TOOLS.map((t) => (
+              <button key={t.id} className={`cq-ai-toolbtn ${tool === t.id ? "active" : ""}`} onClick={() => setTool(t.id)} title={t.blurb}>
+                <span className="cq-ai-toolemoji">{t.emoji}</span>{t.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Non-neural-net solo tools render their own panels. */}
+      {!challenge && tool === "kmeans" && <KMeansPanel />}
+      {!challenge && tool === "knn" && <KNNPanel />}
+      {!challenge && tool === "tree" && <TreePanel />}
+      {!challenge && tool === "perceptron" && <LinearClassifierPanel kind="perceptron" />}
+      {!challenge && tool === "logreg" && <LinearClassifierPanel kind="logreg" />}
+      {!challenge && tool === "markov" && <MarkovPanel />}
+      {!challenge && tool === "rl" && <RLPanel />}
+      {!challenge && tool === "genetic" && <GeneticPanel />}
+      {!challenge && tool === "arena" && <ArenaPanel />}
+
+      {(challenge || tool === "nn") && <>
       <p className="cq-eyebrow">AI Lab · {challenge ? "Challenge" : "Neural networks"}</p>
       {challenge ? (
         <>
@@ -8215,6 +8933,7 @@ function AILab({ onBack, challenge = null, onChallengeComplete = null }) {
           <button className="cq-run" onClick={ask} disabled={!question.trim() || asking}>{asking ? "…" : "Ask"}</button>
         </div>
       </div>
+      </>}
     </main>
   );
 }
@@ -8638,6 +9357,428 @@ async function askCircuitTeacher({ circuit, question, goal, signal }) {
 // from examples, and a 2-layer net learning XOR. Small enough to run live.
 const nnSigmoid = (x) => 1 / (1 + Math.exp(-x));
 // A network: { hidden: number of hidden neurons, w1, b1, w2, b2 }. 2 inputs, 1 output.
+// ============================================================
+//  AI LAB ENGINES — real algorithms, no ML library, built from scratch.
+//  Each is pure + deterministic (given a seed) so it can be tested and raced.
+// ============================================================
+
+// ---- PERCEPTRON (Rosenblatt, 1958): the original single neuron ----
+// Learns a straight dividing line for linearly-separable data. Weights update
+// only when it gets an example wrong: w += lr * (target - pred) * x. It CANNOT
+// solve XOR (not linearly separable) — which is exactly the point that motivated
+// neural nets, and something the learner can discover by racing it.
+function perceptronNew(nIn = 2) {
+  return { w: new Array(nIn).fill(0), b: 0, nIn };
+}
+function perceptronPredict(model, x) {
+  let sum = model.b;
+  for (let i = 0; i < model.nIn; i++) sum += model.w[i] * x[i];
+  return sum >= 0 ? 1 : 0;
+}
+// One pass over the data. Returns the number of misclassified examples (0 = solved).
+function perceptronStep(model, data, lr = 0.1) {
+  let wrong = 0;
+  for (const [x, target] of data) {
+    const pred = perceptronPredict(model, x);
+    const errDir = target - pred; // -1, 0, or +1
+    if (errDir !== 0) {
+      wrong++;
+      for (let i = 0; i < model.nIn; i++) model.w[i] += lr * errDir * x[i];
+      model.b += lr * errDir;
+    }
+  }
+  return wrong;
+}
+// Accuracy 0..1 on a dataset.
+function perceptronAccuracy(model, data) {
+  if (!data.length) return 0;
+  let ok = 0;
+  for (const [x, target] of data) if (perceptronPredict(model, x) === target) ok++;
+  return ok / data.length;
+}
+
+// ---- K-NEAREST NEIGHBORS: no training at all — it just remembers the data ----
+// To classify a point, look at the k closest known points and take a majority
+// vote. "Lazy learning": all the work happens at prediction time. Great contrast
+// to the perceptron/NN, which do work up front and then predict instantly.
+function knnPredict(data, x, k = 3) {
+  if (!data.length) return 0;
+  const dist = data.map(([px, label]) => {
+    let d = 0; for (let i = 0; i < x.length; i++) { const diff = x[i] - px[i]; d += diff * diff; }
+    return { d, label };
+  });
+  dist.sort((a, b) => a.d - b.d);
+  const kk = Math.max(1, Math.min(k, dist.length));
+  const votes = {};
+  for (let i = 0; i < kk; i++) { const l = dist[i].label; votes[l] = (votes[l] || 0) + 1; }
+  let best = null, bestN = -1;
+  for (const l in votes) if (votes[l] > bestN) { bestN = votes[l]; best = Number(l); }
+  return best;
+}
+function knnAccuracy(data, k = 3) {
+  if (!data.length) return 0;
+  // Leave-one-out: predict each point using the others (honest accuracy — a point
+  // is always its own nearest neighbor, so we must exclude it).
+  let ok = 0;
+  for (let i = 0; i < data.length; i++) {
+    const rest = data.filter((_, j) => j !== i);
+    if (knnPredict(rest, data[i][0], k) === data[i][1]) ok++;
+  }
+  return ok / data.length;
+}
+
+// ---- LOGISTIC REGRESSION: a perceptron with a smooth output + gradient descent ----
+// Instead of a hard 0/1 flip, it outputs a probability via the sigmoid, and nudges
+// its weights down the error gradient. Like the perceptron it draws a straight
+// line (so it also can't do XOR), but it learns more smoothly and gives confidence.
+function logregNew(nIn = 2) { return { w: new Array(nIn).fill(0), b: 0, nIn }; }
+function _sig(z) { return 1 / (1 + Math.exp(-z)); }
+function logregProb(model, x) {
+  let z = model.b; for (let i = 0; i < model.nIn; i++) z += model.w[i] * x[i];
+  return _sig(z);
+}
+function logregPredict(model, x) { return logregProb(model, x) >= 0.5 ? 1 : 0; }
+function logregStep(model, data, lr = 0.5) {
+  // batch gradient descent over the whole dataset; returns mean cross-entropy loss
+  const n = data.length; if (!n) return 0;
+  const gw = new Array(model.nIn).fill(0); let gb = 0, loss = 0;
+  for (const [x, target] of data) {
+    const p = logregProb(model, x);
+    const err = p - target;
+    for (let i = 0; i < model.nIn; i++) gw[i] += err * x[i];
+    gb += err;
+    const eps = 1e-9;
+    loss += -(target * Math.log(p + eps) + (1 - target) * Math.log(1 - p + eps));
+  }
+  for (let i = 0; i < model.nIn; i++) model.w[i] -= lr * gw[i] / n;
+  model.b -= lr * gb / n;
+  return loss / n;
+}
+function logregAccuracy(model, data) {
+  if (!data.length) return 0;
+  let ok = 0; for (const [x, t] of data) if (logregPredict(model, x) === t) ok++;
+  return ok / data.length;
+}
+
+// ---- DECISION TREE: learns by asking the best yes/no questions ----
+// Completely different from the weight-based learners: it builds a flowchart.
+// At each node it picks the feature+threshold split that best separates the
+// classes (lowest weighted Gini impurity), then recurses. The "model" is a tree
+// of questions, not numbers — which is why it's so visual and explainable.
+function _gini(rows) {
+  if (!rows.length) return 0;
+  const counts = {}; for (const [, l] of rows) counts[l] = (counts[l] || 0) + 1;
+  let imp = 1; for (const k in counts) { const p = counts[k] / rows.length; imp -= p * p; }
+  return imp;
+}
+function _majority(rows) {
+  const counts = {}; for (const [, l] of rows) counts[l] = (counts[l] || 0) + 1;
+  let best = 0, bestN = -1; for (const k in counts) if (counts[k] > bestN) { bestN = counts[k]; best = Number(k); }
+  return best;
+}
+function treeBuild(data, depth = 0, maxDepth = 6, minLeaf = 1) {
+  const rows = data;
+  const baseImp = _gini(rows);
+  // pure or too deep or too small → leaf
+  if (baseImp === 0 || depth >= maxDepth || rows.length <= minLeaf) {
+    return { leaf: true, label: _majority(rows), n: rows.length };
+  }
+  const nFeat = rows[0][0].length;
+  let best = null;
+  for (let f = 0; f < nFeat; f++) {
+    // candidate thresholds = midpoints between sorted unique values of this feature
+    const vals = [...new Set(rows.map((r) => r[0][f]))].sort((a, b) => a - b);
+    for (let i = 0; i < vals.length - 1; i++) {
+      const thr = (vals[i] + vals[i + 1]) / 2;
+      const left = rows.filter((r) => r[0][f] <= thr);
+      const right = rows.filter((r) => r[0][f] > thr);
+      if (!left.length || !right.length) continue;
+      const wImp = (left.length * _gini(left) + right.length * _gini(right)) / rows.length;
+      const gain = baseImp - wImp;
+      if (!best || gain > best.gain) best = { f, thr, gain, left, right };
+    }
+  }
+  // Take the best split as long as it genuinely partitions the data. We do NOT
+  // require positive immediate gain: XOR-like problems have a first split with
+  // zero Gini gain (each half stays 50/50), but the SECOND split then separates
+  // perfectly. Bailing on zero gain would wrongly collapse XOR to one leaf. Depth
+  // and minLeaf still bound the recursion, so this can't run away.
+  if (!best) return { leaf: true, label: _majority(rows), n: rows.length };
+  const leftNode = treeBuild(best.left, depth + 1, maxDepth, minLeaf);
+  const rightNode = treeBuild(best.right, depth + 1, maxDepth, minLeaf);
+  // If both children became identical leaves with the same label, this split was
+  // pointless — collapse it back into one leaf to keep the tree tidy.
+  if (leftNode.leaf && rightNode.leaf && leftNode.label === rightNode.label) {
+    return { leaf: true, label: leftNode.label, n: rows.length };
+  }
+  return {
+    leaf: false, feature: best.f, threshold: best.thr, gain: best.gain, n: rows.length,
+    left: leftNode, right: rightNode,
+  };
+}
+function treePredict(node, x) {
+  while (!node.leaf) node = x[node.feature] <= node.threshold ? node.left : node.right;
+  return node.label;
+}
+function treeAccuracy(node, data) {
+  if (!data.length) return 0;
+  let ok = 0; for (const [x, t] of data) if (treePredict(node, x) === t) ok++;
+  return ok / data.length;
+}
+function treeDepth(node) { return node.leaf ? 1 : 1 + Math.max(treeDepth(node.left), treeDepth(node.right)); }
+
+// ---- K-MEANS: unsupervised — no labels, it finds groups on its own ----
+// A different paradigm: instead of learning to predict a given answer, it
+// DISCOVERS structure. Place k centers, assign each point to its nearest center,
+// move each center to the mean of its points, repeat until nothing moves. Seeded
+// so it's reproducible (real randomness would make it un-testable and un-raceable).
+function _mulberry32(seed) { let a = seed >>> 0; return () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+function kmeansInit(points, k, seed = 1) {
+  const rnd = _mulberry32(seed);
+  // pick k distinct points as initial centers (k-means++ would be fancier; this
+  // is the honest classic "Forgy" init and is plenty for teaching)
+  const idx = new Set(); const n = points.length;
+  while (idx.size < Math.min(k, n)) idx.add(Math.floor(rnd() * n));
+  const centers = [...idx].map((i) => [...points[i]]);
+  return { centers, assignments: new Array(n).fill(0), k, done: false };
+}
+function _dist2(a, b) { let d = 0; for (let i = 0; i < a.length; i++) { const df = a[i] - b[i]; d += df * df; } return d; }
+// One iteration: reassign, then move centers. Returns true if anything changed.
+function kmeansStep(state, points) {
+  let changed = false;
+  // assign
+  for (let p = 0; p < points.length; p++) {
+    let best = 0, bd = Infinity;
+    for (let c = 0; c < state.centers.length; c++) { const d = _dist2(points[p], state.centers[c]); if (d < bd) { bd = d; best = c; } }
+    if (state.assignments[p] !== best) { state.assignments[p] = best; changed = true; }
+  }
+  // move
+  const dim = points[0] ? points[0].length : 2;
+  for (let c = 0; c < state.centers.length; c++) {
+    const mine = points.filter((_, i) => state.assignments[i] === c);
+    if (!mine.length) continue; // keep an empty center where it is
+    const mean = new Array(dim).fill(0);
+    for (const pt of mine) for (let d = 0; d < dim; d++) mean[d] += pt[d];
+    for (let d = 0; d < dim; d++) mean[d] /= mine.length;
+    state.centers[c] = mean;
+  }
+  state.done = !changed;
+  return changed;
+}
+// Total within-cluster distance — the quantity k-means minimizes (for the stat bar).
+function kmeansInertia(state, points) {
+  let sum = 0;
+  for (let p = 0; p < points.length; p++) sum += _dist2(points[p], state.centers[state.assignments[p]]);
+  return sum;
+}
+
+// ---- MARKOV CHAIN: learns "what word usually comes next" from text ----
+// The honest baby version of how language models work: read text, record which
+// words follow which, then generate new text by sampling from those learned
+// transitions. Order-1 = based on the last word; order-2 = last two words (more
+// coherent). Seeded so generation is reproducible for tests.
+function markovTrain(text, order = 1) {
+  const words = String(text || "").trim().split(/\s+/).filter(Boolean);
+  const table = new Map(); // key = last `order` words joined → array of next words
+  const starts = [];
+  for (let i = 0; i + order < words.length; i++) {
+    const key = words.slice(i, i + order).join(" ");
+    const next = words[i + order];
+    if (!table.has(key)) table.set(key, []);
+    table.get(key).push(next);
+    if (i === 0 || /[.!?]$/.test(words[i - 1] || "")) starts.push(key);
+  }
+  if (!starts.length && words.length >= order) starts.push(words.slice(0, order).join(" "));
+  return { table, starts, order, vocab: new Set(words).size, tokens: words.length };
+}
+function markovGenerate(model, maxWords = 30, seed = 1) {
+  if (!model.starts.length) return "";
+  const rnd = _mulberry32(seed);
+  let key = model.starts[Math.floor(rnd() * model.starts.length)];
+  const out = key.split(" ");
+  for (let n = 0; n < maxWords - model.order; n++) {
+    const nexts = model.table.get(key);
+    if (!nexts || !nexts.length) break;
+    const word = nexts[Math.floor(rnd() * nexts.length)];
+    out.push(word);
+    key = out.slice(out.length - model.order).join(" ");
+  }
+  return out.join(" ");
+}
+
+// ---- REINFORCEMENT LEARNING (Q-learning): learn by reward, not by examples ----
+// A whole different paradigm. An agent in a grid tries moves, gets a reward
+// (+ for reaching the goal, small − per step), and updates a table of "how good
+// is each action from each square" (Q-values). Over many episodes it discovers a
+// path to the goal WITHOUT ever being shown the answer — just from consequences.
+function rlNewWorld(size = 5, seed = 1) {
+  // goal in a corner, agent starts opposite. Optional walls could be added later.
+  return { size, start: [0, 0], goal: [size - 1, size - 1], walls: new Set() };
+}
+function rlNewAgent(world) {
+  // Q[state][action]; state = y*size+x, actions = 0:up 1:right 2:down 3:left
+  const Q = {}; for (let s = 0; s < world.size * world.size; s++) Q[s] = [0, 0, 0, 0];
+  return { Q, epsilon: 0.2, alpha: 0.5, gamma: 0.9 };
+}
+const _RL_MOVES = [[0, -1], [1, 0], [0, 1], [-1, 0]]; // up,right,down,left
+function _rlStep(world, [x, y], a) {
+  let nx = x + _RL_MOVES[a][0], ny = y + _RL_MOVES[a][1];
+  if (nx < 0 || ny < 0 || nx >= world.size || ny >= world.size || world.walls.has(ny * world.size + nx)) { nx = x; ny = y; }
+  const atGoal = nx === world.goal[0] && ny === world.goal[1];
+  const reward = atGoal ? 1 : -0.01;
+  return { pos: [nx, ny], reward, done: atGoal };
+}
+// Run ONE episode of learning. Returns steps taken to reach the goal (capped).
+function rlEpisode(world, agent, seed = 1, maxSteps = 200) {
+  const rnd = _mulberry32(seed);
+  let pos = [...world.start], steps = 0;
+  while (steps < maxSteps) {
+    const s = pos[1] * world.size + pos[0];
+    // epsilon-greedy: mostly exploit best action, sometimes explore
+    let a;
+    if (rnd() < agent.epsilon) a = Math.floor(rnd() * 4);
+    else { const q = agent.Q[s]; a = q.indexOf(Math.max(...q)); }
+    const { pos: np, reward, done } = _rlStep(world, pos, a);
+    const ns = np[1] * world.size + np[0];
+    // Q-learning update
+    const best = Math.max(...agent.Q[ns]);
+    agent.Q[s][a] += agent.alpha * (reward + agent.gamma * best - agent.Q[s][a]);
+    pos = np; steps++;
+    if (done) break;
+  }
+  return steps;
+}
+// Greedy path length from start following the learned policy (no exploration).
+function rlGreedyPathLength(world, agent, maxSteps = 200) {
+  let pos = [...world.start], steps = 0; const seen = new Set();
+  while (steps < maxSteps) {
+    if (pos[0] === world.goal[0] && pos[1] === world.goal[1]) return steps;
+    const s = pos[1] * world.size + pos[0];
+    const key = s + ":" + steps;
+    if (seen.has(s) && steps > world.size * world.size) return maxSteps; // stuck in a loop
+    seen.add(s);
+    const q = agent.Q[s]; const a = q.indexOf(Math.max(...q));
+    const { pos: np } = _rlStep(world, pos, a);
+    if (np[0] === pos[0] && np[1] === pos[1]) return maxSteps; // wall-stuck
+    pos = np; steps++;
+  }
+  return maxSteps;
+}
+
+// ---- GENETIC ALGORITHM: evolve a solution over generations ----
+// Inspired by natural selection. Start with random candidate solutions, score
+// each by a fitness function, keep the best, "breed" them (mix two parents) and
+// "mutate" (small random changes), repeat. Over generations the population gets
+// fitter. Classic demo: evolve a random string into a target phrase. Seeded.
+function gaEvolveString(target, opts = {}) {
+  const seed = opts.seed || 1;
+  const popSize = opts.popSize || 120;
+  const mutationRate = opts.mutationRate ?? 0.03;
+  const maxGen = opts.maxGen || 2000;
+  const rnd = _mulberry32(seed);
+  const CHARS = "abcdefghijklmnopqrstuvwxyz ";
+  const randChar = () => CHARS[Math.floor(rnd() * CHARS.length)];
+  const randStr = () => Array.from(target, randChar).join("");
+  const fitness = (s) => { let f = 0; for (let i = 0; i < target.length; i++) if (s[i] === target[i]) f++; return f; };
+  let pop = Array.from({ length: popSize }, randStr);
+  const history = [];
+  for (let gen = 0; gen < maxGen; gen++) {
+    const scored = pop.map((s) => ({ s, f: fitness(s) })).sort((a, b) => b.f - a.f);
+    const best = scored[0];
+    history.push(best.f);
+    if (best.f === target.length) return { solved: true, generations: gen, best: best.s, history };
+    // selection: keep top half as parents
+    const parents = scored.slice(0, Math.max(2, Math.floor(popSize / 2))).map((x) => x.s);
+    const next = [parents[0]]; // elitism: carry the best unchanged
+    while (next.length < popSize) {
+      const a = parents[Math.floor(rnd() * parents.length)];
+      const b = parents[Math.floor(rnd() * parents.length)];
+      const cut = Math.floor(rnd() * target.length);
+      let child = a.slice(0, cut) + b.slice(cut);
+      // mutate
+      child = Array.from(child, (c) => (rnd() < mutationRate ? randChar() : c)).join("");
+      next.push(child);
+    }
+    pop = next;
+  }
+  const finalBest = pop.map((s) => ({ s, f: fitness(s) })).sort((a, b) => b.f - a.f)[0];
+  return { solved: false, generations: maxGen, best: finalBest.s, history };
+}
+// Stepped version for the live panel: init a population, then advance one
+// generation per call so the UI can show it evolving.
+function gaInit(target, opts = {}) {
+  const rnd = _mulberry32(opts.seed || 1);
+  const CHARS = "abcdefghijklmnopqrstuvwxyz .!";
+  const popSize = opts.popSize || 150;
+  const randChar = () => CHARS[Math.floor(rnd() * CHARS.length)];
+  const pop = Array.from({ length: popSize }, () => Array.from(target, randChar).join(""));
+  return { target, pop, popSize, mutationRate: opts.mutationRate ?? 0.03, gen: 0, rnd, CHARS, randChar, solved: false, best: pop[0], bestFit: 0 };
+}
+function gaStep(state) {
+  const { target, rnd, randChar } = state;
+  const fitness = (s) => { let f = 0; for (let i = 0; i < target.length; i++) if (s[i] === target[i]) f++; return f; };
+  const scored = state.pop.map((s) => ({ s, f: fitness(s) })).sort((a, b) => b.f - a.f);
+  state.best = scored[0].s; state.bestFit = scored[0].f; state.gen++;
+  if (scored[0].f === target.length) { state.solved = true; return state; }
+  const parents = scored.slice(0, Math.max(2, Math.floor(state.popSize / 2))).map((x) => x.s);
+  const next = [parents[0]];
+  while (next.length < state.popSize) {
+    const a = parents[Math.floor(rnd() * parents.length)];
+    const b = parents[Math.floor(rnd() * parents.length)];
+    const cut = Math.floor(rnd() * target.length);
+    let child = a.slice(0, cut) + b.slice(cut);
+    child = Array.from(child, (c) => (rnd() < state.mutationRate ? randChar() : c)).join("");
+    next.push(child);
+  }
+  state.pop = next;
+  return state;
+}
+
+// ---- ARENA ADAPTERS: a uniform interface over the five classifiers ----
+// The arena races different algorithms on one dataset, so each needs the same
+// shape: make() a fresh model, step() one unit of training (returns done?),
+// acc() its accuracy, and predict() a point (for drawing decision boundaries).
+// This wraps the real engines above — no new learning logic, just a common API.
+function arenaMakeClassifiers() {
+  return [
+    {
+      id: "perceptron", label: "Perceptron", emoji: "➗", color: "#3ac9e0",
+      make: () => ({ m: perceptronNew(2), done: false }),
+      step(s, data) { const wrong = perceptronStep(s.m, data); s.done = wrong === 0; return s.done; },
+      acc: (s, data) => perceptronAccuracy(s.m, data),
+      predict: (s, x) => perceptronPredict(s.m, x),
+    },
+    {
+      id: "logreg", label: "Logistic reg.", emoji: "📈", color: "#e6b980",
+      make: () => ({ m: logregNew(2), done: false, prev: Infinity }),
+      step(s, data) { const loss = logregStep(s.m, data); if (Math.abs(s.prev - loss) < 1e-5) s.done = true; s.prev = loss; return s.done; },
+      acc: (s, data) => logregAccuracy(s.m, data),
+      predict: (s, x) => logregPredict(s.m, x),
+    },
+    {
+      id: "tree", label: "Decision tree", emoji: "🌳", color: "#7ee787",
+      make: () => ({ m: null, done: false }),
+      step(s, data) { s.m = treeBuild(data, 0, 6); s.done = true; return true; }, // trees build in one shot
+      acc: (s, data) => (s.m ? treeAccuracy(s.m, data) : 0),
+      predict: (s, x) => (s.m ? treePredict(s.m, x) : 0),
+    },
+    {
+      id: "knn", label: "K-nearest", emoji: "📍", color: "#bd54dd",
+      make: () => ({ m: null, done: false }),
+      step(s, data) { s.m = data; s.done = true; return true; }, // knn just remembers
+      acc: (s, data) => (s.m ? knnAccuracy(s.m, 3) : 0),
+      predict: (s, x) => (s.m ? knnPredict(s.m, x, 3) : 0),
+    },
+    {
+      id: "nn", label: "Neural net", emoji: "🧠", color: "#ff6ba8",
+      make: () => ({ m: nnNewNetwork(4, 2), done: false, prev: Infinity }),
+      step(s, data) { const loss = nnTrainEpoch(s.m, data); if (Math.abs(s.prev - loss) < 1e-6) s.done = true; s.prev = loss; return s.done; },
+      acc(s, data) { let ok = 0; for (const [x, t] of data) if ((nnForward(s.m, x).out >= 0.5 ? 1 : 0) === t) ok++; return data.length ? ok / data.length : 0; },
+      predict: (s, x) => (nnForward(s.m, x).out >= 0.5 ? 1 : 0),
+    },
+  ];
+}
+
 function nnNewNetwork(hidden, nIn = 2) {
   const rand = () => Math.random() * 2 - 1;
   return {
@@ -9280,6 +10421,16 @@ function mnaSolveDC(numNodes, comps) {
 }
 
 const CSS = `
+/* Page-level guard. Two jobs:
+   1) The dark background must live on html/body too — not only .cq-root — so if
+      the page ever scrolls a hair past the app container, the empty edge is dark,
+      never a flash of white.
+   2) Clip horizontal overflow at the true scroll root (html/body, NOT .cq-root,
+      which is the sticky header's ancestor — clipping there breaks sticky on
+      Safari). Vertical scroll is untouched, so the page still scrolls down and
+      pull-to-refresh still works. */
+html{background:#070a12}
+html,body{margin:0;max-width:100%;min-height:100%;overflow-x:hidden;background:#070a12;overscroll-behavior:none}
 .cq-circ-palette{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:14px 0 16px}
 .cq-circ-plabel{font-size:13px;color:var(--ink-soft);font-weight:600;margin-right:2px}
 .cq-circ-pbtn{background:var(--bg-2);border:1px solid var(--line);border-radius:8px;color:var(--ink-soft);font-family:var(--mono);font-size:12px;font-weight:600;padding:7px 10px;cursor:pointer}
@@ -9324,11 +10475,66 @@ const CSS = `
 .cq-ai-lbl{font-size:13px;font-weight:600;color:var(--ink-soft)}
 .cq-ai-chips{display:flex;gap:6px;flex-wrap:wrap}
 .cq-ai-chip{background:var(--bg-1);border:1px solid var(--line);border-radius:8px;color:var(--ink-soft);font-size:13px;font-weight:600;padding:7px 12px;cursor:pointer;font-family:inherit}
+/* --- multi-tool AI lab: tool selector + solo panels (v112+) --- */
+.cq-ai-toolbar{margin:14px 0 20px}
+.cq-ai-tools{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.cq-ai-toolbtn{display:flex;align-items:center;gap:7px;background:var(--bg-1);border:1px solid var(--line);border-radius:11px;color:var(--ink-soft);font-size:14px;font-weight:600;padding:9px 14px;cursor:pointer;font-family:inherit;transition:background var(--hover-ease),color var(--hover-ease),border-color var(--hover-ease),transform var(--hover-ease)}
+.cq-ai-toolbtn:hover{background:var(--bg-2);color:var(--ink);transform:translateY(-1px)}
+.cq-ai-toolbtn.active{background:var(--bg-0);color:var(--ink);border-color:var(--neon-deep);box-shadow:0 0 0 1px var(--neon-deep)}
+.cq-ai-toolemoji{font-size:17px}
+.cq-ai-controls{display:flex;flex-wrap:wrap;align-items:center;gap:14px;margin:8px 0 14px}
+.cq-ai-ctl{display:flex;align-items:center;gap:9px;font-size:14px;color:var(--ink-soft)}
+.cq-ai-ctl input[type=range]{accent-color:var(--neon);vertical-align:middle}
+.cq-ai-actions{display:flex;flex-wrap:wrap;gap:10px;margin:4px 0 16px}
+.cq-ai-stats{display:flex;flex-wrap:wrap;gap:10px;margin:6px 0 12px}
+.cq-ai-stat{flex:1;min-width:120px;background:var(--bg-1);border:1px solid var(--line);border-radius:12px;padding:11px 14px;display:flex;flex-direction:column;gap:3px}
+.cq-ai-statlbl{font-size:12px;color:var(--ink-faint);text-transform:uppercase;letter-spacing:.5px}
+.cq-ai-statval{font-size:20px;font-weight:700;color:var(--ink);font-family:var(--mono)}
+.cq-ai-fieldlbl{display:block;font-size:13px;color:var(--ink-soft);margin:6px 0}
+.cq-ai-textarea{width:100%;box-sizing:border-box;background:var(--bg-0);color:var(--ink);border:1px solid var(--line);border-radius:12px;padding:12px 14px;font-family:inherit;font-size:14px;line-height:1.5;resize:vertical;min-height:90px}
+.cq-ai-textarea:focus{outline:none;border-color:var(--neon-deep)}
+.cq-ai-output{background:var(--bg-1);border:1px solid var(--neon-deep);border-radius:12px;padding:14px 16px;margin:12px 0}
+.cq-ai-outlbl{font-size:12px;color:var(--ink-faint);text-transform:uppercase;letter-spacing:.5px}
+.cq-ai-outtext{margin:6px 0 0;font-size:15px;line-height:1.6;color:var(--ink);overflow-wrap:anywhere;word-break:break-word}
+/* --- arena: leaderboard + boundary viewer --- */
+.cq-arena-boundhead{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:8px;font-size:13px;color:var(--ink-soft)}
+.cq-arena-tabs{display:flex;gap:6px;flex-wrap:wrap}
+.cq-arena-tab{background:var(--bg-2);border:1.5px solid var(--line);border-radius:8px;padding:4px 9px;font-size:15px;cursor:pointer;line-height:1;transition:background var(--hover-ease),border-color var(--hover-ease),transform var(--hover-ease)}
+.cq-arena-tab:hover{background:var(--bg-0);transform:translateY(-1px)}
+.cq-arena-tab.active{background:var(--bg-0)}
+.cq-arena-board{display:flex;flex-direction:column;gap:5px;margin:6px 0 12px}
+.cq-arena-row{display:grid;grid-template-columns:26px 1fr 78px 46px 52px;align-items:center;gap:6px;background:var(--bg-1);border:1px solid var(--line);border-radius:9px;padding:8px 10px;font-size:13px;color:var(--ink)}
+.cq-arena-hdr{background:transparent;border:none;padding:2px 10px;font-size:11px;color:var(--ink-faint);text-transform:uppercase;letter-spacing:.5px}
+.cq-arena-rank{font-family:var(--mono);font-weight:700;color:var(--ink-soft)}
+.cq-arena-name{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.cq-arena-flag{color:#7ee787}
+.cq-arena-acc{position:relative;font-family:var(--mono);font-size:12px;display:flex;align-items:center;min-width:0;z-index:1}
+.cq-arena-bar{position:absolute;left:0;top:50%;transform:translateY(-50%);height:16px;border-radius:4px;opacity:.28;z-index:0}
+@media(max-width:560px){
+  .cq-arena-row{grid-template-columns:20px 1fr 56px 44px;gap:5px;padding:8px 7px;font-size:12px}
+  .cq-arena-steps{display:none}
+  .cq-arena-name{font-size:12px}
+  .cq-arena-boundhead{font-size:12px}
+  /* stat cards: 3 equal columns that shrink together, never a lonely stretched 2+1 */
+  .cq-ai-stats{gap:7px}
+  .cq-ai-stat{min-width:0;flex:1 1 0;padding:9px 8px}
+  .cq-ai-statlbl{font-size:10px;letter-spacing:.3px}
+  .cq-ai-statval{font-size:16px}
+  /* tool selector: smaller buttons so the picker isn't a giant block */
+  .cq-ai-toolbtn{font-size:12.5px;padding:7px 10px;gap:5px}
+  .cq-ai-toolemoji{font-size:15px}
+  /* controls: tighter gaps so slider + buttons wrap cleanly */
+  .cq-ai-controls{gap:10px}
+  .cq-ai-ctl{font-size:13px;gap:7px}
+  /* genetic evolving text: shrink so up to 40 mono chars wrap instead of overflowing */
+  .cq-ai-geneticout{font-size:16px !important;letter-spacing:0 !important}
+  .cq-home-title{font-size:22px}
+}
 .cq-ai-chip.active{background:var(--violet-ghost);border-color:rgba(155,140,255,.5);color:#cfc6ff}
 .cq-ai-chip:disabled{opacity:.4;cursor:not-allowed}
 .cq-ai-hint{font-size:13.5px;color:var(--amber);margin:4px 0 12px;line-height:1.5}
 .cq-ai-diagram{background:var(--bg-1);border:1px solid var(--line);border-radius:14px;padding:10px;margin-bottom:12px}
-.cq-ai-svg{width:100%;height:180px;display:block}
+.cq-ai-svg{width:100%;height:auto;display:block}
 .cq-ai-node{stroke:var(--line);stroke-width:1.5}
 .cq-ai-node.input{fill:var(--bg-3)}
 .cq-ai-node.hidden{fill:var(--violet-ghost)}
@@ -10023,9 +11229,13 @@ const CSS = `
 @media(prefers-reduced-motion:reduce){.cq-root *{animation:none!important;transition:none!important}}
 @media(max-width:640px){
   .cq-main{padding:24px 16px 60px;max-width:100%}
-  .cq-card2{padding:22px}
+  .cq-card2{padding:22px 16px}
   .cq-h1{font-size:21px}.cq-home-title{font-size:28px}
-  .cq-piece,.cq-banktok{font-size:15px}
+  /* The tap-pieces box used desktop padding (26px) on phones, squeezing the
+     pieces so 6 tokens wrapped 5+lonely-1 with big empty space. Slim the box
+     padding and the piece padding so they fit in fewer, fuller rows. */
+  .cq-codeline{padding:16px 12px;gap:6px}
+  .cq-piece,.cq-banktok{font-size:15px;padding:8px 11px}
   .cq-navlabel{display:none}
   .cq-classhero{padding:20px}
   /* Header was using desktop padding/gaps (20px 40px, gap 48px) with no mobile
