@@ -7,7 +7,7 @@ import { supabase } from "./lib/supabase";
 // Build marker — check this in the browser console to confirm which version is
 // actually running: type  window.__CQ_VERSION  in DevTools. If it's not the
 // value below, your browser/Vercel is serving an older bundle.
-const CQ_VERSION = "2026-07-12-v148-asm-basic-output";
+const CQ_VERSION = "2026-07-12-v149-bash-scripting";
 
 // Only this account (by Supabase user id) can read submitted feedback. Gating by
 // id, not email, so it survives email changes / adding Google login later.
@@ -1979,17 +1979,17 @@ async function validateLesson(L, classId) {
 // runs it to see what it does. These run the WHOLE program and capture real
 // output + real errors. Python runs via Pyodide, JS runs natively in a worker-ish
 // sandbox, and markup (html/css/jsx/vue/svelte) renders live via the iframe.
-const PROJECT_LANGS = ["py", "js", "ts", "java", "lua", "basic", "asm", "php", "c", "cpp", "sql", "scheme", "p5", "html", "css", "jsx", "vue", "svelte"];
-const PROJECT_LANG_LABEL = { py: "Python", js: "JavaScript", ts: "TypeScript", java: "Java", lua: "Lua", basic: "BASIC", asm: "Assembly", php: "PHP", c: "C", cpp: "C++", sql: "SQL", scheme: "Scheme", p5: "p5 (drawing)", html: "HTML", css: "CSS", jsx: "React (JSX)", vue: "Vue", svelte: "Svelte" };
+const PROJECT_LANGS = ["py", "js", "ts", "java", "lua", "basic", "asm", "bash", "php", "c", "cpp", "sql", "scheme", "p5", "html", "css", "jsx", "vue", "svelte"];
+const PROJECT_LANG_LABEL = { py: "Python", js: "JavaScript", ts: "TypeScript", java: "Java", lua: "Lua", basic: "BASIC", asm: "Assembly", bash: "Bash", php: "PHP", c: "C", cpp: "C++", sql: "SQL", scheme: "Scheme", p5: "p5 (drawing)", html: "HTML", css: "CSS", jsx: "React (JSX)", vue: "Vue", svelte: "Svelte" };
 function projectLangMode(lang) {
-  if (lang === "py" || lang === "js" || lang === "ts" || lang === "lua" || lang === "basic" || lang === "asm" || lang === "php" || lang === "c" || lang === "cpp" || lang === "scheme") return "run"; // text output
+  if (lang === "py" || lang === "js" || lang === "ts" || lang === "lua" || lang === "basic" || lang === "asm" || lang === "bash" || lang === "php" || lang === "c" || lang === "cpp" || lang === "scheme") return "run"; // text output
   if (lang === "sql") return "sql";     // table output
   if (lang === "java") return "java";   // real JVM in the browser (CheerpJ)
   return "markup";                       // live preview in iframe (incl. p5)
 }
 // The default file name for a language — used when a project starts, and as the
 // basis for imports (e.g. a Python file "helpers.py" is imported as "helpers").
-const PROJECT_FILE_EXT = { py: "py", js: "js", ts: "ts", java: "java", lua: "lua", basic: "bas", asm: "asm", php: "php", c: "c", cpp: "cpp", sql: "sql", scheme: "scm", p5: "js", html: "html", css: "css", jsx: "jsx", vue: "vue", svelte: "svelte" };
+const PROJECT_FILE_EXT = { py: "py", js: "js", ts: "ts", java: "java", lua: "lua", basic: "bas", asm: "asm", bash: "sh", php: "php", c: "c", cpp: "cpp", sql: "sql", scheme: "scm", p5: "js", html: "html", css: "css", jsx: "jsx", vue: "vue", svelte: "svelte" };
 function defaultFileName(lang, base) {
   const ext = PROJECT_FILE_EXT[lang] || "txt";
   if (lang === "java") return (base || "Main") + ".java"; // Java file must match class
@@ -2018,7 +2018,7 @@ const MAIN_LANGS = ["py", "js", "ts", "java", "lua", "php", "c", "cpp"];
 // Languages that may be ADDED as extra files. SQL is allowed here (the JS+SQL
 // second file). BASIC/ASM stay out entirely — no multi-file at all.
 const ADDABLE_LANGS = ["py", "js", "ts", "java", "lua", "php", "c", "cpp", "h", "hpp", "sql"];
-const MANUAL_BLOCKED_LANGS = ["basic", "asm", "scheme"]; // single-file only, never in a manual multi-file project
+const MANUAL_BLOCKED_LANGS = ["basic", "asm", "bash", "scheme"]; // single-file only, never in a manual multi-file project
 
 // One-click starting points. Each is just a list of file names — all created
 // EMPTY, exactly like assembling them by hand. Only combinations that genuinely
@@ -2712,6 +2712,635 @@ function runProjectAssembly(code) {
   catch (e) { return { ok: false, output: "", error: String(e && e.message ? e.message : e) }; }
 }
 
+// ===== Bash-CORE: from-scratch interpreter for real shell SCRIPTING logic =====
+// From-scratch bash-CORE interpreter: real shell SCRIPTING logic, executed for real.
+// Scope (honest boundary): variables, quoting, echo, arithmetic $(( )) / (( )),
+// let, test / [ ], if/elif/else/fi, for-in and C-style for, while, until,
+// case/esac, functions, $?, comparisons. NO external commands, pipes, redirection,
+// or file access — those aren't run here (stated in the UI).
+function runBashCore(source) {
+  const MAX_STEPS = 200000;
+  let steps = 0;
+  const out = [];
+  const vars = Object.create(null);
+  vars["?"] = "0";
+  const funcs = Object.create(null);
+  const tick = () => { if (++steps > MAX_STEPS) throw new Error("Program ran too long (possible infinite loop)."); };
+
+  // ---------- expansion ----------
+  function expand(str) {
+    let res = "", i = 0;
+    while (i < str.length) {
+      const c = str[i];
+      if (c === "$" && str[i+1] === "(" && str[i+2] === "(") {
+        let inner = "", depth = 0, j = i + 2;
+        while (j < str.length) {
+          const ch = str[j];
+          if (ch === "(") { depth++; if (depth > 1) inner += ch; j++; continue; }
+          if (ch === ")") { depth--; if (depth === 0) { j++; break; } inner += ch; j++; continue; }
+          inner += ch; j++;
+        }
+        // consume the trailing ')' of the $(( )) pair if present
+        if (str[j] === ")") j++;
+        res += String(arith(inner)); i = j; continue;
+      }
+      if (c === "$" && str[i+1] === "{") {
+        let j = i + 2, name = "";
+        while (j < str.length && str[j] !== "}") { name += str[j]; j++; }
+        j++; // skip }
+        res += expandBrace(name); i = j; continue;
+      }
+      if (c === "$" && str[i+1] === "?") { res += (vars["?"] ?? "0"); i += 2; continue; }
+      if (c === "$" && /[A-Za-z_]/.test(str[i+1] || "")) {
+        let j = i + 1, name = "";
+        while (j < str.length && /[A-Za-z0-9_]/.test(str[j])) { name += str[j]; j++; }
+        res += (vars[name] ?? ""); i = j; continue;
+      }
+      res += c; i++;
+    }
+    return res;
+  }
+  function expandBrace(name) {
+    if (name[0] === "#") return String((vars[name.slice(1)] ?? "").length);
+    if (name.includes(":-")) { const [n,d] = name.split(":-"); return (vars[n] != null && vars[n] !== "") ? vars[n] : d; }
+    if (name.includes(":=")) { const [n,d] = name.split(":="); if (vars[n] == null || vars[n] === "") vars[n] = d; return vars[n]; }
+    return vars[name] ?? "";
+  }
+
+  // ---------- arithmetic ----------
+  // Evaluate an arithmetic statement that may assign: i=1, i++, i+=2, i*=3
+  function arithAssign(stmt) {
+    stmt = stmt.trim();
+    if (stmt === "") return 0;
+    let m;
+    if ((m = stmt.match(/^([A-Za-z_]\w*)\+\+$/))) { const v = arith(m[1]) + 1; vars[m[1]] = String(v); return v; }
+    if ((m = stmt.match(/^([A-Za-z_]\w*)--$/))) { const v = arith(m[1]) - 1; vars[m[1]] = String(v); return v; }
+    if ((m = stmt.match(/^([A-Za-z_]\w*)\s*([+\-*/%])=\s*(.+)$/))) { const v = arith(m[1] + m[2] + "(" + m[3] + ")"); vars[m[1]] = String(v); return v; }
+    if ((m = stmt.match(/^([A-Za-z_]\w*)\s*=\s*(.+)$/))) { const v = arith(m[2]); vars[m[1]] = String(v); return v; }
+    return arith(stmt);
+  }
+
+  function arith(expr) {
+    const e = String(expr).replace(/[A-Za-z_]\w*/g, (m) => {
+      const n = parseInt(vars[m], 10); return Number.isFinite(n) ? String(n) : "0";
+    });
+    if (!/^[\s\d+\-*/%()<>=!&|^~.?:]*$/.test(e)) throw new Error("Bad arithmetic: " + expr);
+    let val;
+    try { val = Function('"use strict";return (' + (e.trim() === "" ? "0" : e) + ")")(); }
+    catch { throw new Error("Bad arithmetic: " + expr); }
+    if (typeof val === "boolean") val = val ? 1 : 0;
+    return Math.trunc(Number(val) || 0);
+  }
+
+  // ---------- tokenize one command line (quote-aware) ----------
+  function tokenize(line) {
+    const toks = []; let i = 0, cur = "", has = false;
+    while (i < line.length) {
+      const c = line[i];
+      if (c === "'") { let j = i+1, s = ""; while (j < line.length && line[j] !== "'") { s += line[j]; j++; } if (j >= line.length) throw new Error("Unclosed quote."); cur += s; has = true; i = j+1; continue; }
+      if (c === '"') {
+        let j = i+1, s = "";
+        while (j < line.length && line[j] !== '"') {
+          if (line[j] === "\\" && (line[j+1] === '"' || line[j+1] === "\\" || line[j+1] === "$")) { s += line[j+1]; j += 2; continue; }
+          s += line[j]; j++;
+        }
+        if (j >= line.length) throw new Error("Unclosed quote.");
+        cur += expand(s); has = true; i = j+1; continue;
+      }
+      if (c === "#" && !has && cur === "") break;
+      // $(( ... )) may contain spaces — consume and evaluate as one unit.
+      // After "$((", read until the matching "))". Inner parens nest normally.
+      if (c === "$" && line[i+1] === "(" && line[i+2] === "(") {
+        let j = i + 3, depth = 1, inner = "";
+        while (j < line.length && depth > 0) {
+          if (line[j] === "(") { depth++; inner += line[j]; j++; continue; }
+          if (line[j] === ")") {
+            // a ")" that closes the arithmetic: if next char is also ")" and depth===1, this is the closing "))"
+            if (depth === 1 && line[j+1] === ")") { j += 2; depth = 0; break; }
+            depth--; inner += line[j]; j++; continue;
+          }
+          inner += line[j]; j++;
+        }
+        cur += String(arith(inner)); has = true; i = j; continue;
+      }
+      if (c === " " || c === "\t") { if (has) { toks.push(cur); cur = ""; has = false; } i++; continue; }
+      if (c === "\\" && i+1 < line.length) { cur += expand(line[i+1]); has = true; i += 2; continue; }
+      // unquoted char: gather a run then expand
+      let j = i, run = "";
+      while (j < line.length && line[j] !== " " && line[j] !== "\t" && line[j] !== "'" && line[j] !== '"') { run += line[j]; j++; }
+      cur += expand(run); has = true; i = j;
+    }
+    if (has) toks.push(cur);
+    return toks;
+  }
+
+  // ---------- split into lines, honoring line-continuation and ; ----------
+  function preprocess(src) {
+    const joined = src.replace(/\\\n/g, " ");
+    const rawLines = joined.split("\n");
+    const lines = [];
+    for (let ln of rawLines) {
+      // Split each physical line on top-level ';' into logical pieces, so that
+      // "for i in 1 2 3; do", "if [ ... ]; then", "x=1; echo $x", "cmd ;;" all
+      // become separate lines the block scanners can see uniformly.
+      const pieces = splitTopLevel(ln, ";");
+      // splitTopLevel drops the ';' — but we need to preserve ';;' (case terminator).
+      // Detect ';;' first and re-mark it.
+      let rebuilt = [];
+      let i = 0;
+      while (i < pieces.length) {
+        // an empty piece between two ';' means the original had ';;'
+        if (pieces[i].trim() === "" && i > 0 && i < pieces.length) {
+          // attach ';;' to previous
+          if (rebuilt.length) rebuilt[rebuilt.length - 1] = rebuilt[rebuilt.length - 1] + " ;;";
+          i++; continue;
+        }
+        rebuilt.push(pieces[i]);
+        i++;
+      }
+      for (const p of rebuilt) {
+        let t = p.trim();
+        // Break a leading block keyword off an inline command:
+        // "do echo $i" → "do" + "echo $i";  "then echo x" → "then" + "echo x"
+        const kwm = t.match(/^(do|then|else)\s+(.+)$/);
+        if (kwm) { lines.push(kwm[1]); lines.push(kwm[2]); continue; }
+        if (t !== "" || rebuilt.length === 1) lines.push(t);
+      }
+      if (rebuilt.length === 0) lines.push("");
+    }
+    return lines;
+  }
+
+  // find matching terminator for block keywords
+  function runProgram(src) {
+    const lines = preprocess(src);
+    execLines(lines, 0, lines.length);
+    return out.join("\n");
+  }
+
+  // Execute lines[start..end). Returns when it hits `end`.
+  function execLines(lines, start, end) {
+    currentLines = lines;
+    let pc = start;
+    while (pc < end) {
+      tick();
+      let line = lines[pc].trim();
+      if (line === "" || line.startsWith("#")) { pc++; continue; }
+
+      // function definition:  name() { ... }  or  function name { ... }
+      // (preprocess may have split a one-liner "f() { cmd; }" into "f() { cmd" + "}")
+      let fnMatch = line.match(/^(?:function\s+)?([A-Za-z_]\w*)\s*\(\s*\)\s*(\{.*)?$/) || line.match(/^function\s+([A-Za-z_]\w*)\s*(\{.*)?$/);
+      if (fnMatch) {
+        const name = fnMatch[1];
+        const afterBrace = (fnMatch[2] || "").replace(/^\{/, "").trim();
+        // find the body: it opens either here (if '{' present) or on the next line
+        let braceLine = pc;
+        if (!/\{/.test(line)) {
+          // next non-empty line should be '{'
+          let n = pc + 1;
+          while (n < end && lines[n].trim() === "") n++;
+          if (n < end && lines[n].trim().startsWith("{")) braceLine = n; else braceLine = -1;
+        }
+        if (braceLine >= 0) {
+          // collect body lines until the matching '}'
+          const bodyLines = [];
+          if (afterBrace && afterBrace !== "}") bodyLines.push(afterBrace);
+          let n = braceLine + (braceLine === pc ? 1 : 1);
+          if (braceLine !== pc) {
+            // the brace was on its own line; content starts after it (or inline after {)
+            const bl = lines[braceLine].trim().replace(/^\{/, "").trim();
+            if (bl && bl !== "}") bodyLines.push(bl);
+          }
+          let depth = 1, i2 = n, closed = -1;
+          while (i2 < end) {
+            const t = lines[i2].trim();
+            if (t === "}" || t.endsWith("}")) {
+              const pre = t.replace(/\}\s*$/, "").trim();
+              if (pre) bodyLines.push(pre);
+              closed = i2; break;
+            }
+            bodyLines.push(t);
+            i2++;
+          }
+          if (closed >= 0) {
+            funcs[name] = { bodyLines };
+            pc = closed + 1; continue;
+          }
+        }
+      }
+
+      // if
+      if (line === "if" || line.startsWith("if ") || line.startsWith("if\t")) {
+        pc = execIf(lines, pc, end); continue;
+      }
+      // for
+      if (line === "for" || line.startsWith("for ")) { pc = execFor(lines, pc, end); continue; }
+      // while / until
+      if (line.startsWith("while ") || line === "while") { pc = execWhile(lines, pc, end, false); continue; }
+      if (line.startsWith("until ") || line === "until") { pc = execWhile(lines, pc, end, true); continue; }
+      // case
+      if (line.startsWith("case ") ) { pc = execCase(lines, pc, end); continue; }
+
+      // simple command (may contain inline ; for e.g. multiple)
+      runSimpleLine(line);
+      pc++;
+    }
+  }
+
+  // Handle a line that might have several ;-separated simple commands (not blocks)
+  function runSimpleLine(line) {
+    const parts = splitTopLevel(line, ";");
+    for (const p of parts) { const t = p.trim(); if (t) runCommand(t); }
+  }
+
+  function splitTopLevel(line, sep) {
+    const res = []; let cur = "", inS = false, inD = false, paren = 0;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (c === "'" && !inD) inS = !inS;
+      else if (c === '"' && !inS) inD = !inD;
+      else if (c === "(" && !inS && !inD) paren++;
+      else if (c === ")" && !inS && !inD && paren > 0) paren--;
+      if (c === sep && !inS && !inD && paren === 0) { res.push(cur); cur = ""; continue; }
+      cur += c;
+    }
+    res.push(cur); return res;
+  }
+
+  // Execute a single simple command string; sets $?
+  // True if `op` appears outside quotes and outside $(( )) arithmetic.
+  function hasTopLevelOp(line, op) {
+    let inS = false, inD = false, arithDepth = 0;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (c === "'" && !inD) { inS = !inS; continue; }
+      if (c === '"' && !inS) { inD = !inD; continue; }
+      if (inS || inD) continue;
+      if (c === "$" && line[i+1] === "(" && line[i+2] === "(") { arithDepth++; i += 2; continue; }
+      if (arithDepth > 0) {
+        if (c === ")" && line[i+1] === ")") { arithDepth--; i++; }
+        continue;
+      }
+      // for '<' and '>', ignore the arithmetic comparisons already handled above;
+      // a bare > or < at top level is redirection.
+      if (c === op) return true;
+    }
+    return false;
+  }
+
+  function runCommand(cmdRaw) {
+    tick();
+    let cmd = cmdRaw.trim();
+    if (cmd === "" || cmd.startsWith("#")) return 0;
+
+    // Honesty boundary: this teaching shell runs scripting logic, NOT external
+    // programs, pipes, or file redirection. Detect those and say so clearly rather
+    // than silently mis-treating them (e.g. "echo hi | wc" must not print "hi | wc").
+    if (hasTopLevelOp(cmd, "|")) throw new Error("pipes ( | ) aren't run in this teaching shell — it runs bash scripting logic (variables, loops, conditionals, arithmetic, echo), not external commands or pipes.");
+    if (hasTopLevelOp(cmd, ">") || hasTopLevelOp(cmd, "<")) throw new Error("file redirection ( > < ) isn't run in this teaching shell — there's no filesystem here. It runs bash scripting logic, not file commands.");
+    if (/`/.test(cmd) || /\$\([^(]/.test(cmd)) throw new Error("command substitution ( \\`...\\` or $(...) ) isn't run here — this shell runs scripting logic, not external commands.");
+
+    // (( arithmetic ))
+    if (cmd.startsWith("((") && cmd.endsWith("))")) {
+      const v = arith(cmd.slice(2, -2)); vars["?"] = v !== 0 ? "0" : "1"; return v !== 0 ? 0 : 1;
+    }
+    // [ ... ] test
+    if (cmd.startsWith("[ ") && cmd.endsWith(" ]")) {
+      const inner = cmd.slice(2, -2);
+      const args = tokenize(inner);
+      const ok = testExpr(args); vars["?"] = ok ? "0" : "1"; return ok ? 0 : 1;
+    }
+    // assignment: NAME=value (no spaces around =)
+    const assign = cmd.match(/^([A-Za-z_]\w*)=(.*)$/);
+    if (assign && !/\s/.test(cmd.split("=")[0])) {
+      const name = assign[1];
+      const valToks = tokenize(assign[2]);
+      vars[name] = valToks.length ? valToks.join(" ") : "";
+      vars["?"] = "0"; return 0;
+    }
+
+    const toks = tokenize(cmd);
+    if (toks.length === 0) return 0;
+    const c0 = toks[0];
+
+    if (c0 === "echo") { doEcho(toks.slice(1)); vars["?"] = "0"; return 0; }
+    if (c0 === "printf") { doPrintf(toks.slice(1)); vars["?"] = "0"; return 0; }
+    if (c0 === "let") {
+      let last = 0;
+      for (const a of toks.slice(1)) {
+        const am = a.match(/^([A-Za-z_]\w*)=(.*)$/);
+        if (am) { const v = arith(am[2]); vars[am[1]] = String(v); last = v; }
+        else last = arith(a);
+      }
+      vars["?"] = "0"; return 0;
+    }
+    if (c0 === "test") { const ok = testExpr(toks.slice(1)); vars["?"] = ok ? "0" : "1"; return ok ? 0 : 1; }
+    if (c0 === "true") { vars["?"] = "0"; return 0; }
+    if (c0 === "false") { vars["?"] = "1"; return 1; }
+    if (c0 === ":") { vars["?"] = "0"; return 0; }
+    if (c0 === "export") {
+      for (const a of toks.slice(1)) { const m = a.match(/^([A-Za-z_]\w*)=(.*)$/); if (m) vars[m[1]] = m[2]; }
+      vars["?"] = "0"; return 0;
+    }
+    if (c0 === "unset") { for (const a of toks.slice(1)) delete vars[a]; vars["?"] = "0"; return 0; }
+    if (c0 === "read") {
+      // no stdin in this teaching subset; set named vars to empty
+      for (const a of toks.slice(1)) if (/^[A-Za-z_]\w*$/.test(a)) vars[a] = "";
+      vars["?"] = "0"; return 0;
+    }
+    if (c0 === "exit") { throw { __exit: parseInt(toks[1] || vars["?"] || "0", 10) || 0 }; }
+
+    // user function call
+    if (funcs[c0]) {
+      const f = funcs[c0];
+      const savedLines = currentLines;
+      execLines(f.bodyLines, 0, f.bodyLines.length);
+      currentLines = savedLines;
+      return parseInt(vars["?"] || "0", 10) || 0;
+    }
+
+    // unknown command → honest error, non-zero exit (we do NOT pretend to run it)
+    vars["?"] = "127";
+    throw new Error("command not found: " + c0 + " (this teaching shell runs bash scripting logic — variables, loops, conditionals, arithmetic, echo — but not external programs, pipes, or file commands)");
+  }
+
+  function doEcho(args) {
+    let newline = true, interpret = false;
+    let i = 0;
+    while (i < args.length && (args[i] === "-n" || args[i] === "-e" || args[i] === "-E" || args[i] === "-ne" || args[i] === "-en")) {
+      if (args[i].includes("n")) newline = false;
+      if (args[i].includes("e")) interpret = true;
+      i++;
+    }
+    let text = args.slice(i).join(" ");
+    if (interpret) text = text.replace(/\\n/g, "\n").replace(/\\t/g, "\t").replace(/\\\\/g, "\\");
+    // push line(s): split embedded newlines so out.join("\n") stays correct
+    pushText(text + (newline ? "\n" : ""));
+  }
+  function doPrintf(args) {
+    if (args.length === 0) return;
+    let fmt = args[0].replace(/\\n/g, "\n").replace(/\\t/g, "\t");
+    const rest = args.slice(1);
+    let ri = 0;
+    const s = fmt.replace(/%[sd]/g, () => (ri < rest.length ? rest[ri++] : ""));
+    pushText(s);
+  }
+  // out[] is line-buffered: maintain a pending current line
+  let pending = "";
+  function pushText(t) {
+    const combined = pending + t;
+    const segs = combined.split("\n");
+    pending = segs.pop(); // last (possibly empty) stays pending
+    for (const s of segs) out.push(s);
+  }
+  function flush() { if (pending !== "") { out.push(pending); pending = ""; } }
+
+  function testExpr(args) {
+    if (args.length === 0) return false;
+    if (args[0] === "!") return !testExpr(args.slice(1));
+    if (args.length === 1) return args[0] !== "";
+    if (args.length === 2) { const [op,a] = args; if (op === "-z") return a === ""; if (op === "-n") return a !== ""; return false; }
+    if (args.length === 3) {
+      const [a,op,b] = args; const na = parseInt(a,10), nb = parseInt(b,10);
+      switch (op) {
+        case "=": case "==": return a === b;
+        case "!=": return a !== b;
+        case "-eq": return na === nb; case "-ne": return na !== nb;
+        case "-lt": return na < nb; case "-le": return na <= nb;
+        case "-gt": return na > nb; case "-ge": return na >= nb;
+        case "<": return a < b; case ">": return a > b;
+        default: return false;
+      }
+    }
+    return false;
+  }
+
+  // ---------- block helpers ----------
+  function findClose(lines, from, openKw, closeKw) {
+    let depth = 1;
+    for (let i = from; i < lines.length; i++) {
+      const t = lines[i].trim();
+      if (t === openKw || t.endsWith(" " + openKw) || t === "{") { if (openKw === "{" && (t === "{" )) depth++; }
+      if (openKw === "{") { if (t.endsWith("{")) depth++; if (t === "}" || t.endsWith("}")) { depth--; if (depth === 0) return i; } }
+    }
+    throw new Error("Missing closing " + closeKw);
+  }
+
+  // Find the matching terminator for a block starting at `start`. Tracks nesting
+  // across all block types (for/while/until→done, if→fi, case→esac) so a nested
+  // block of a different type doesn't corrupt the depth count.
+  const OPENERS = ["for", "while", "until", "if", "case"];
+  function matchBlock(lines, start, end, opener, closer, midKws) {
+    let depth = 0;
+    for (let i = start; i < end; i++) {
+      const t = lines[i].trim();
+      const first = t.split(/\s/)[0];
+      if (OPENERS.includes(first)) depth++;
+      if (first === "done" || first === "fi" || first === "esac") {
+        depth--; if (depth === 0) return i;
+      }
+    }
+    return -1;
+  }
+
+  let currentLines = [];
+
+  function execIf(lines, pc, end) {
+    currentLines = lines;
+    const fiIdx = matchBlock(lines, pc, end, ["if"], "fi", []);
+    if (fiIdx < 0) throw new Error("Missing fi");
+    // Walk the if-block at depth 1, collecting (condLines -> body) branches split
+    // by then / elif / else / fi. Nested blocks are skipped via depth tracking.
+    const branches = []; // {condLines:[], bodyStart, bodyEnd}
+    let elseStart = -1, elseEnd = fiIdx;
+    let depth = 0;
+    let mode = "cond";           // "cond" collecting condition, "body" collecting body
+    let curCond = [], curBodyStart = -1;
+    let i = pc;
+    const firstWord = (s) => s.trim().split(/\s/)[0];
+    while (i <= fiIdx) {
+      const t = lines[i].trim();
+      const fw = firstWord(t);
+      if (i === pc) {
+        // "if" or "if <cond>"
+        depth = 1;
+        const rest = t.replace(/^if\b/, "").trim();
+        if (rest) curCond.push(rest);
+        mode = "cond"; i++; continue;
+      }
+      if (depth === 1 && fw === "then" && mode === "cond") {
+        const inline = t.replace(/^then\b/, "").trim();
+        curBodyStart = i + 1;
+        if (inline) { /* inline body handled as its own line by preprocess normally */ }
+        mode = "body"; i++; continue;
+      }
+      if (depth === 1 && fw === "elif" && mode === "body") {
+        branches.push({ condLines: curCond, bodyStart: curBodyStart, bodyEnd: i });
+        curCond = []; const rest = t.replace(/^elif\b/, "").trim(); if (rest) curCond.push(rest);
+        mode = "cond"; i++; continue;
+      }
+      if (depth === 1 && fw === "else" && mode === "body") {
+        branches.push({ condLines: curCond, bodyStart: curBodyStart, bodyEnd: i });
+        curCond = []; elseStart = i + 1; mode = "else"; i++; continue;
+      }
+      if (depth === 1 && fw === "fi") {
+        if (mode === "body") branches.push({ condLines: curCond, bodyStart: curBodyStart, bodyEnd: i });
+        else if (mode === "else") elseEnd = i;
+        break;
+      }
+      // nested block depth tracking
+      if (["if","for","while","until","case"].includes(fw)) depth++;
+      if (["fi","done","esac"].includes(fw)) depth--;
+      if (mode === "cond") curCond.push(t);
+      i++;
+    }
+    // evaluate branches in order
+    for (const br of branches) {
+      if (evalCond(br.condLines.join("\n"))) { execLines(lines, br.bodyStart, br.bodyEnd); return fiIdx + 1; }
+    }
+    if (elseStart >= 0) execLines(lines, elseStart, elseEnd);
+    return fiIdx + 1;
+  }
+
+  function evalCond(condStr) {
+    // condStr may be like "[ $x -gt 3 ]" or "(( x > 3 ))" or a command
+    const parts = splitTopLevel(condStr.replace(/\n/g, ";"), ";").map(s=>s.trim()).filter(Boolean);
+    let code = 0;
+    for (const p of parts) {
+      try { code = runCommand(p); } catch (e) { if (e && e.__exit != null) throw e; throw e; }
+    }
+    return (parseInt(vars["?"] || "0", 10) === 0);
+  }
+
+  function execFor(lines, pc, end) {
+    currentLines = lines;
+    const doneIdx = matchBlock(lines, pc, end, ["for","while","until","if","case"], "done", []);
+    if (doneIdx < 0) throw new Error("Missing done");
+    let header = lines[pc].trim();
+    // find 'do' — may be inline "for x in 1 2 3; do" or on next lines
+    let doIdx = -1;
+    // inline
+    if (/;\s*do\b/.test(header)) { doIdx = pc; header = header.replace(/;\s*do\b.*/, ""); }
+    else {
+      for (let i = pc; i < doneIdx; i++) { if (lines[i].trim() === "do" || lines[i].trim().endsWith(" do")) { doIdx = i; break; } }
+    }
+    if (doIdx < 0) throw new Error("Missing do");
+    const bodyStart = doIdx + 1, bodyEnd = doneIdx;
+
+    // C-style: for (( i=0; i<n; i++ ))
+    const cstyle = header.match(/^for\s*\(\((.*)\)\)\s*$/);
+    if (cstyle) {
+      const segs = splitTopLevel(cstyle[1], ";");
+      const init = segs[0] || "", cond = segs[1] || "1", post = segs[2] || "";
+      arithAssign(init.trim());
+      let guard = 0;
+      while (arith(cond.trim()) !== 0) { tick(); if (++guard > 100000) throw new Error("loop too long"); execLines(lines, bodyStart, bodyEnd); arithAssign(post.trim()); }
+      return doneIdx + 1;
+    }
+    // for VAR in LIST  (LIST may be empty → zero iterations, as in real bash)
+    const m = header.match(/^for\s+([A-Za-z_]\w*)\s+in\b(.*)$/);
+    if (m) {
+      const varName = m[1];
+      const items = tokenize(m[2].trim());
+      for (const it of items) { tick(); vars[varName] = it; execLines(lines, bodyStart, bodyEnd); }
+      return doneIdx + 1;
+    }
+    // for VAR  (iterate over "$@" — empty here)
+    const m2 = header.match(/^for\s+([A-Za-z_]\w*)\s*$/);
+    if (m2) { return doneIdx + 1; }
+    throw new Error("Bad for syntax: " + header);
+  }
+
+  function execWhile(lines, pc, end, isUntil) {
+    currentLines = lines;
+    const doneIdx = matchBlock(lines, pc, end, ["for","while","until","if","case"], "done", []);
+    if (doneIdx < 0) throw new Error("Missing done");
+    let header = lines[pc].trim();
+    let doIdx = -1, condStr = "";
+    if (/;\s*do\b/.test(header)) { doIdx = pc; condStr = header.replace(/^(while|until)\b/, "").replace(/;\s*do\b.*/, ""); }
+    else {
+      condStr = header.replace(/^(while|until)\b/, "");
+      for (let i = pc; i < doneIdx; i++) { if (lines[i].trim() === "do") { doIdx = i; break; } if (i>pc) condStr += "\n" + lines[i].trim(); }
+    }
+    if (doIdx < 0) throw new Error("Missing do");
+    const bodyStart = doIdx+1, bodyEnd = doneIdx;
+    let guard = 0;
+    while (true) {
+      tick(); if (++guard > 100000) throw new Error("loop too long");
+      const c = evalCond(condStr);
+      const go = isUntil ? !c : c;
+      if (!go) break;
+      execLines(lines, bodyStart, bodyEnd);
+    }
+    return doneIdx + 1;
+  }
+
+  function execCase(lines, pc, end) {
+    currentLines = lines;
+    const esacIdx = matchBlock(lines, pc, end, ["case","if","for","while","until"], "esac", []);
+    if (esacIdx < 0) throw new Error("Missing esac");
+    const header = lines[pc].trim();
+    const m = header.match(/^case\s+(.*)\s+in$/) || header.match(/^case\s+(.*)\sin$/);
+    let word = "";
+    if (m) word = tokenize(m[1]).join(" ");
+    else { const mm = header.match(/^case\s+(.+?)\s+in\b/); if (mm) word = tokenize(mm[1]).join(" "); }
+    // parse patterns:  PATTERN)  ... ;;
+    let i = pc + 1, matched = false;
+    while (i < esacIdx) {
+      let t = lines[i].trim();
+      if (t === "" || t.startsWith("#")) { i++; continue; }
+      const pm = t.match(/^([^)]+)\)(.*)$/);
+      if (pm) {
+        const pats = pm[1].split("|").map(s => tokenize(s.trim()).join(" "));
+        const inlineBody = pm[2];
+        // find ;; terminator
+        let bodyLines = [], j = i;
+        // include inline body after )
+        let bodyStr = inlineBody;
+        let end2 = -1;
+        // collect until ;;
+        if (/;;\s*$/.test(inlineBody)) { bodyStr = inlineBody.replace(/;;\s*$/, ""); end2 = i; }
+        else {
+          j = i + 1;
+          while (j < esacIdx) { const tj = lines[j].trim(); if (/;;\s*$/.test(tj)) { bodyLines.push(tj.replace(/;;\s*$/, "")); end2 = j; break; } bodyLines.push(tj); j++; }
+          if (end2 < 0) { end2 = esacIdx - 1; }
+        }
+        const isMatch = pats.some(p => matchGlob(p, word));
+        if (isMatch && !matched) {
+          matched = true;
+          if (bodyStr.trim()) runSimpleLine(bodyStr.trim());
+          for (const bl of bodyLines) if (bl.trim()) execLines([bl], 0, 1);
+        }
+        i = end2 + 1; continue;
+      }
+      i++;
+    }
+    return esacIdx + 1;
+  }
+  function matchGlob(pat, str) {
+    if (pat === "*") return true;
+    // translate simple glob * ? to regex
+    const re = new RegExp("^" + pat.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".") + "$");
+    return re.test(str);
+  }
+
+  // ---------- go ----------
+  try {
+    const result = runProgram(source);
+    flush();
+    return out.join("\n");
+  } catch (e) {
+    if (e && e.__exit != null) { flush(); return out.join("\n"); }
+    throw e;
+  }
+}
+
+function runProjectBash(code) {
+  try { const out = runBashCore(code); return { ok: true, output: out }; }
+  catch (e) { return { ok: false, output: "", error: String(e && e.message ? e.message : e) }; }
+}
+
+
 // Run PHP for real via php-wasm (the official PHP interpreter compiled to WASM).
 // Loads as an ESM module from a CDN. Captures echo/print output and errors.
 let _phpInstance = null;
@@ -3260,6 +3889,8 @@ const OUTPUT_DIALECT_NOTE = (id) =>
     ? ` CRITICAL — this is a small TEACHING CPU, not real x86/ARM. Use ONLY this instruction set: registers R0,R1,R2,R3; MOV Rx, value-or-Ry; ADD/SUB/MUL Rx, value-or-Ry; PRINT Rx (prints the register's number on its own line); labels written as "name:" at line start; JMP label; JZ Rx, label (jump if Rx==0); JNZ Rx, label (jump if Rx!=0); HLT to stop. Comments start with ";". There is NO division, no strings, no other instructions — do not use anything else. Every value is an integer. Example program that prints 8: "MOV R0, 5" / "ADD R0, 3" / "PRINT R0" / "HLT".`
     : id === "basic"
     ? ` CRITICAL — use ONLY this classic line-numbered BASIC dialect our interpreter runs: every line starts with a line number (10, 20, 30…). Supported statements: PRINT (a number, a "string", or an expression); LET var = expression; FOR var = a TO b … NEXT var; IF condition THEN line-number; GOTO line-number; END. Variables are single uppercase letters or simple names. Arithmetic: + - * /. Do NOT use DIM, arrays, GOSUB, INPUT, or functions — stick to the statements listed. Example that prints 1 then 2 then 3: "10 FOR I = 1 TO 3" / "20 PRINT I" / "30 NEXT I" / "40 END".`
+    : id === "bash"
+    ? ` CRITICAL — this teaching shell runs bash SCRIPTING LOGIC only, NOT external programs, pipes, redirection, or files. Use ONLY: echo (and printf); variable assignment NAME=value and use \$NAME / \${NAME} / \${#NAME} / \${NAME:-default}; arithmetic \$(( ... )) and let; test with [ ... ] using -eq -ne -lt -le -gt -ge for numbers and = != for strings, plus -z / -n; if/elif/else/fi; for VAR in LIST / C-style for (( i=0; i<n; i++ )); while; until; case/esac; and function definitions name() { ... }. Do NOT use pipes ( | ), redirection ( > < ), command substitution ( \`...\` or \$(...) ), or ANY external command (no grep, cat, ls, sed, awk, wc, etc.) — those are not available and the program will error. The program's output comes only from echo/printf. Example that prints 1 then 2 then 3: "for i in 1 2 3; do" / "  echo \$i" / "done".`
     : "";
 
 const langGenSystem = (cfg) =>
@@ -3304,7 +3935,7 @@ const LANGUAGE_CATALOG = [
   { id: "perl", label: "Perl", emoji: "🐪", mode: "ai", blurb: "A veteran language strong at text processing." },
   { id: "lua", label: "Lua", emoji: "🌙", mode: "real", blurb: "Lightweight and embeddable — common in games." },
   { id: "haskell", label: "Haskell", emoji: "λ", mode: "ai", blurb: "Purely functional — a different way to think." },
-  { id: "bash", label: "Bash", emoji: "💻", mode: "ai", blurb: "The shell language for automating your computer." },
+  { id: "bash", label: "Bash", emoji: "💻", mode: "output", blurb: "Shell scripting — variables, loops, and logic. Runs the scripting core for real (not external commands or pipes)." },
   // ---- mainstream additions ----
   { id: "objc", label: "Objective-C", emoji: "🍎", mode: "ai", blurb: "The classic language behind older iPhone and Mac apps." },
   { id: "vb", label: "Visual Basic", emoji: "🅱️", mode: "ai", blurb: "Microsoft's approachable language for Windows apps." },
@@ -3777,7 +4408,7 @@ async function generateCourse(classId, progressMap, signal) {
       // This is what makes "real output grading" honest — no lesson ships unless
       // its own solution genuinely produces the expected output on our engine.
       if (!L.title || !L.solution || typeof L.expectedOutput !== "string") continue;
-      const runner = classId === "asm" ? runAssembly : classId === "basic" ? runBASIC : null;
+      const runner = classId === "asm" ? runAssembly : classId === "basic" ? runBASIC : classId === "bash" ? runBashCore : null;
       if (!runner) continue;
       let solOut, starterOut;
       try { const r = runner(L.solution); solOut = typeof r === "string" ? r : (r && r.output) || ""; }
@@ -3833,7 +4464,7 @@ const PROJECT_LANG = { id: "js", label: "JavaScript", runnable: true };
 
 async function suggestProjects(lang = "py", signal) {
   const label = PROJECT_LANG_LABEL[lang] || "Python";
-  const kind = (lang === "py" || lang === "js" || lang === "ts" || lang === "java" || lang === "lua" || lang === "basic" || lang === "asm" || lang === "php" || lang === "c" || lang === "cpp") ? "program"
+  const kind = (lang === "py" || lang === "js" || lang === "ts" || lang === "java" || lang === "lua" || lang === "basic" || lang === "asm" || lang === "bash" || lang === "php" || lang === "c" || lang === "cpp") ? "program"
     : lang === "sql" ? "database"
     : lang === "p5" ? "drawing"
     : "web";
@@ -5999,7 +6630,7 @@ function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, ge
           <button className="cq-genbtn" onClick={buildCourse} disabled={courseBusy}>{courseBusy ? "Building your course…" : `Build my ${cls.label} class`}</button>
           {cls.mode === "ai" && <p className="cq-buildcourse-note">Note: {cls.label} can't run in the browser, so these lessons are AI-judged (great for learning, not a real test runner).</p>}
           {cls.mode === "markup" && <p className="cq-buildcourse-note">Note: {cls.label} renders live in a preview so you see your real result — there's no pass/fail test to run, so these lessons are guided by what you build and see.</p>}
-          {cls.mode === "output" && <p className="cq-buildcourse-note">Note: {cls.label} runs for real in the browser — your program is executed and its output is checked against the expected result.{cls.id === "asm" ? " (This is a teaching CPU with a simple instruction set, not real x86/ARM.)" : ""}</p>}
+          {cls.mode === "output" && <p className="cq-buildcourse-note">Note: {cls.label} runs for real in the browser — your program is executed and its output is checked against the expected result.{cls.id === "asm" ? " (This is a teaching CPU with a simple instruction set, not real x86/ARM.)" : cls.id === "bash" ? " (This runs bash scripting logic — variables, loops, conditionals, arithmetic, echo — but not pipes, redirection, or external commands like grep/cat.)" : ""}</p>}
           {courseErr && <p className="cq-generr">{courseErr}</p>}
         </div>
       </main>
@@ -6391,6 +7022,8 @@ const HL_FAMILY_KEYWORDS = {
   sql: new Set(["SELECT","FROM","WHERE","INSERT","INTO","VALUES","UPDATE","SET","DELETE","CREATE","TABLE","DROP","ALTER","JOIN","LEFT","RIGHT","INNER","OUTER","ON","GROUP","BY","ORDER","HAVING","LIMIT","AND","OR","NOT","NULL","AS","DISTINCT","COUNT","SUM","AVG","MIN","MAX","select","from","where","insert","into","values","update","set","delete","create","table","join","and","or","not","null","as"]),
   // Lisp family
   lisp: new Set(["defn","def","defun","let","lambda","fn","if","cond","when","unless","do","loop","recur","quote","car","cdr","cons","list","map","filter","reduce","define","set!","begin"]),
+  // Bash / shell scripting (uses # comments)
+  bash: new Set(["if","then","elif","else","fi","for","in","do","done","while","until","case","esac","function","echo","printf","let","test","return","exit","local","export","unset","read","true","false"]),
 };
 // Map each language id to a highlighter family.
 const HL_LANG_FAMILY = (() => {
@@ -6400,6 +7033,7 @@ const HL_LANG_FAMILY = (() => {
   setAll(["html", "css", "jsx", "vue", "svelte"], "markup");
   setAll(["sql", "lua"], "sql");
   setAll(["clojure", "lisp", "scheme", "elm", "racket"], "lisp");
+  setAll(["bash"], "bash");
   // Everything else uses the broad C-family set (js, ts, java, cpp, c, go, rust, etc.)
   return m;
 })();
@@ -6416,7 +7050,7 @@ function highlightCode(code, lang) {
   const out = [];
   let i = 0;
   const n = code.length;
-  const isPy = fam === "py";
+  const isPy = fam === "py" || fam === "bash";
   const isLisp = fam === "lisp";
   const isSql = fam === "sql";
   while (i < n) {
@@ -7357,7 +7991,7 @@ function OutputStep({ step, onDone }) {
     setRunning(true);
     let r;
     try {
-      const runner = step.lang === "asm" ? runProjectAssembly : step.lang === "basic" ? runProjectBASIC : null;
+      const runner = step.lang === "asm" ? runProjectAssembly : step.lang === "basic" ? runProjectBASIC : step.lang === "bash" ? runProjectBash : null;
       if (!runner) { setResult({ ok: false, engineError: true, why: "No runner for this lesson." }); setRunning(false); return; }
       r = await runner(code);
     } catch (e) {
@@ -7375,7 +8009,7 @@ function OutputStep({ step, onDone }) {
     else stats.recordWrong();
   };
   const onKeyDown = makeCodeKeyDown(code, setCode);
-  const langName = step.lang === "asm" ? "Assembly" : step.lang === "basic" ? "BASIC" : step.lang;
+  const langName = step.lang === "asm" ? "Assembly" : step.lang === "basic" ? "BASIC" : step.lang === "bash" ? "Bash" : step.lang;
   return (
     <div className="cq-card2">
       <h1 className="cq-h1">{step.title} <span className="cq-universal">real output grading</span></h1>
@@ -7906,6 +8540,7 @@ const SANDBOX_LANGS = [
   { id: "php", label: "PHP", emoji: "🐘", starter: "<?php\nfor ($i = 0; $i < 5; $i++) {\n  echo \"$i \" . ($i * $i) . \"\\n\";\n}\n" },
   { id: "ruby", label: "Ruby", emoji: "💎", starter: "(0...5).each do |i|\n  puts \"#{i} #{i * i}\"\nend\n" },
   { id: "lua", label: "Lua", emoji: "🌙", starter: "for i = 0, 4 do\n  print(i, i * i)\nend\n" },
+  { id: "bash", label: "Bash", emoji: "💻", starter: "# Shell scripting logic (no pipes/tools here)\nfor i in 1 2 3 4 5; do\n  echo \"$i squared is $((i * i))\"\ndone\n" },
   { id: "sql", label: "SQL", emoji: "🗃️", starter: "CREATE TABLE nums (n INTEGER);\nINSERT INTO nums VALUES (1), (2), (3), (4), (5);\nSELECT n, n * n AS square FROM nums;\n" },
 ];
 
@@ -7920,6 +8555,7 @@ async function runSandbox(lang, code) {
   if (lang === "php") return await runProjectPHP(code);
   if (lang === "ruby") return await runProjectRuby(code);
   if (lang === "lua") return await runProjectLua(code);
+  if (lang === "bash") return runProjectBash(code);
   if (lang === "sql") return await runProjectSQL(code);
   return { ok: false, output: "", error: "That language can't run in the sandbox." };
 }
@@ -8196,6 +8832,7 @@ function ProjectBuilder({ plan, onBack, onComplete, onHome, reviewMode = false, 
           : runLang === "lua" ? await runProjectLua(runCode, files)
           : runLang === "basic" ? runProjectBASIC(runCode)
           : runLang === "asm" ? runProjectAssembly(runCode)
+          : runLang === "bash" ? runProjectBash(runCode)
           : runLang === "php" ? await runProjectPHP(runCode, files)
           : runLang === "c" ? await runProjectCFamily(runCode, false, files, runName)
           : runLang === "cpp" ? await runProjectCFamily(runCode, true, files, runName)
