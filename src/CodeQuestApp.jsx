@@ -7,7 +7,7 @@ import { supabase } from "./lib/supabase";
 // Build marker — check this in the browser console to confirm which version is
 // actually running: type  window.__CQ_VERSION  in DevTools. If it's not the
 // value below, your browser/Vercel is serving an older bundle.
-const CQ_VERSION = "2026-07-12-v147-stats-review-hints";
+const CQ_VERSION = "2026-07-12-v148-asm-basic-output";
 
 // Only this account (by Supabase user id) can read submitted feedback. Gating by
 // id, not email, so it survives email changes / adding Google login later.
@@ -3252,6 +3252,16 @@ const REAL_HARNESS_NOTE = (label) => {
     return " IMPORTANT (PHP): write fnName as a top-level function; the grader calls it directly (no class wrapper).";
   return "";
 };
+// For output-graded languages, tell the AI EXACTLY which dialect/instruction set
+// our real interpreter supports, so generated programs actually run. Getting this
+// wrong would produce lessons that can't be solved — so we're very specific.
+const OUTPUT_DIALECT_NOTE = (id) =>
+  id === "asm"
+    ? ` CRITICAL — this is a small TEACHING CPU, not real x86/ARM. Use ONLY this instruction set: registers R0,R1,R2,R3; MOV Rx, value-or-Ry; ADD/SUB/MUL Rx, value-or-Ry; PRINT Rx (prints the register's number on its own line); labels written as "name:" at line start; JMP label; JZ Rx, label (jump if Rx==0); JNZ Rx, label (jump if Rx!=0); HLT to stop. Comments start with ";". There is NO division, no strings, no other instructions — do not use anything else. Every value is an integer. Example program that prints 8: "MOV R0, 5" / "ADD R0, 3" / "PRINT R0" / "HLT".`
+    : id === "basic"
+    ? ` CRITICAL — use ONLY this classic line-numbered BASIC dialect our interpreter runs: every line starts with a line number (10, 20, 30…). Supported statements: PRINT (a number, a "string", or an expression); LET var = expression; FOR var = a TO b … NEXT var; IF condition THEN line-number; GOTO line-number; END. Variables are single uppercase letters or simple names. Arithmetic: + - * /. Do NOT use DIM, arrays, GOSUB, INPUT, or functions — stick to the statements listed. Example that prints 1 then 2 then 3: "10 FOR I = 1 TO 3" / "20 PRINT I" / "30 NEXT I" / "40 END".`
+    : "";
+
 const langGenSystem = (cfg) =>
   `You generate a short beginner course (an array of ${cfg.count} lessons) for the ${cfg.label} programming language. ` +
   `EVERY lesson must TEACH before it tests: explain the new idea plainly, then show a worked example. ` +
@@ -3260,6 +3270,8 @@ const langGenSystem = (cfg) =>
     ? `Each lesson teaches ONE SQL idea via a real query challenge: {"title":string, "teach":string (2-3 plain sentences explaining the SQL concept to a beginner), "example":string (a short example query), "concept":string (e.g. "filtering rows with WHERE"), "seed":string (SQL that CREATEs one small table and INSERTs ~4-6 rows of data), "schema":string (a human-readable description of the table and its columns, shown to the learner), "starter":string (a partial query like "SELECT " for them to complete), "solution":string (the correct full query), "expected":array of rows (each row an array of values) that the solution returns}. The solution run against the seed MUST produce exactly the expected rows. Keep tables tiny and relatable (pets, books, students). Order from SELECT-all → WHERE → ORDER BY → COUNT/aggregate → GROUP BY.`
     : cfg.mode === "real"
     ? `Each lesson: {"title":string, "teach":string (2-3 plain sentences that EXPLAIN the new concept to a total beginner, may use \`inline code\`), "example":string (a short worked example in ${cfg.label} showing the idea), "concept":string (the underlying idea, e.g. "doubling a number"), "fnName":string, "starter":string (a ${cfg.label} function skeleton with the right name and an empty body + a comment, NOT a working solution), "solution":string (complete correct ${cfg.label} code), "tests":array of >=2 {"args":array,"expected":any}}. Starters must NOT pass; solutions MUST pass. Use ${cfg.label} syntax exactly.` + REAL_HARNESS_NOTE(cfg.label)
+    : cfg.mode === "output"
+    ? `Each lesson teaches ONE idea via a small PROGRAM the learner writes, graded by its OUTPUT. Shape: {"title":string, "teach":string (2-3 plain sentences explaining the concept to a total beginner), "example":string (a short worked ${cfg.label} snippet showing the idea), "concept":string (e.g. "a counting loop"), "task":string (plain-English: exactly what the program must print), "starter":string (a ${cfg.label} skeleton with a comment, NOT a working solution), "solution":string (a complete correct ${cfg.label} program), "expectedOutput":string (EXACTLY what the solution prints, newline-separated, no trailing blank line)}. The solution, when run, MUST print exactly expectedOutput. The starter must NOT already print it. ` + OUTPUT_DIALECT_NOTE(cfg.id)
     : `Each lesson: {"title":string, "teach":string (2-3 plain sentences that EXPLAIN the new concept to a total beginner), "example":string (a short worked example in ${cfg.label} showing the idea), "concept":string, "starter":string (a ${cfg.label} code skeleton to fill in), "checks":array of >=2 short strings (criteria a correct answer meets)}. Use real ${cfg.label} syntax.`) +
   ` Order lessons from easiest to hardest, each building on the last. Keep them small and beginner-friendly.`;
 
@@ -3318,7 +3330,8 @@ const LANGUAGE_CATALOG = [
   { id: "racket", label: "Racket", emoji: "🎾", mode: "ai", blurb: "A modern Lisp built for learning and language design." },
   { id: "tcl", label: "Tcl", emoji: "🔗", mode: "ai", blurb: "A simple scripting language — everything is a string." },
   { id: "raku", label: "Raku", emoji: "🦋", mode: "ai", blurb: "Perl's expressive successor, with modern features." },
-  { id: "assembly", label: "Assembly", emoji: "🔩", mode: "ai", blurb: "The lowest level — talking almost directly to the CPU." },
+  { id: "asm", label: "Assembly", emoji: "🔩", mode: "output", blurb: "The lowest level — talking almost directly to the CPU (a teaching CPU you run for real)." },
+  { id: "basic", label: "BASIC", emoji: "🅱️", mode: "output", blurb: "The classic beginner's language — simple, line-numbered, and it runs for real." },
   { id: "ada", label: "Ada", emoji: "✈️", mode: "ai", blurb: "Built for safety-critical systems like aviation." },
   { id: "prolog", label: "Prolog", emoji: "🧠", mode: "ai", blurb: "Logic programming — you state facts and rules." },
   { id: "smalltalk", label: "Smalltalk", emoji: "💬", mode: "ai", blurb: "A pure object-oriented pioneer that shaped modern code." },
@@ -3332,7 +3345,7 @@ const LANGUAGE_CATALOG = [
   { id: "v", label: "V", emoji: "🇻", mode: "ai", blurb: "A simple, fast language for maintainable software." },
 ];
 
-const LANG_CFG = Object.fromEntries(LANGUAGE_CATALOG.map((l) => [l.id, { label: l.label, mode: l.mode, count: l.mode === "real" ? 5 : 4 }]));
+const LANG_CFG = Object.fromEntries(LANGUAGE_CATALOG.map((l) => [l.id, { id: l.id, label: l.label, mode: l.mode, count: (l.mode === "real" || l.mode === "output") ? 5 : 4 }]));
 
 // ---------- Kid-proofing filter for General Coding generation ----------
 const HIDDEN_KNOWLEDGE = /\b(tea|coffee|boil|recipe|adult|minor|tax(?:es)?|mortgage|alcohol|drive|licen[cs]e|wine|beer|salary|invoice|stocks?)\b|\b18\+/i;
@@ -3756,6 +3769,30 @@ async function generateCourse(classId, progressMap, signal) {
         schema: L.schema || "", seed: L.seed, starter: L.starter || "SELECT ", expected: L.expected, lang: "sql",
         orderMatters: /order\s+by/i.test(L.solution || ""),
         why: "That query ran on a real database — correct!" });
+      continue;
+    }
+    if (cfg.mode === "output") {
+      // Validate for real: run the author's solution through the actual interpreter
+      // and confirm it prints exactly expectedOutput; confirm the starter does NOT.
+      // This is what makes "real output grading" honest — no lesson ships unless
+      // its own solution genuinely produces the expected output on our engine.
+      if (!L.title || !L.solution || typeof L.expectedOutput !== "string") continue;
+      const runner = classId === "asm" ? runAssembly : classId === "basic" ? runBASIC : null;
+      if (!runner) continue;
+      let solOut, starterOut;
+      try { const r = runner(L.solution); solOut = typeof r === "string" ? r : (r && r.output) || ""; }
+      catch { continue; } // solution errored → unusable lesson, skip
+      if (!outputMatches(solOut, L.expectedOutput)) continue; // solution doesn't produce expected → skip
+      if (L.starter) {
+        try { const r = runner(L.starter); starterOut = typeof r === "string" ? r : (r && r.output) || ""; }
+        catch { starterOut = "__errored__"; }
+        if (outputMatches(starterOut, L.expectedOutput)) continue; // starter already solves it → skip
+      }
+      out.push({ id: "g_" + Math.random().toString(36).slice(2, 7), type: "output", chapter: `${cfg.label} course`, generated: true,
+        title: L.title, intro: L.teach || "Write the program so it prints the expected output.", concept: L.concept || L.title,
+        teach: L.teach || "", example: L.example || "", task: L.task || "",
+        starter: L.starter || "", solution: L.solution, expectedOutput: L.expectedOutput, lang: classId,
+        why: "That program ran for real — and its output matched exactly." });
       continue;
     }
     if (cfg.mode === "real") {
@@ -4551,7 +4588,7 @@ const chaptersOf = (cls) => {
   return order.map((name) => ({ name, stepIdxs: map[name] }));
 };
 const resumeIdx = (cls, doneSet) => { for (let i = 0; i < cls.steps.length; i++) if (!doneSet.has(i)) return i; return Math.max(0, cls.steps.length - 1); };
-const modeLabel = (mode) => mode === "real" ? "real test grading" : mode === "sql" ? "real query grading" : mode === "markup" ? "live preview" : mode === "concept" ? "think like a coder" : "AI-guided";
+const modeLabel = (mode) => mode === "real" ? "real test grading" : mode === "output" ? "real output grading" : mode === "sql" ? "real query grading" : mode === "markup" ? "live preview" : mode === "concept" ? "think like a coder" : "AI-guided";
 
 // ---------- Module-level generation store ----------
 // Generation state lives OUTSIDE React because the parent auth wrapper remounts
@@ -5656,10 +5693,12 @@ function Home({ progress, aiLessons, savedProjects = [], profileDescription = ""
         }
         // ===== Coding tab (default) =====
         const general = CLASSES.find((c) => c.id === "general");
-        const langs = CLASSES.filter((c) => c.tab === "coding" && c.id !== "general");
+        const generalMulti = CLASSES.find((c) => c.id === "general_multifile");
+        const langs = CLASSES.filter((c) => c.tab === "coding" && c.id !== "general" && c.id !== "general_multifile");
         const generalShown = matches(general);
+        const multiShown = generalMulti && matches(generalMulti);
         const langsShown = langs.filter(matches);
-        if (generalShown === false && langsShown.length === 0) {
+        if (generalShown === false && multiShown === false && langsShown.length === 0) {
           return <div className="cq-noresults">No language called “{query}” here yet. We only show languages that can be taught well — try another name.</div>;
         }
 
@@ -5669,9 +5708,10 @@ function Home({ progress, aiLessons, savedProjects = [], profileDescription = ""
           // (a query against a real database), so it gets its own honest heading
           // rather than being counted under "real test grading" — otherwise the
           // count reads one too high for code that runs and is checked.
-          const groupOf = (m) => m === "real" ? "real" : m === "sql" ? "sql" : m === "markup" ? "markup" : "ai";
+          const groupOf = (m) => m === "real" ? "real" : m === "output" ? "output" : m === "sql" ? "sql" : m === "markup" ? "markup" : "ai";
           const groups = {
             real: { label: "Real test grading — your code runs and is checked", items: [] },
+            output: { label: "Real output grading — your program runs and its output is checked", items: [] },
             sql: { label: "Real query grading — your query runs on a real database", items: [] },
             markup: { label: "Live preview — you see your real rendered result", items: [] },
             ai: { label: "AI-guided — explained and reviewed by AI", items: [] },
@@ -5680,8 +5720,8 @@ function Home({ progress, aiLessons, savedProjects = [], profileDescription = ""
           Object.values(groups).forEach((g) => g.items.sort((a, b) => a.label.localeCompare(b.label)));
           return (
             <>
-              {generalShown && (<><div className="cq-section-label">Start here</div><div className="cq-classlist" style={{ marginBottom: 28 }}>{renderCard(general)}</div></>)}
-              {["real", "sql", "markup", "ai"].map((k) => groups[k].items.length > 0 && (
+              {(generalShown || multiShown) && (<><div className="cq-section-label">Start here</div><div className="cq-classlist" style={{ marginBottom: 28 }}>{generalShown && renderCard(general)}{multiShown && renderCard(generalMulti)}</div></>)}
+              {["real", "output", "sql", "markup", "ai"].map((k) => groups[k].items.length > 0 && (
                 <React.Fragment key={k}>
                   <div className="cq-section-label">{groups[k].label} <span className="cq-section-count">({groups[k].items.length})</span></div>
                   <div className="cq-classlist" style={{ marginBottom: 28 }}>{groups[k].items.map(renderCard)}</div>
@@ -5694,7 +5734,7 @@ function Home({ progress, aiLessons, savedProjects = [], profileDescription = ""
         const ordered = sortMode === "alpha" ? [...langsShown].sort((a, b) => a.label.localeCompare(b.label)) : langsShown;
         return (
           <>
-            {generalShown && (<><div className="cq-section-label">Start here</div><div className="cq-classlist" style={{ marginBottom: 28 }}>{renderCard(general)}</div></>)}
+            {(generalShown || multiShown) && (<><div className="cq-section-label">Start here</div><div className="cq-classlist" style={{ marginBottom: 28 }}>{generalShown && renderCard(general)}{multiShown && renderCard(generalMulti)}</div></>)}
             {ordered.length > 0 && (<><div className="cq-section-label">{q ? `${ordered.length} language${ordered.length > 1 ? "s" : ""}` : "Languages"}</div><div className="cq-classlist">{ordered.map(renderCard)}</div></>)}
           </>
         );
@@ -5959,6 +5999,7 @@ function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, ge
           <button className="cq-genbtn" onClick={buildCourse} disabled={courseBusy}>{courseBusy ? "Building your course…" : `Build my ${cls.label} class`}</button>
           {cls.mode === "ai" && <p className="cq-buildcourse-note">Note: {cls.label} can't run in the browser, so these lessons are AI-judged (great for learning, not a real test runner).</p>}
           {cls.mode === "markup" && <p className="cq-buildcourse-note">Note: {cls.label} renders live in a preview so you see your real result — there's no pass/fail test to run, so these lessons are guided by what you build and see.</p>}
+          {cls.mode === "output" && <p className="cq-buildcourse-note">Note: {cls.label} runs for real in the browser — your program is executed and its output is checked against the expected result.{cls.id === "asm" ? " (This is a teaching CPU with a simple instruction set, not real x86/ARM.)" : ""}</p>}
           {courseErr && <p className="cq-generr">{courseErr}</p>}
         </div>
       </main>
@@ -6173,6 +6214,7 @@ function LessonRunner({ cls, idx, doneSet, onDone, onUndone, onBack, goStep }) {
       {activeStep.type === "type" && <TypeStep key={stepKey} step={activeStep} onDone={complete} />}
       {activeStep.type === "aitype" && <AITypeStep key={stepKey} step={activeStep} onDone={complete} />}
       {activeStep.type === "sqlquery" && <SQLStep key={stepKey} step={activeStep} onDone={complete} />}
+      {activeStep.type === "output" && <OutputStep key={stepKey} step={activeStep} onDone={complete} />}
       {activeStep.type === "markup" && <MarkupStep key={stepKey} step={activeStep} onDone={complete} />}
 
       {/* In-lesson AI helper — knows this lesson, saves its chat per lesson */}
@@ -7296,6 +7338,72 @@ function TypeStep({ step, onDone }) {
       {result && !result.ok && <div className="cq-nudge">Almost — {result.why || "the tests didn't all pass yet"}.</div>}
       {result && !result.ok && result.tip && <div className="cq-iotip">💡 {result.tip}</div>}
       {result?.ok && code.trim() && <div className="cq-takeaway big">{step.why}</div>}
+    </div>
+  );
+}
+
+// Real output-graded lesson (BASIC, Assembly). The learner writes a whole small
+// program; we run it through the actual interpreter and compare its output to the
+// lesson's expectedOutput. Genuinely real — real execution, real output check —
+// just output-based rather than function-tested, which is the honest model for
+// these whole-program languages.
+function OutputStep({ step, onDone }) {
+  const [code, setCode] = useState(step.starter || "");
+  const [result, setResult] = useState(null);
+  const [running, setRunning] = useState(false);
+  const stats = useLessonStats();
+  const run = async () => {
+    if (!code.trim()) return;
+    setRunning(true);
+    let r;
+    try {
+      const runner = step.lang === "asm" ? runProjectAssembly : step.lang === "basic" ? runProjectBASIC : null;
+      if (!runner) { setResult({ ok: false, engineError: true, why: "No runner for this lesson." }); setRunning(false); return; }
+      r = await runner(code);
+    } catch (e) {
+      setResult({ ok: false, engineError: true, why: "Couldn't run it: " + (e && e.message ? e.message : "unknown error") }); setRunning(false); return;
+    }
+    if (!r.ok) {
+      // A program error (bad syntax/instruction) — show it, don't count as a wrong answer.
+      setResult({ ok: false, engineError: true, why: r.error || "Your program didn't run.", output: r.output || "" });
+      setRunning(false); return;
+    }
+    const passed = outputMatches(r.output || "", step.expectedOutput || "");
+    setResult({ ok: passed, output: r.output || "", why: passed ? (step.why || "Correct — it ran for real.") : "Not quite — the output doesn't match yet." });
+    setRunning(false);
+    if (passed) onDone(stats.buildStats());
+    else stats.recordWrong();
+  };
+  const onKeyDown = makeCodeKeyDown(code, setCode);
+  const langName = step.lang === "asm" ? "Assembly" : step.lang === "basic" ? "BASIC" : step.lang;
+  return (
+    <div className="cq-card2">
+      <h1 className="cq-h1">{step.title} <span className="cq-universal">real output grading</span></h1>
+      {step.intro && <p className="cq-intro">{step.intro}</p>}
+      {(step.teach || step.example) && (
+        <div className="cq-teach">
+          {step.teach && <p className="cq-teach-text">{step.teach}</p>}
+          {step.example && <div className="cq-teach-example"><span className="cq-teach-label">Example</span><pre>{step.example}</pre></div>}
+        </div>
+      )}
+      {step.task && <div className="cq-goal">🎯 {step.task}</div>}
+      {step.expectedOutput != null && (
+        <div className="cq-teach-example" style={{ marginBottom: 14 }}>
+          <span className="cq-teach-label">Expected output</span>
+          <pre>{step.expectedOutput}</pre>
+        </div>
+      )}
+      <CodeEditor code={code} setCode={setCode} onKeyDown={onKeyDown} lang={step.lang} minHeight={200} />
+      <div className="cq-buildrow">
+        <button className="cq-run" onClick={run} disabled={result?.ok || running || !code.trim()}>{running ? "Running…" : "▶ Run it"}</button>
+      </div>
+      <StuckLadder step={step} />
+      {result && result.engineError && <div className="cq-runout-note">⚠ {result.why}</div>}
+      {result && !result.ok && !result.engineError && <div className="cq-nudge">Almost — {result.why}</div>}
+      {result && result.output != null && result.output !== "" && (
+        <div className="cq-runout"><div className="cq-runout-label">Your output</div><pre className="cq-console">{result.output}</pre></div>
+      )}
+      {result?.ok && <div className="cq-takeaway big">{step.why || "Solved — it ran for real."}</div>}
     </div>
   );
 }
@@ -11494,6 +11602,7 @@ body{overflow-x:clip}
 .cq-classlabel{font-family:var(--display);font-weight:600;font-size:19px;letter-spacing:-.3px}
 .cq-classmode{font-size:9.5px;text-transform:uppercase;letter-spacing:.6px;font-weight:700;padding:3px 8px;border-radius:6px;align-self:flex-start}
 .cq-classmode.real{background:var(--teal-ghost);color:var(--teal)}
+.cq-classmode.output{background:var(--teal-ghost);color:var(--teal)}
 .cq-classmode.sql{background:var(--teal-ghost);color:var(--teal)}
 .cq-classmode.markup{background:var(--neon-ghost);color:var(--neon-bright)}
 .cq-classmode.ai{background:var(--amber-ghost);color:var(--amber)}
