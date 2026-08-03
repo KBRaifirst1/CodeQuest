@@ -7,7 +7,7 @@ import { supabase } from "./lib/supabase";
 // Build marker — check this in the browser console to confirm which version is
 // actually running: type  window.__CQ_VERSION  in DevTools. If it's not the
 // value below, your browser/Vercel is serving an older bundle.
-const CQ_VERSION = "2026-07-12-v144-spacing4";
+const CQ_VERSION = "2026-07-12-v147-stats-review-hints";
 
 // Only this account (by Supabase user id) can read submitted feedback. Gating by
 // id, not email, so it survives email changes / adding Google login later.
@@ -4642,7 +4642,7 @@ function AppInner({ initialState, onPersist, onSignOut, user } = {}) {
       if (!raw) return { name: "home" };
       const p = JSON.parse(raw);
       if (!p || typeof p !== "object" || typeof p.name !== "string") return { name: "home" };
-      const VALID_SCREENS = ["home", "class", "lesson", "projectPick", "project", "labs", "circuits", "circuitLab", "circuitLessons", "ailab", "aiLab", "aiLessons", "breadboard"];
+      const VALID_SCREENS = ["home", "class", "lesson", "projectPick", "project", "labs", "circuits", "circuitLab", "circuitLessons", "ailab", "aiLab", "aiLessons", "breadboard", "sandbox", "stats", "review", "reviewLesson"];
       if (!VALID_SCREENS.includes(p.name)) return { name: "home" };
       return p;
     } catch { return { name: "home" }; }
@@ -4723,6 +4723,11 @@ function AppInner({ initialState, onPersist, onSignOut, user } = {}) {
   // Which circuit challenges the learner has completed.
   const [circuitDone, setCircuitDone] = useState(() => bootState?.circuitDone || []);
   const [aiDone, setAiDone] = useState(() => bootState?.aiDone || []);
+  // Cumulative review sets the AI has generated, and a counter of how many topics
+  // the learner had completed at the last auto-generation — so a new review set
+  // auto-generates roughly every 5 completed topics without re-firing endlessly.
+  const [reviewSets, setReviewSets] = useState(() => bootState?.reviewSets || []); // [{ id, createdAt, concepts:[...], lessons:[...] }]
+  const [reviewMark, setReviewMark] = useState(() => bootState?.reviewMark || 0); // totalDone at last auto-review
   // Per-lesson stats for auto-difficulty: { classId: { stepIdx: { time, firstTry, retries } } }
   // Old users with no lessonStats seed with an empty object — safe default, nothing crashes.
   const [lessonStats, setLessonStats] = useState(() => bootState?.lessonStats || {});
@@ -4910,7 +4915,7 @@ function AppInner({ initialState, onPersist, onSignOut, user } = {}) {
     for (const [k, v] of Object.entries(progress)) {
       progressAsArrays[k] = v instanceof Set ? [...v] : Array.isArray(v) ? v : [];
     }
-    return { progress: progressAsArrays, aiLessons, savedProjects, lessonStats, profileDescription, projectConcepts, circuitDone, aiDone };
+    return { progress: progressAsArrays, aiLessons, savedProjects, lessonStats, profileDescription, projectConcepts, circuitDone, aiDone, reviewSets, reviewMark };
   };
 
   // Every concept the learner has actually learned — from generated lessons
@@ -4923,6 +4928,55 @@ function AppInner({ initialState, onPersist, onSignOut, user } = {}) {
     }
     return [...set];
   }, [aiLessons, projectConcepts]);
+
+  // ---- Review sets ----
+  // A review draws on EVERYTHING the learner has learned so far (not just recent
+  // lessons) — a genuine cumulative refresher. It reuses the same generation
+  // engine the lessons use, asking for a mixed set across the learned concepts.
+  const [reviewBusy, setReviewBusy] = useState(false);
+  const reviewInFlight = useRef(false);
+  const generateReviewSet = async () => {
+    if (reviewInFlight.current) return { blocked: true };
+    const concepts = allLearnedConcepts;
+    if (!concepts.length) return { blocked: false, empty: true };
+    reviewInFlight.current = true; setReviewBusy(true);
+    try {
+      // Ask for a JS review set themed as "a mix of what you've learned". We use
+      // the JS path because it runs in-browser and grades for real, so the review
+      // is honestly checkable regardless of which languages the concepts came from.
+      const pick = concepts.slice(-12); // cap the prompt; recent-weighted but cumulative overall
+      const lessons = await generateTopicBatch({
+        classId: "js", langLabel: "JavaScript",
+        priorTopics: [], learnedConcepts: concepts,
+        customTopic: "a mixed review of these ideas the learner already met: " + pick.join(", "),
+        howManyToAsk: 4, wanted: 4, diff: "Keep them beginner-friendly refreshers, easy to medium.",
+      });
+      const clean = Array.isArray(lessons) ? lessons.filter((l) => l && l.title) : [];
+      if (!clean.length) return { blocked: false, failed: true };
+      const set = { id: "rv_" + Date.now(), createdAt: Date.now(), concepts: pick, lessons: clean };
+      setReviewSets((prev) => [set, ...prev].slice(0, 20));
+      return { blocked: false, set };
+    } catch (e) {
+      return { blocked: false, failed: true, error: (e && e.message) || "generation failed" };
+    } finally {
+      reviewInFlight.current = false; setReviewBusy(false);
+    }
+  };
+
+  // Auto-generate a review roughly every 5 completed topics. Guarded so it fires
+  // once per threshold crossing, only when online, and never while one is already
+  // generating — so it can't surprise-burn quota.
+  useEffect(() => {
+    const totalDone = Object.values(progress).reduce((n, s) => n + (s instanceof Set ? s.size : 0), 0);
+    if (totalDone < reviewMark + 5) return;
+    if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+    if (reviewInFlight.current) return;
+    if (!allLearnedConcepts.length) { setReviewMark(totalDone); return; }
+    // Mark immediately so we don't re-fire on the next render while awaiting.
+    setReviewMark(totalDone);
+    generateReviewSet();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [progress]);
 
   useEffect(() => {
     const snap = buildSnapshot();
@@ -5056,6 +5110,9 @@ function AppInner({ initialState, onPersist, onSignOut, user } = {}) {
           {isOnline && pendingSync && <span className="cq-offline-badge syncing" title="Syncing your latest progress to your account">🔄 Syncing…</span>}
           <button className="cq-projbtn" onClick={() => setScreen({ name: "projectPick" })}>🛠️ Projects</button>
           <button className="cq-projbtn" onClick={() => setScreen({ name: "labs" })}>🔬 Labs</button>
+          <button className="cq-projbtn" onClick={() => setScreen({ name: "sandbox" })}>🧪 Sandbox</button>
+          <button className="cq-projbtn" onClick={() => setScreen({ name: "stats" })}>📊 Progress</button>
+          <button className="cq-projbtn" onClick={() => setScreen({ name: "review" })}>🔁 Review{reviewSets.length > 0 ? ` (${reviewSets.length})` : ""}</button>
           <FeedbackWidget user={user} />
           {totalDone > 0 && <div className="cq-xp">{totalDone} lessons complete</div>}
           {onSignOut && <button className="cq-projbtn" onClick={onSignOut}>Sign out</button>}
@@ -5138,6 +5195,48 @@ function AppInner({ initialState, onPersist, onSignOut, user } = {}) {
           onChallengeComplete={(id) => setCircuitDone((prev) => (prev.includes(id) ? prev : [...prev, id]))} />
       )}
 
+      {screen.name === "sandbox" && (
+        <Sandbox
+          onBack={() => setScreen({ name: "home" })}
+          onHome={() => setScreen({ name: "home" })} />
+      )}
+
+      {screen.name === "stats" && (
+        <StatsView
+          progress={progress}
+          aiLessons={aiLessons}
+          allLearnedConcepts={allLearnedConcepts}
+          classes={CLASSES}
+          onBack={() => setScreen({ name: "home" })} />
+      )}
+
+      {screen.name === "review" && (
+        <ReviewView
+          reviewSets={reviewSets}
+          busy={reviewBusy}
+          hasConcepts={allLearnedConcepts.length > 0}
+          onGenerate={generateReviewSet}
+          onOpenSet={(s) => setScreen({ name: "reviewLesson", setId: s.id, idx: 0 })}
+          onBack={() => setScreen({ name: "home" })} />
+      )}
+
+      {screen.name === "reviewLesson" && (() => {
+        const set = reviewSets.find((s) => s.id === screen.setId);
+        if (!set || !Array.isArray(set.lessons) || !set.lessons.length) {
+          setTimeout(() => setScreen({ name: "review" }), 0); return null;
+        }
+        const idx = typeof screen.idx === "number" && screen.idx >= 0 && screen.idx < set.lessons.length ? screen.idx : 0;
+        // A synthetic, throwaway class so we reuse the exact lesson player. Review
+        // completion isn't recorded into course progress (it's practice, not new
+        // ground) — onDone just advances to the next review lesson.
+        const vcls = { id: "review_" + set.id, label: "Review", emoji: "🔁", tab: "review", steps: set.lessons };
+        return <LessonRunner cls={vcls} idx={idx} doneSet={new Set()}
+          onDone={() => { if (idx < set.lessons.length - 1) setScreen({ name: "reviewLesson", setId: set.id, idx: idx + 1 }); else setScreen({ name: "review" }); }}
+          onUndone={() => {}}
+          onBack={() => setScreen({ name: "review" })}
+          goStep={(i) => setScreen({ name: "reviewLesson", setId: set.id, idx: i })} />;
+      })()}
+
       {screen.name === "project" && (
         <ProjectBuilder plan={screen.plan} reviewMode={!!screen.review}
           learnedConcepts={allLearnedConcepts}
@@ -5172,6 +5271,8 @@ function AppInner({ initialState, onPersist, onSignOut, user } = {}) {
           onCancelGeneration={cancelGeneration}
           onClearGenerationError={clearGenerationError}
           onBack={() => setScreen({ name: "home" })}
+          onReview={() => setScreen({ name: "review" })}
+          reviewCount={reviewSets.length}
           onOpenStep={(idx) => setScreen({ name: "lesson", id: cls.id, idx })}
           onContinue={() => setScreen({ name: "lesson", id: cls.id, idx: resumeIdx(cls, doneSetFor(cls.id)) })}
           onAddAi={addAndOpenOne}
@@ -5692,7 +5793,7 @@ function TutorChat({ classLabel = null, classKind = null }) {
   );
 }
 
-function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, generation, onStartGeneration, onCancelGeneration, onClearGenerationError, onBack, onOpenStep, onContinue, onAddAi, onAddCourse, onAddAndOpenSet, onMoveAiLesson, onRenameChapter, baseStepCount = 0, onStayOnClass }) {
+function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, generation, onStartGeneration, onCancelGeneration, onClearGenerationError, onBack, onReview, reviewCount = 0, onOpenStep, onContinue, onAddAi, onAddCourse, onAddAndOpenSet, onMoveAiLesson, onRenameChapter, baseStepCount = 0, onStayOnClass }) {
   const chapters = chaptersOf(cls);
   const done = doneSet.size, total = cls.steps.length;
   const pct = total ? Math.round((100 * done) / total) : 0;
@@ -5833,7 +5934,10 @@ function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, ge
   if (isEmpty) {
     return (
       <main className="cq-main">
-        <button className="cq-back" onClick={onBack}>← All classes</button>
+        <div className="cq-classtop-row">
+          <button className="cq-back" onClick={onBack}>← All classes</button>
+          {onReview && <button className="cq-classreview-btn" onClick={onReview}>🔁 Review{reviewCount > 0 ? ` (${reviewCount})` : ""}</button>}
+        </div>
         <section className="cq-classhero">
           <div className="cq-classhero-top">
             <span className="cq-classhero-emoji">{cls.emoji}</span>
@@ -7065,11 +7169,78 @@ function VisualStep({ step, onDone }) {
   );
 }
 
+// Build an escalating hint ladder from the lesson's OWN data — no AI call, so
+// hints are instant, free, offline-safe, and can never drift from the actual
+// answer the tests expect. Levels go from gentlest to full reveal; the learner
+// controls how far they go.
+function buildHintLadder(step) {
+  const levels = [];
+  const io = step.io === "print" ? "print the answer with print(…)" : "return the answer with return";
+  // 1) Gentle nudge — restate the concept / what's being asked.
+  const concept = (step.concept || "").toString().trim();
+  levels.push({
+    label: "A nudge",
+    body: concept
+      ? `This one is about ${concept}. Re-read the task and think about how ${concept} applies here — you're closer than it feels.`
+      : `Re-read the task slowly. Make sure you ${io}, and check you've handled each part it asks for.`,
+  });
+  // 2) Bigger nudge — point at the worked example / the teach text.
+  if (step.example || step.teach) {
+    levels.push({
+      label: "A bigger hint",
+      body: step.example
+        ? "Look back at the Example above — your answer follows the same shape. Adapt it to what this exercise asks for."
+        : (step.teach || "").toString(),
+      showExample: !!step.example,
+    });
+  }
+  // 3) The structure — the solution with its core logic blanked, so they see the
+  //    shape without the answer handed to them.
+  if (typeof step.solution === "string" && step.solution.trim()) {
+    const structured = step.solution
+      .replace(/=\s*[^;\n]+/g, "= …")           // hide right-hand sides of assignments
+      .replace(/return\s+[^;\n]+/g, "return …") // hide the returned expression
+      .replace(/\bprint\s*\([^)]*\)/g, "print(…)");
+    if (structured !== step.solution) {
+      levels.push({ label: "Show the structure", body: structured, code: true });
+    }
+  }
+  // 4) The full answer — last resort, always available.
+  if (typeof step.solution === "string" && step.solution.trim()) {
+    levels.push({ label: "Show the answer", body: step.solution, code: true, isAnswer: true });
+  }
+  return levels;
+}
+
+function StuckLadder({ step }) {
+  const ladder = React.useMemo(() => buildHintLadder(step), [step]);
+  const [shown, setShown] = React.useState(0); // how many levels revealed
+  if (!ladder.length) return null;
+  return (
+    <div className="cq-stuck">
+      <div className="cq-stuck-revealed">
+        {ladder.slice(0, shown).map((lv, i) => (
+          <div key={i} className="cq-stuck-level">
+            <div className="cq-stuck-lvlabel">{lv.label}</div>
+            {lv.code ? <pre className="cq-stuck-code">{lv.body}</pre> : <p className="cq-stuck-text">{lv.body}</p>}
+          </div>
+        ))}
+      </div>
+      {shown < ladder.length ? (
+        <button className="cq-hintbtn" onClick={() => setShown((n) => n + 1)}>
+          {shown === 0 ? "🤔 Stuck? Get a hint" : ladder[shown] ? `Still stuck? ${ladder[shown].label}` : "More help"}
+        </button>
+      ) : (
+        <button className="cq-hintbtn" onClick={() => setShown(0)}>Hide hints</button>
+      )}
+    </div>
+  );
+}
+
 function TypeStep({ step, onDone }) {
   const [code, setCode] = useState(step.starter || "");
   const [result, setResult] = useState(null);
   const [running, setRunning] = useState(false);
-  const [showHint, setShowHint] = useState(false);
   const stats = useLessonStats();
   // Java lessons need real DOM nodes for CheerpJ's console/display (hidden).
   const javaConsoleRef = useRef(null);
@@ -7120,15 +7291,8 @@ function TypeStep({ step, onDone }) {
       <CodeEditor code={code} setCode={setCode} onChange={() => setResult(null)} onKeyDown={onKeyDown} lang={(typeof step !== "undefined" && step && step.lang) ? step.lang : "js"} minHeight={180} />
       <div className="cq-buildrow">
         <button className="cq-run" onClick={run} disabled={result?.ok || running || !code.trim()}>{running ? "Running…" : "▶ Run it"}</button>
-        <button className="cq-hintbtn" onClick={() => setShowHint((h) => !h)}>{showHint ? "Hide hint" : "💡 Show hint"}</button>
       </div>
-      {showHint && (
-        <div className="cq-iotip">
-          💡 {step.io === "print"
-            ? "This lesson wants you to PRINT the answer with print(…) — you don't return it. (For example, a different task might use print(\"Score:\", points).) Build the text this lesson asks for and print it."
-            : "This lesson wants you to RETURN the answer with return — the checker reads what you return, not what you print. (For example, a different task might use return total * 2.) Return the value this lesson asks for."}
-        </div>
-      )}
+      <StuckLadder step={step} />
       {result && !result.ok && <div className="cq-nudge">Almost — {result.why || "the tests didn't all pass yet"}.</div>}
       {result && !result.ok && result.tip && <div className="cq-iotip">💡 {result.tip}</div>}
       {result?.ok && code.trim() && <div className="cq-takeaway big">{step.why}</div>}
@@ -7485,6 +7649,244 @@ function ProjectPicker({ onStart, onBack }) {
         </div>
       )}
     </main>
+  );
+}
+
+// The review section: shows the cumulative review sets the AI has generated,
+// lets the learner practice one, and offers a "Generate more" button. Auto-sets
+// arrive every ~5 topics; this is where they live and where you can make more.
+function ReviewView({ reviewSets, onOpenSet, onGenerate, busy, hasConcepts, onBack }) {
+  const [note, setNote] = React.useState("");
+  const sets = Array.isArray(reviewSets) ? reviewSets : [];
+  const makeMore = async () => {
+    setNote("");
+    const r = await onGenerate();
+    if (r && r.empty) setNote("Finish a few lessons first — review draws on what you've already learned.");
+    else if (r && r.failed) setNote("Couldn't build a review set just now — check your connection and try again.");
+    else if (r && r.blocked) setNote("A review set is already being generated — hang tight.");
+  };
+  return (
+    <div className="cq-card2">
+      <button className="cq-back" onClick={onBack}>← Home</button>
+      <p className="cq-eyebrow">🔁 Review</p>
+      <h1 className="cq-h1">Refresh what you've learned</h1>
+      <p className="cq-lead">Review sets mix together ideas from across everything you've studied — a good way to keep them from fading. A new one appears automatically as you progress, and you can make more anytime.</p>
+
+      <div className="cq-sandbox-actions">
+        <button className="cq-run" onClick={makeMore} disabled={busy || !hasConcepts}>{busy ? "Building a review set…" : "✨ Generate a review set"}</button>
+      </div>
+      {!hasConcepts && <p className="cq-stats-note">Once you've learned a few concepts, you can generate a review.</p>}
+      {note && <div className="cq-runout-note">{note}</div>}
+
+      {sets.length === 0 ? (
+        <p className="cq-stats-note" style={{ marginTop: 18 }}>No review sets yet. One will appear automatically as you complete more lessons, or make one now.</p>
+      ) : (
+        <div className="cq-stats-section">
+          {sets.map((s) => (
+            <button key={s.id} className="cq-review-card" onClick={() => onOpenSet(s)}>
+              <div className="cq-review-cardtop">
+                <span className="cq-review-count">{s.lessons.length} exercise{s.lessons.length === 1 ? "" : "s"}</span>
+                <span className="cq-review-date">{new Date(s.createdAt).toLocaleDateString()}</span>
+              </div>
+              <div className="cq-review-concepts">{(s.concepts || []).slice(0, 6).join(" · ") || "A mix of what you've learned"}</div>
+              <span className="cq-review-go">Practice →</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// An honest reflection of where the learner is — not a scoreboard. Reads the
+// same progress/concept data the app tracks and presents it as insight: what
+// you've worked in, how far, what you've learned. No points, no ranking.
+function StatsView({ progress, aiLessons, allLearnedConcepts, classes, onBack }) {
+  const prog = progress || {};
+  const ai = aiLessons || {};
+  const cls = classes || [];
+  const concepts = allLearnedConcepts || [];
+
+  const perClass = cls.map((c) => {
+    const done = prog[c.id] instanceof Set ? prog[c.id].size : (Array.isArray(prog[c.id]) ? prog[c.id].length : 0);
+    const generated = Array.isArray(ai[c.id]) ? ai[c.id].length : 0;
+    const total = (Array.isArray(c.steps) ? c.steps.length : 0) + generated;
+    return { id: c.id, label: c.label, emoji: c.emoji, tab: c.tab, done, total };
+  }).filter((c) => c.done > 0);
+
+  const totalDone = perClass.reduce((n, c) => n + c.done, 0);
+  const languagesTouched = perClass.filter((c) => c.tab === "coding").length;
+  const inProgress = perClass.filter((c) => c.total > 0 && c.done < c.total)
+    .sort((a, b) => (b.done / b.total) - (a.done / a.total));
+  const finished = perClass.filter((c) => c.total > 0 && c.done >= c.total);
+
+  if (totalDone === 0) {
+    return (
+      <div className="cq-card2">
+        <button className="cq-back" onClick={onBack}>← Home</button>
+        <p className="cq-eyebrow">📊 Your progress</p>
+        <h1 className="cq-h1">Nothing here yet</h1>
+        <p className="cq-lead">Once you finish a few lessons, this page will show where you've been, what you've learned, and what might be worth revisiting. Go try a lesson or the sandbox to get started.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="cq-card2">
+      <button className="cq-back" onClick={onBack}>← Home</button>
+      <p className="cq-eyebrow">📊 Your progress</p>
+      <h1 className="cq-h1">Where you are</h1>
+      <p className="cq-lead">A snapshot of what you've worked on — not a score, just a way to see your own path and decide what to do next.</p>
+
+      <div className="cq-stats-summary">
+        <div className="cq-stats-cell"><span className="cq-stats-num">{totalDone}</span><span className="cq-stats-lbl">lessons completed</span></div>
+        <div className="cq-stats-cell"><span className="cq-stats-num">{languagesTouched}</span><span className="cq-stats-lbl">{languagesTouched === 1 ? "language explored" : "languages explored"}</span></div>
+        <div className="cq-stats-cell"><span className="cq-stats-num">{concepts.length}</span><span className="cq-stats-lbl">{concepts.length === 1 ? "concept learned" : "concepts learned"}</span></div>
+      </div>
+
+      {inProgress.length > 0 && (
+        <div className="cq-stats-section">
+          <h2 className="cq-stats-h2">In progress</h2>
+          <p className="cq-stats-note">Places you've started — pick one back up when you're ready.</p>
+          {inProgress.map((c) => (
+            <div key={c.id} className="cq-stats-row">
+              <span className="cq-stats-emoji">{c.emoji}</span>
+              <span className="cq-stats-name">{c.label}</span>
+              <span className="cq-stats-bar"><span className="cq-stats-fill" style={{ width: Math.round((c.done / c.total) * 100) + "%" }} /></span>
+              <span className="cq-stats-frac">{c.done}/{c.total}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {finished.length > 0 && (
+        <div className="cq-stats-section">
+          <h2 className="cq-stats-h2">Completed</h2>
+          <div className="cq-stats-chips">
+            {finished.map((c) => (<span key={c.id} className="cq-stats-donechip">{c.emoji} {c.label}</span>))}
+          </div>
+        </div>
+      )}
+
+      {concepts.length > 0 && (
+        <div className="cq-stats-section">
+          <h2 className="cq-stats-h2">Concepts you've learned</h2>
+          <p className="cq-stats-note">Ideas you've picked up along the way, across every language.</p>
+          <div className="cq-stats-chips">
+            {concepts.slice(0, 40).map((c, i) => (<span key={i} className="cq-stats-conceptchip">{c}</span>))}
+            {concepts.length > 40 && <span className="cq-stats-conceptchip more">+{concepts.length - 40} more</span>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// A free-play sandbox: pick any language that genuinely runs in the browser,
+// write whatever you want, and run it — no lesson, no grading. It reuses the
+// exact runProject* engines the lessons use, so what runs here is real. The
+// picker only offers languages that actually execute in-browser; the AI-guided
+// languages aren't shown, keeping to the rule that we never imply something runs
+// when it can't.
+const SANDBOX_LANGS = [
+  { id: "py", label: "Python", emoji: "🐍", starter: "# Try anything you like\nfor i in range(5):\n    print(i, i * i)\n" },
+  { id: "js", label: "JavaScript", emoji: "🟨", starter: "// Try anything you like\nfor (let i = 0; i < 5; i++) {\n  console.log(i, i * i);\n}\n" },
+  { id: "ts", label: "TypeScript", emoji: "🔷", starter: "function square(n: number): number {\n  return n * n;\n}\nfor (let i = 0; i < 5; i++) console.log(square(i));\n" },
+  { id: "c", label: "C", emoji: "🔧", starter: "#include <stdio.h>\nint main() {\n  for (int i = 0; i < 5; i++) printf(\"%d %d\\n\", i, i * i);\n  return 0;\n}\n" },
+  { id: "cpp", label: "C++", emoji: "⚙️", starter: "#include <iostream>\nint main() {\n  for (int i = 0; i < 5; i++) std::cout << i << \" \" << i * i << \"\\n\";\n  return 0;\n}\n" },
+  { id: "java", label: "Java", emoji: "☕", starter: "public class Main {\n  public static void main(String[] args) {\n    for (int i = 0; i < 5; i++) System.out.println(i + \" \" + i * i);\n  }\n}\n" },
+  { id: "php", label: "PHP", emoji: "🐘", starter: "<?php\nfor ($i = 0; $i < 5; $i++) {\n  echo \"$i \" . ($i * $i) . \"\\n\";\n}\n" },
+  { id: "ruby", label: "Ruby", emoji: "💎", starter: "(0...5).each do |i|\n  puts \"#{i} #{i * i}\"\nend\n" },
+  { id: "lua", label: "Lua", emoji: "🌙", starter: "for i = 0, 4 do\n  print(i, i * i)\nend\n" },
+  { id: "sql", label: "SQL", emoji: "🗃️", starter: "CREATE TABLE nums (n INTEGER);\nINSERT INTO nums VALUES (1), (2), (3), (4), (5);\nSELECT n, n * n AS square FROM nums;\n" },
+];
+
+async function runSandbox(lang, code) {
+  // Route to the same real engine the lessons use for this language.
+  if (lang === "js") return runProjectJS(code);
+  if (lang === "py") return await runProjectPython(code);
+  if (lang === "ts") return await runProjectTS(code);
+  if (lang === "c") return await runProjectCFamily(code, false);
+  if (lang === "cpp") return await runProjectCFamily(code, true);
+  if (lang === "java") return await runProjectJava(code, null, null);
+  if (lang === "php") return await runProjectPHP(code);
+  if (lang === "ruby") return await runProjectRuby(code);
+  if (lang === "lua") return await runProjectLua(code);
+  if (lang === "sql") return await runProjectSQL(code);
+  return { ok: false, output: "", error: "That language can't run in the sandbox." };
+}
+
+function Sandbox({ onBack, onHome }) {
+  const [langId, setLangId] = React.useState("py");
+  const lang = SANDBOX_LANGS.find((l) => l.id === langId) || SANDBOX_LANGS[0];
+  const [codeByLang, setCodeByLang] = React.useState(() => {
+    const m = {};
+    for (const l of SANDBOX_LANGS) m[l.id] = l.starter;
+    return m;
+  });
+  const code = codeByLang[langId] ?? "";
+  const setCode = (v) => setCodeByLang((prev) => ({ ...prev, [langId]: typeof v === "function" ? v(prev[langId] ?? "") : v }));
+  const [out, setOut] = React.useState(null);
+  const [err, setErr] = React.useState("");
+  const [running, setRunning] = React.useState(false);
+
+  const run = async () => {
+    if (!code.trim()) { setErr("Write some code first, then run it."); setOut(null); return; }
+    setRunning(true); setErr(""); setOut(null);
+    try {
+      const r = await runSandbox(langId, code);
+      if (r.ok) setOut(r);
+      else setErr(r.error || "Something went wrong running that.");
+    } catch (e) {
+      setErr("Couldn't run it: " + (e && e.message ? e.message : "unknown error"));
+    } finally { setRunning(false); }
+  };
+  const onKeyDown = makeCodeKeyDown(code, setCode);
+  const firstRunNote = langId === "py" ? "🐍 First Python run downloads the engine (~10s), then it's quick."
+    : (langId === "c" || langId === "cpp") ? "⚙️ First run downloads the compiler — give it a moment."
+    : (langId === "java") ? "☕ First Java run downloads the engine — give it a moment."
+    : (langId === "ruby") ? "💎 First Ruby run downloads the engine — give it a moment."
+    : (langId === "php") ? "🐘 First PHP run downloads the engine — give it a moment."
+    : "";
+
+  return (
+    <div className="cq-card2">
+      <button className="cq-back" onClick={onBack}>← Home</button>
+      <p className="cq-eyebrow">🧪 Sandbox</p>
+      <h1 className="cq-h1">Play around</h1>
+      <p className="cq-lead">Pick a language, write whatever you want, and run it. No lessons, no grading — just experiment. Everything here runs for real in your browser.</p>
+
+      <div className="cq-sandbox-langs">
+        {SANDBOX_LANGS.map((l) => (
+          <button key={l.id}
+            className={"cq-sandbox-lang" + (l.id === langId ? " active" : "")}
+            onClick={() => { setLangId(l.id); setOut(null); setErr(""); }}>
+            <span className="cq-sandbox-emoji">{l.emoji}</span>{l.label}
+          </button>
+        ))}
+      </div>
+
+      <CodeEditor code={code} setCode={setCode} onKeyDown={onKeyDown} lang={langId} minHeight={220} />
+      {firstRunNote && <p className="cq-tapnote">{firstRunNote}</p>}
+
+      <div className="cq-sandbox-actions">
+        <button className="cq-run" onClick={run} disabled={running}>{running ? "Running…" : "▶ Run"}</button>
+        <button className="cq-ai-chip" onClick={() => { setCode(lang.starter); setOut(null); setErr(""); }}>↺ Reset to example</button>
+        <button className="cq-ai-chip" onClick={() => { setCode(""); setOut(null); setErr(""); }}>🗑 Clear</button>
+      </div>
+
+      {err && <div className="cq-runout-note">{err}</div>}
+      {out && (
+        <div className="cq-runout">
+          <div className="cq-runout-label">Output</div>
+          {langId === "sql" ? (
+            <div className="cq-sqltablewrap"><pre className="cq-console">{out.output != null && out.output !== "" ? out.output : "(no rows)"}</pre></div>
+          ) : (
+            <pre className="cq-console">{out.output != null && out.output !== "" ? out.output : "(ran with no output)"}</pre>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -11004,7 +11406,7 @@ body{overflow-x:clip}
 .cq-main{max-width:940px;margin:0 auto;padding:52px 28px 96px;animation:cq-fade .4s ease}
 @keyframes cq-fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 .cq-eyebrow{text-transform:uppercase;letter-spacing:2.8px;font-size:10.5px;color:var(--neon);font-weight:700;margin:0 0 12px;text-shadow:0 0 12px rgba(58,201,224,.45)}
-.cq-back{display:inline-flex;align-items:center;gap:6px;background:none;border:none;color:var(--ink-faint);cursor:pointer;font-size:13px;margin-bottom:20px;font-family:inherit;padding:6px 0;transition:color .15s}
+.cq-back{display:flex;width:fit-content;align-items:center;gap:6px;background:none;border:none;color:var(--ink-faint);cursor:pointer;font-size:13px;margin-bottom:32px;font-family:inherit;padding:6px 0;transition:color .15s}
 .cq-back:hover{color:var(--ink)}
 
 /* ============ HOME / DASHBOARD ============ */
@@ -11232,6 +11634,44 @@ body{overflow-x:clip}
 .cq-runout-label{font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:var(--ink-faint);font-weight:700;margin-bottom:6px}
 .cq-console{background:var(--code-bg);border:1px solid var(--line);border-radius:10px;padding:14px 16px;font-family:var(--mono);font-size:13px;line-height:1.55;color:var(--code-text);white-space:pre-wrap;max-height:280px;overflow:auto;margin:0}
 .cq-runout-note{color:#ff8aa3;font-size:13px;margin-top:12px}
+.cq-sandbox-langs{display:flex;flex-wrap:wrap;gap:9px;margin-bottom:16px}
+.cq-sandbox-lang{display:inline-flex;align-items:center;gap:7px;background:var(--bg-2);border:1px solid var(--line);border-radius:10px;padding:8px 13px;font-size:14px;font-weight:600;color:var(--ink-soft);cursor:pointer;font-family:inherit;transition:border-color .15s,color .15s,background .15s}
+.cq-sandbox-lang:hover{border-color:var(--neon);color:var(--ink)}
+.cq-sandbox-lang.active{background:var(--neon-ghost);border-color:var(--neon);color:var(--ink)}
+.cq-sandbox-emoji{font-size:15px}
+.cq-sandbox-actions{display:flex;flex-wrap:wrap;gap:11px;align-items:center;margin-top:14px}
+.cq-stats-summary{display:flex;flex-wrap:wrap;gap:12px;margin:20px 0 8px}
+.cq-stats-cell{flex:1;min-width:120px;background:var(--bg-2);border:1px solid var(--line);border-radius:14px;padding:16px 18px;display:flex;flex-direction:column;gap:4px}
+.cq-stats-num{font-size:30px;font-weight:800;color:var(--neon);line-height:1}
+.cq-stats-lbl{font-size:12.5px;color:var(--ink-soft)}
+.cq-stats-section{margin-top:26px}
+.cq-stats-h2{font-size:16px;font-weight:700;margin:0 0 4px}
+.cq-stats-note{font-size:13px;color:var(--ink-soft);margin:0 0 14px}
+.cq-stats-row{display:flex;align-items:center;gap:11px;padding:9px 0;border-bottom:1px solid var(--line-soft)}
+.cq-stats-emoji{font-size:18px}
+.cq-stats-name{flex:1;font-weight:600;font-size:14.5px}
+.cq-stats-bar{width:90px;height:7px;background:var(--bg-0);border-radius:99px;overflow:hidden;flex-shrink:0}
+.cq-stats-fill{display:block;height:100%;background:var(--neon);border-radius:99px}
+.cq-stats-frac{font-size:12.5px;color:var(--ink-soft);min-width:44px;text-align:right}
+.cq-stats-chips{display:flex;flex-wrap:wrap;gap:9px}
+.cq-stats-donechip{background:var(--teal-ghost);border:1px solid rgba(94,224,192,.4);border-radius:99px;padding:6px 13px;font-size:13px;font-weight:600}
+.cq-stats-conceptchip{background:var(--bg-2);border:1px solid var(--line);border-radius:99px;padding:6px 13px;font-size:13px;color:var(--ink-soft)}
+.cq-stats-conceptchip.more{color:var(--ink-faint);font-style:italic}
+.cq-review-card{display:block;width:100%;text-align:left;background:var(--bg-2);border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin-bottom:12px;cursor:pointer;font-family:inherit;color:inherit;transition:border-color .15s,transform .15s}
+.cq-review-card:hover{border-color:var(--neon);transform:translateY(-1px)}
+.cq-review-cardtop{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.cq-review-count{font-weight:700;font-size:14px;color:var(--neon)}
+.cq-review-date{font-size:12px;color:var(--ink-faint)}
+.cq-review-concepts{font-size:13.5px;color:var(--ink-soft);line-height:1.5;margin-bottom:10px}
+.cq-review-go{font-size:13px;font-weight:600;color:var(--ink)}
+.cq-classtop-row{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.cq-classreview-btn{background:var(--bg-2);border:1px solid var(--line);border-radius:10px;padding:8px 14px;font-size:13px;font-weight:600;color:var(--ink-soft);cursor:pointer;font-family:inherit;transition:border-color .15s,color .15s}
+.cq-classreview-btn:hover{border-color:var(--neon);color:var(--ink)}
+.cq-stuck{margin-top:14px}
+.cq-stuck-level{background:var(--amber-ghost);border:1px solid rgba(245,201,123,.35);border-radius:12px;padding:13px 15px;margin-bottom:10px;animation:cq-settle .3s cubic-bezier(.22,.61,.36,1)}
+.cq-stuck-lvlabel{font-size:11px;text-transform:uppercase;letter-spacing:1.3px;color:var(--amber);font-weight:700;margin-bottom:6px}
+.cq-stuck-text{margin:0;font-size:14px;line-height:1.6;color:#f7dca6}
+.cq-stuck-code{margin:0;font-family:var(--mono,ui-monospace,monospace);font-size:13px;line-height:1.55;white-space:pre-wrap;color:var(--ink);background:var(--bg-0);border-radius:8px;padding:11px 13px;overflow-x:auto}
 
 /* ============ FEEDBACK ============ */
 .cq-takeaway{background:linear-gradient(100deg,var(--teal-ghost),var(--violet-ghost));border:1px solid rgba(94,224,192,.4);border-radius:12px;padding:18px 20px;font-size:15px;line-height:1.6;font-weight:500;animation:cq-settle .4s cubic-bezier(.22,.61,.36,1)}
