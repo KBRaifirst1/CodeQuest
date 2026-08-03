@@ -7,7 +7,7 @@ import { supabase } from "./lib/supabase";
 // Build marker — check this in the browser console to confirm which version is
 // actually running: type  window.__CQ_VERSION  in DevTools. If it's not the
 // value below, your browser/Vercel is serving an older bundle.
-const CQ_VERSION = "2026-07-12-v149-bash-scripting";
+const CQ_VERSION = "2026-07-12-v150-basic-print-comma";
 
 // Only this account (by Supabase user id) can read submitted feedback. Gating by
 // id, not email, so it survives email changes / adding Google login later.
@@ -2632,7 +2632,35 @@ function runBASIC(source, inputs = []) {
     if (upper.startsWith("PRINT")) {
       const rest = text.slice(5).trim();
       if (!rest) out.push("");
-      else out.push(rest.split(";").map((p) => { const v = evalExpr(p); return v === undefined ? "" : String(v); }).join(""));
+      else {
+        // Split on ; (tight join) and , (tab-stop column), respecting quotes.
+        // Real BASIC: ";" concatenates directly; "," advances to the next tab
+        // column (every 14 chars here). A trailing separator suppresses newline,
+        // but we keep it simple: build one line.
+        const parts = []; // {text, sep} where sep is the separator that FOLLOWED this part
+        let cur = "", inQ = false, sepAfter = "";
+        for (let i = 0; i < rest.length; i++) {
+          const ch = rest[i];
+          if (ch === '"') { inQ = !inQ; cur += ch; continue; }
+          if (!inQ && (ch === ";" || ch === ",")) { parts.push({ expr: cur, sep: ch }); cur = ""; continue; }
+          cur += ch;
+        }
+        parts.push({ expr: cur, sep: "" });
+        let lineStr = "";
+        for (const p of parts) {
+          if (p.expr.trim() !== "") {
+            const v = evalExpr(p.expr);
+            lineStr += (v === undefined ? "" : String(v));
+          }
+          if (p.sep === ",") {
+            // advance to next tab stop (columns of 14)
+            const nextStop = (Math.floor(lineStr.length / 14) + 1) * 14;
+            while (lineStr.length < nextStop) lineStr += " ";
+          }
+          // ";" and "" add nothing between
+        }
+        out.push(lineStr);
+      }
       pc++;
     } else if (upper.startsWith("LET ") || /^[A-Za-z_]\w*\$?\s*=/.test(text)) {
       const body = upper.startsWith("LET ") ? text.slice(4) : text;
@@ -3888,7 +3916,7 @@ const OUTPUT_DIALECT_NOTE = (id) =>
   id === "asm"
     ? ` CRITICAL — this is a small TEACHING CPU, not real x86/ARM. Use ONLY this instruction set: registers R0,R1,R2,R3; MOV Rx, value-or-Ry; ADD/SUB/MUL Rx, value-or-Ry; PRINT Rx (prints the register's number on its own line); labels written as "name:" at line start; JMP label; JZ Rx, label (jump if Rx==0); JNZ Rx, label (jump if Rx!=0); HLT to stop. Comments start with ";". There is NO division, no strings, no other instructions — do not use anything else. Every value is an integer. Example program that prints 8: "MOV R0, 5" / "ADD R0, 3" / "PRINT R0" / "HLT".`
     : id === "basic"
-    ? ` CRITICAL — use ONLY this classic line-numbered BASIC dialect our interpreter runs: every line starts with a line number (10, 20, 30…). Supported statements: PRINT (a number, a "string", or an expression); LET var = expression; FOR var = a TO b … NEXT var; IF condition THEN line-number; GOTO line-number; END. Variables are single uppercase letters or simple names. Arithmetic: + - * /. Do NOT use DIM, arrays, GOSUB, INPUT, or functions — stick to the statements listed. Example that prints 1 then 2 then 3: "10 FOR I = 1 TO 3" / "20 PRINT I" / "30 NEXT I" / "40 END".`
+    ? ` CRITICAL — use ONLY this classic line-numbered BASIC dialect our interpreter runs: every line starts with a line number (10, 20, 30…). Supported statements: PRINT (a number, a "string", or an expression; separate items with ";" for tight concatenation or "," to advance to the next tab column of 14 chars); LET var = expression; FOR var = a TO b … NEXT var; IF condition THEN line-number; GOTO line-number; END. Variables are single uppercase letters or simple names. Arithmetic: + - * /. Do NOT use DIM, arrays, GOSUB, INPUT, or functions — stick to the statements listed. Example that prints 1 then 2 then 3: "10 FOR I = 1 TO 3" / "20 PRINT I" / "30 NEXT I" / "40 END".`
     : id === "bash"
     ? ` CRITICAL — this teaching shell runs bash SCRIPTING LOGIC only, NOT external programs, pipes, redirection, or files. Use ONLY: echo (and printf); variable assignment NAME=value and use \$NAME / \${NAME} / \${#NAME} / \${NAME:-default}; arithmetic \$(( ... )) and let; test with [ ... ] using -eq -ne -lt -le -gt -ge for numbers and = != for strings, plus -z / -n; if/elif/else/fi; for VAR in LIST / C-style for (( i=0; i<n; i++ )); while; until; case/esac; and function definitions name() { ... }. Do NOT use pipes ( | ), redirection ( > < ), command substitution ( \`...\` or \$(...) ), or ANY external command (no grep, cat, ls, sed, awk, wc, etc.) — those are not available and the program will error. The program's output comes only from echo/printf. Example that prints 1 then 2 then 3: "for i in 1 2 3; do" / "  echo \$i" / "done".`
     : "";
