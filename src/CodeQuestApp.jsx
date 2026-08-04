@@ -7,7 +7,7 @@ import { supabase } from "./lib/supabase";
 // Build marker — check this in the browser console to confirm which version is
 // actually running: type  window.__CQ_VERSION  in DevTools. If it's not the
 // value below, your browser/Vercel is serving an older bundle.
-const CQ_VERSION = "2026-07-12-v158-sandbox-multifile";
+const CQ_VERSION = "2026-07-12-v159-reset-printf-fix";
 
 // Only this account (by Supabase user id) can read submitted feedback. Gating by
 // id, not email, so it survives email changes / adding Google login later.
@@ -3422,7 +3422,7 @@ function runProjectBash(code) {
 // (length, substr, toupper, tolower, split, index, int). NO getline, no file I/O,
 // no system() — input is the fixed text the lesson provides.
 function runAwkCore(program, input) {
-  const out = [];
+  let outBuf = "";
   const globals = Object.create(null);
   let FS = " ", OFS = " ", ORS = "\n";
   globals["FS"] = FS; globals["OFS"] = OFS;
@@ -3703,11 +3703,11 @@ function runAwkCore(program, input) {
     switch (s.type) {
       case "print": {
         const parts = s.args.length ? s.args.map((a) => str(evalExpr(a))) : [field0()];
-        out.push(parts.join(str(getVar("OFS") || " "))); return;
+        outBuf += parts.join(str(getVar("OFS") || " ")) + "\n"; return;
       }
       case "printf": {
         const f = str(evalExpr(s.args[0])); const rest = s.args.slice(1).map(evalExpr);
-        out.push(sprintf(f, rest)); return;
+        outBuf += sprintf(f, rest); return;
       }
       case "expr": evalExpr(s.expr); return;
       case "if": if (bool(evalExpr(s.cond))) return execStmts(s.then); else if (s.els) return execStmts(s.els); return;
@@ -3765,9 +3765,9 @@ function runAwkCore(program, input) {
     }
     for (const r of rules) if (r.special === "END") execStmts(r.action);
   } catch (e) {
-    return { ok: false, output: out.join("\n"), error: e.message };
+    return { ok: false, output: outBuf.replace(/\n$/, ""), error: e.message };
   }
-  return { ok: true, output: out.join("\n") };
+  return { ok: true, output: outBuf.replace(/\n$/, "") };
 }
 function runProjectAwk(program, input) {
   try { return runAwkCore(program, input == null ? "" : input); }
@@ -7157,12 +7157,6 @@ function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, ge
         <div className="cq-classtop-row">
           <button className="cq-back" onClick={onBack}>← All classes</button>
           {onReview && <button className="cq-classreview-btn" onClick={onReview}>🔁 Review{reviewCount > 0 ? ` (${reviewCount})` : ""}</button>}
-          {onResetClass && doneSet.size > 0 && (
-            <button className="cq-reset-btn" onClick={() => {
-              if (typeof window !== "undefined" && window.confirm && !window.confirm("Reset your progress for this class? This clears which lessons are marked done — your saved work elsewhere isn't affected.")) return;
-              onResetClass();
-            }}>↺ Reset progress</button>
-          )}
         </div>
         <section className="cq-classhero">
           <div className="cq-classhero-top">
@@ -7194,7 +7188,15 @@ function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, ge
 
   return (
     <main className="cq-main">
-      <button className="cq-back" onClick={onBack}>← All classes</button>
+      <div className="cq-classtop-row">
+        <button className="cq-back" onClick={onBack}>← All classes</button>
+        {onResetClass && doneSet.size > 0 && (
+          <button className="cq-reset-btn" onClick={() => {
+            if (typeof window !== "undefined" && window.confirm && !window.confirm("Reset your progress for this class? This clears which lessons are marked done — your saved work elsewhere isn't affected.")) return;
+            onResetClass();
+          }}>↺ Reset progress</button>
+        )}
+      </div>
       <section className="cq-classhero">
         <div className="cq-classhero-top">
           <span className="cq-classhero-emoji">{cls.emoji}</span>
