@@ -7,7 +7,7 @@ import { supabase } from "./lib/supabase";
 // Build marker — check this in the browser console to confirm which version is
 // actually running: type  window.__CQ_VERSION  in DevTools. If it's not the
 // value below, your browser/Vercel is serving an older bundle.
-const CQ_VERSION = "2026-07-12-v153-header-scroll-strip";
+const CQ_VERSION = "2026-07-12-v154-multifile-classes";
 
 // Only this account (by Supabase user id) can read submitted feedback. Gating by
 // id, not email, so it survives email changes / adding Google login later.
@@ -5165,6 +5165,23 @@ function visualStepFor(langId) {
 const CLASSES = [
   { id: "general", tab: "coding", label: "General Coding", emoji: "🧠", mode: "concept", blurb: "Start here. Learn to THINK like a coder — patterns, steps, and the universal building blocks (functions, return, loops…) that exist in every language.", steps: GENERAL_STEPS },
   { id: "general_multifile", tab: "coding", label: "General Multi-file", emoji: "📁", mode: "concept", blurb: "How real programs span many files — entry points, imports, and how files work together. General throughout, then real two-file programs you run in each language.", steps: [...GENERAL_MULTIFILE_STEPS, ...MULTIFILE_SEED_LESSONS] },
+  // Standalone multi-file combo classes: each pairs the shared "how multi-file
+  // works" intro with one real two-file program in that language pairing, graded
+  // for real by running it. They sit in the coding list alongside single-language
+  // classes and group under "Multi-file — real test grading" in the grading sort.
+  ...MULTIFILE_SEED_LESSONS.map((lesson) => ({
+    id: "multi_" + lesson.combo,
+    tab: "coding",
+    label: lesson.chapter
+      .replace("JavaScript + SQL", "JS + SQL")
+      .replace("JavaScript + JavaScript", "JS + JS"),
+    emoji: "📁",
+    mode: "multifile",
+    blurb: `A real two-file ${lesson.chapter} program — you write it across files, and it runs and is checked for real.`,
+    // Use the concept intro but drop its generic Python demo step, so this class's
+    // one hands-on two-file program is the combo's own language pairing.
+    steps: [...GENERAL_MULTIFILE_STEPS.filter((s) => s.type !== "multifile"), lesson],
+  })),
   ...LANGUAGE_CATALOG.map((l) => {
     // Every language with real graphics gets a hands-on "draw a shape" visual
     // lesson appended to its steps (via visualStepFor). Languages without
@@ -5247,7 +5264,7 @@ const chaptersOf = (cls) => {
   return order.map((name) => ({ name, stepIdxs: map[name] }));
 };
 const resumeIdx = (cls, doneSet) => { for (let i = 0; i < cls.steps.length; i++) if (!doneSet.has(i)) return i; return Math.max(0, cls.steps.length - 1); };
-const modeLabel = (mode) => mode === "real" ? "real test grading" : mode === "output" ? "real output grading" : mode === "sql" ? "real query grading" : mode === "markup" ? "live preview" : mode === "concept" ? "think like a coder" : "AI-guided";
+const modeLabel = (mode) => mode === "real" ? "real test grading" : mode === "output" ? "real output grading" : mode === "multifile" ? "multi-file · real test grading" : mode === "sql" ? "real query grading" : mode === "markup" ? "live preview" : mode === "concept" ? "think like a coder" : "AI-guided";
 
 // ---------- Module-level generation store ----------
 // Generation state lives OUTSIDE React because the parent auth wrapper remounts
@@ -5970,6 +5987,7 @@ function AppInner({ initialState, onPersist, onSignOut, user } = {}) {
           onReview={() => setScreen({ name: "review" })}
           reviewCount={reviewSets.length}
           onOpenStep={(idx) => setScreen({ name: "lesson", id: cls.id, idx })}
+          onOpenClass={(id) => setScreen({ name: "class", id })}
           onContinue={() => setScreen({ name: "lesson", id: cls.id, idx: resumeIdx(cls, doneSetFor(cls.id)) })}
           onAddAi={addAndOpenOne}
           onAddCourse={(lessons) => setAiLessons((a) => ({ ...a, [baseCls.id]: [...(a[baseCls.id] || []), ...lessons] }))}
@@ -6367,10 +6385,11 @@ function Home({ progress, aiLessons, savedProjects = [], profileDescription = ""
           // (a query against a real database), so it gets its own honest heading
           // rather than being counted under "real test grading" — otherwise the
           // count reads one too high for code that runs and is checked.
-          const groupOf = (m) => m === "real" ? "real" : m === "output" ? "output" : m === "sql" ? "sql" : m === "markup" ? "markup" : "ai";
+          const groupOf = (m) => m === "real" ? "real" : m === "output" ? "output" : m === "multifile" ? "multifile" : m === "sql" ? "sql" : m === "markup" ? "markup" : "ai";
           const groups = {
             real: { label: "Real test grading — your code runs and is checked", items: [] },
             output: { label: "Real output grading — your program runs and its output is checked", items: [] },
+            multifile: { label: "Multi-file — real test grading across files", items: [] },
             sql: { label: "Real query grading — your query runs on a real database", items: [] },
             markup: { label: "Live preview — you see your real rendered result", items: [] },
             ai: { label: "AI-guided — explained and reviewed by AI", items: [] },
@@ -6380,7 +6399,7 @@ function Home({ progress, aiLessons, savedProjects = [], profileDescription = ""
           return (
             <>
               {(generalShown || multiShown) && (<><div className="cq-section-label">Start here</div><div className="cq-classlist" style={{ marginBottom: 28 }}>{generalShown && renderCard(general)}{multiShown && renderCard(generalMulti)}</div></>)}
-              {["real", "output", "sql", "markup", "ai"].map((k) => groups[k].items.length > 0 && (
+              {["real", "output", "multifile", "sql", "markup", "ai"].map((k) => groups[k].items.length > 0 && (
                 <React.Fragment key={k}>
                   <div className="cq-section-label">{groups[k].label} <span className="cq-section-count">({groups[k].items.length})</span></div>
                   <div className="cq-classlist" style={{ marginBottom: 28 }}>{groups[k].items.map(renderCard)}</div>
@@ -6492,7 +6511,7 @@ function TutorChat({ classLabel = null, classKind = null }) {
   );
 }
 
-function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, generation, onStartGeneration, onCancelGeneration, onClearGenerationError, onBack, onReview, reviewCount = 0, onOpenStep, onContinue, onAddAi, onAddCourse, onAddAndOpenSet, onMoveAiLesson, onRenameChapter, baseStepCount = 0, onStayOnClass }) {
+function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, generation, onStartGeneration, onCancelGeneration, onClearGenerationError, onBack, onReview, reviewCount = 0, onOpenStep, onOpenClass, onContinue, onAddAi, onAddCourse, onAddAndOpenSet, onMoveAiLesson, onRenameChapter, baseStepCount = 0, onStayOnClass }) {
   const chapters = chaptersOf(cls);
   const done = doneSet.size, total = cls.steps.length;
   const pct = total ? Math.round((100 * done) / total) : 0;
@@ -6698,16 +6717,20 @@ function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, ge
           <section className="cq-combopick">
             <div className="cq-combopick-head">
               <h2 className="cq-combopick-title">Real two-file programs</h2>
-              <p className="cq-combopick-sub">Jump straight to a language pairing — each one runs for real and is graded.</p>
+              <p className="cq-combopick-sub">Open a language pairing as its own class — each one runs for real and is graded.</p>
             </div>
             <div className="cq-combogrid">
-              {combos.map(({ s, idx }) => (
-                <button key={s.id || idx} className={`cq-combocard ${doneSet.has(idx) ? "done" : ""}`} onClick={() => onOpenStep(idx)}>
-                  <span className="cq-combocard-label">{s.chapter || s.title}</span>
-                  <span className="cq-combocard-title">{s.title}</span>
-                  {doneSet.has(idx) && <span className="cq-combocard-check">✓</span>}
-                </button>
-              ))}
+              {combos.map(({ s, idx }) => {
+                const comboClassId = "multi_" + s.combo;
+                const comboDone = onOpenClass ? ((progress?.[comboClassId]?.size) || 0) > 0 : doneSet.has(idx);
+                return (
+                  <button key={s.id || idx} className={`cq-combocard ${comboDone ? "done" : ""}`} onClick={() => onOpenClass ? onOpenClass(comboClassId) : onOpenStep(idx)}>
+                    <span className="cq-combocard-label">{s.chapter || s.title}</span>
+                    <span className="cq-combocard-title">{s.title}</span>
+                    {comboDone && <span className="cq-combocard-check">✓</span>}
+                  </button>
+                );
+              })}
             </div>
           </section>
         );
