@@ -7,7 +7,7 @@ import { supabase } from "./lib/supabase";
 // Build marker — check this in the browser console to confirm which version is
 // actually running: type  window.__CQ_VERSION  in DevTools. If it's not the
 // value below, your browser/Vercel is serving an older bundle.
-const CQ_VERSION = "2026-07-12-v164-teach-gate-all-paths";
+const CQ_VERSION = "2026-07-12-v165-teach-filler-check";
 
 // Only this account (by Supabase user id) can read submitted feedback. Gating by
 // id, not email, so it survives email changes / adding Google login later.
@@ -1326,12 +1326,10 @@ function validateGenerated(L) {
   for (const t of L.tests) if (!Array.isArray(t.args) || !("expected" in t)) return { ok: false, p: ["bad tests"] };
   if (!verifyRuns(L.solution, L.fnName, L.tests).ok) p.push("sol fails");
   if (L.starter && verifyRuns(L.starter, L.fnName, L.tests).ok) p.push("starter passes");
-  // Teaching gate: a lesson with no real explanation can't reach a learner. We
-  // reject only clearly-broken teaching (missing or trivially short), not merely
-  // concise ones — a genuine explanation of a new concept is never < ~40 chars.
-  const teach = (L.teach || "").trim();
-  if (!teach) p.push("no teach");
-  else if (teach.length < 40) p.push("teach too thin");
+  // Teaching gate: a lesson with no real / filler-only explanation can't reach a
+  // learner. Reuses the shared floor so every path judges teaching identically.
+  const tg = teachIsSubstantive(L.teach);
+  if (!tg.ok) p.push(tg.reason.includes("no explanation") ? "no teach" : "teach too thin");
   return { ok: p.length === 0, p };
 }
 const GEN_SYSTEM =
@@ -1895,15 +1893,32 @@ function normalizeConceptForCheck(c) {
   return s;
 }
 
+// Shared teaching-quality floor. Guarantees an explanation is PRESENT and not
+// filler — not that it's good (quality rides on the generator prompt). Two checks:
+// (1) a length floor catches empty/stub teach; (2) a meaning-density check catches
+// text that's MOSTLY meta-filler ("this lesson teaches you about this concept here")
+// even when it clears the length floor. It measures the share of non-filler words,
+// so a genuine concise explanation in plain prose still passes — we deliberately do
+// NOT require code syntax, which would wrongly reject legitimate prose explanations.
+const TEACH_FILLER_WORDS = new Set(["this","lesson","teaches","teach","you","your","about","concept","here","now","today","exercise","will","learn","important","idea","topic","read","carefully","think","what","trying","show","showing","explore","new","useful","beginner","beginners","know","well","introduces","something","helpful","later","hard","every","learner","should","understand","before","moving","ahead","the","a","an","and","is","are","to","of","for","in","on","that","it","we","ok","very","find"]);
+function teachIsSubstantive(teach) {
+  const t = (teach == null ? "" : String(teach)).trim();
+  if (!t) return { ok: false, reason: "lesson has no explanation (teach)" };
+  if (t.length < 40) return { ok: false, reason: "explanation too thin to teach the concept" };
+  const words = t.toLowerCase().replace(/[^a-z0-9`$_'".()\[\]{}=<>+\-*/%\s]/g, " ").split(/\s+/).filter((w) => w.length > 0);
+  if (words.length < 6) return { ok: false, reason: "explanation too short to teach the concept" };
+  const content = words.filter((w) => !TEACH_FILLER_WORDS.has(w));
+  if (content.length / words.length < 0.30) return { ok: false, reason: "explanation is mostly filler — teaches nothing concrete" };
+  return { ok: true };
+}
+
 async function validateLesson(L, classId) {
   // Universal teaching gate: whatever the language or lesson type, a lesson with
   // no real explanation must never reach a learner. This is separate from grading
-  // the code — a lesson can run perfectly and still teach nothing. We reject only
-  // clearly-broken teaching (missing / trivially short), so genuinely concise
-  // explanations still pass; a real explanation of a NEW concept is never tiny.
-  const teachText = (L && L.teach ? String(L.teach) : "").trim();
-  if (!teachText) return { ok: false, reason: "lesson has no explanation (teach)" };
-  if (teachText.length < 40) return { ok: false, reason: "explanation too thin to teach the concept" };
+  // the code — a lesson can run perfectly and still teach nothing. The gate proves
+  // an explanation is PRESENT and non-filler; genuine quality rides on the prompt.
+  const teachCheck = teachIsSubstantive(L && L.teach);
+  if (!teachCheck.ok) return { ok: false, reason: teachCheck.reason };
   // Markup lessons (HTML/CSS/JSX) aren't function-shaped, so they're checked
   // first and differently: we RENDER the author's own solution and require it to
   // satisfy its own checks, then render the starter and require it NOT to. Same
@@ -4911,7 +4926,7 @@ async function generateCourse(classId, progressMap, signal) {
       const check = await verifySQL(L.solution, L.seed, L.expected, /order\s+by/i.test(L.solution || ""));
       if (!check.engineError && !check.ok) continue; // skip lessons whose own solution fails
       // Teaching gate: a SQL lesson with no real explanation must not reach a learner.
-      if (!L.teach || String(L.teach).trim().length < 40) continue;
+      if (!teachIsSubstantive(L.teach).ok) continue; // teaching floor
       out.push({ id: "g_" + Math.random().toString(36).slice(2, 7), type: "sqlquery", chapter: `${cfg.label} course`, generated: true,
         title: L.title, teach: L.teach || "", example: L.example || "", concept: L.concept || L.title,
         schema: L.schema || "", seed: L.seed, starter: L.starter || "SELECT ", expected: L.expected, lang: "sql",
@@ -4937,7 +4952,7 @@ async function generateCourse(classId, progressMap, signal) {
         if (outputMatches(starterOut, L.expectedOutput)) continue; // starter already solves it → skip
       }
       // Teaching gate: an output-mode lesson with no real explanation must not reach a learner.
-      if (!L.teach || String(L.teach).trim().length < 40) continue;
+      if (!teachIsSubstantive(L.teach).ok) continue; // teaching floor
       out.push({ id: "g_" + Math.random().toString(36).slice(2, 7), type: "output", chapter: `${cfg.label} course`, generated: true,
         title: L.title, intro: L.teach || "Write the program so it prints the expected output.", concept: L.concept || L.title,
         teach: L.teach || "", example: L.example || "", task: L.task || "",
@@ -4956,7 +4971,7 @@ async function generateCourse(classId, progressMap, signal) {
     } else {
       if (!L.title || !Array.isArray(L.checks) || L.checks.length < 2) continue;
       // Teaching gate: even AI-judged lessons must carry a real explanation.
-      if (!L.teach || String(L.teach).trim().length < 40) continue;
+      if (!teachIsSubstantive(L.teach).ok) continue; // teaching floor
       out.push({ id: "g_" + Math.random().toString(36).slice(2, 7), type: "aitype", chapter: `${cfg.label} course`, generated: true, aiJudged: true,
         title: L.title, intro: L.teach || "", concept: L.concept || L.title, teach: L.teach || "", example: L.example || "",
         starter: L.starter || "", checks: L.checks, lang: classId, langLabel: cfg.label,
