@@ -7,7 +7,7 @@ import { supabase } from "./lib/supabase";
 // Build marker — check this in the browser console to confirm which version is
 // actually running: type  window.__CQ_VERSION  in DevTools. If it's not the
 // value below, your browser/Vercel is serving an older bundle.
-const CQ_VERSION = "2026-07-12-v159-reset-printf-fix";
+const CQ_VERSION = "2026-07-12-v164-teach-gate-all-paths";
 
 // Only this account (by Supabase user id) can read submitted feedback. Gating by
 // id, not email, so it survives email changes / adding Google login later.
@@ -371,46 +371,46 @@ async function verifyLua(code, fnName, tests) {
 // runs for real over that input, and the output is checked. This is the honest way
 // to teach AWK — it exists to process input, so every lesson feeds it input.
 const AWK_STEPS = [
-  { type: "awk", chapter: "1 · Fields", title: "Print a column",
-    teach: "AWK reads text one line at a time and splits each line into fields by spaces. $1 is the first field, $2 the second, and so on. The program { print $1 } means: for every line, print the first field.",
-    input: "cat 4\nbird 2\ndog 4", task: "Print just the animal name (the first field) of every line.",
-    starter: "{ print }", solution: "{ print $1 }", expectedOutput: "cat\nbird\ndog",
-    why: "You pulled out one column from every row — the core of what AWK does." },
-  { type: "awk", chapter: "1 · Fields", title: "Print the second column",
-    teach: "$2 is the second field. You can print any field the same way.",
-    input: "cat 4\nbird 2\ndog 4", task: "Print just the number of legs (the second field) of every line.",
+  { type: "awk", chapter: "1 \u00b7 Fields", title: "What AWK does",
+    teach: "AWK is a tiny language for pulling apart text. It reads your input ONE LINE AT A TIME, and for each line it runs the code you put inside curly braces { }.\n\nInside the braces, AWK has already chopped the line into pieces called fields, split on the spaces. It names them $1, $2, $3\u2026 so on the line `cat 4`, $1 is `cat` and $2 is `4`.\n\nThe program below, { print $1 }, means: \"for every line, print field 1.\" Press Run and watch it pull out just the first word of each line.",
+    input: "cat 4\nbird 2\ndog 4", task: "The program is already written. Just press Run and see what { print $1 } does to the input.",
+    starter: "{ print $1 }", solution: "{ print $1 }", expectedOutput: "cat\nbird\ndog",
+    why: "That\u2019s the whole heart of AWK: it reads each line, splits it into fields, and you say what to do with them." },
+  { type: "awk", chapter: "1 \u00b7 Fields", title: "Pick a different field",
+    teach: "You just used $1 for the first field. Every field has a number: $2 is the second, $3 the third, and so on \u2014 counting from the left, split on spaces.\n\nSo on the line `cat 4`, if $1 gave you `cat`, then $2 gives you `4`. Change which number you print and you pick a different column.",
+    input: "cat 4\nbird 2\ndog 4", task: "Right now it prints the animal names ($1). Change it to print the number of legs instead \u2014 the second field.",
     starter: "{ print $1 }", solution: "{ print $2 }", expectedOutput: "4\n2\n4",
-    why: "Same idea, different column." },
-  { type: "awk", chapter: "2 · Patterns", title: "Filter rows",
-    teach: "Put a condition BEFORE the { } and AWK only runs the action on matching lines. $2 == 4 { print $1 } prints the name only when the second field equals 4.",
-    input: "cat 4\nbird 2\ndog 4\nfish 0", task: "Print the names of only the animals with 4 legs.",
+    why: "Fields are just numbered left to right. $1, $2, $3 \u2014 pick the column you want." },
+  { type: "awk", chapter: "2 \u00b7 Patterns", title: "Only some lines",
+    teach: "So far the braces { } ran on EVERY line. But you can put a condition in FRONT of the braces, and then AWK only runs them on lines that match.\n\nFor example:  $2 == 4 { print $1 }\n\nRead it left to right: \"if field 2 equals 4, then print field 1.\" The part before the braces is the test; the part inside is what to do when the test is true. (== means \"is equal to\" \u2014 two equals signs, because one would mean something else.)",
+    input: "cat 4\nbird 2\ndog 4\nfish 0", task: "Print the name ($1) of only the animals whose second field is 4. Add the condition $2 == 4 in front of the braces.",
     starter: "{ print $1 }", solution: "$2 == 4 { print $1 }", expectedOutput: "cat\ndog",
-    why: "A pattern filters which lines get processed — like a built-in grep." },
-  { type: "awk", chapter: "2 · Patterns", title: "Numeric comparison",
-    teach: "Conditions can use >, <, >=, <=. AWK compares numbers when both sides look numeric.",
-    input: "apple 3\nbanana 12\ncherry 7\ndate 1", task: "Print the names of items with a count greater than 5.",
+    why: "A condition in front of the braces filters which lines get processed \u2014 AWK\u2019s built-in way to say \u2018only these rows.\u2019" },
+  { type: "awk", chapter: "2 \u00b7 Patterns", title: "Bigger and smaller",
+    teach: "The condition doesn\u2019t have to be ==. You can compare sizes too:\n\n  $2 > 5   field 2 is greater than 5\n  $2 < 5   less than 5\n  $2 >= 5  greater than or equal\n  $2 <= 5  less than or equal\n\nWhen both sides look like numbers, AWK compares them as numbers. So $2 > 5 keeps only the lines where the second field is a number bigger than 5.",
+    input: "apple 3\nbanana 12\ncherry 7\ndate 1", task: "Print the name of only the items whose count (field 2) is greater than 5. Use $2 > 5 as the condition.",
     starter: "$2 > 0 { print $1 }", solution: "$2 > 5 { print $1 }", expectedOutput: "banana\ncherry",
-    why: "You filtered rows by a numeric threshold." },
-  { type: "awk", chapter: "3 · Totals", title: "Sum a column",
-    teach: "Variables persist across lines. Add to one on each line, then print it in an END block (which runs once, after all lines). { s += $2 } END { print s }",
-    input: "mon 10\ntue 25\nwed 7", task: "Add up all the numbers in the second column and print the total.",
+    why: "Greater-than, less-than \u2014 you can filter rows by size, not just exact matches." },
+  { type: "awk", chapter: "3 \u00b7 Totals", title: "Remember across lines",
+    teach: "AWK can keep a running value while it reads. Make up a name \u2014 say s \u2014 and add to it on each line with +=.\n\n  s += $2   means \"add field 2 to s\" (s starts at 0 automatically)\n\nBut if you print s inside the normal braces, you\u2019d see it after every line. You usually want the total once, at the very end. That\u2019s what END is for: END { \u2026 } runs a single time, AFTER all the lines are read.\n\nSo { s += $2 } END { print s } adds up every field 2, then prints the total once.",
+    input: "mon 10\ntue 25\nwed 7", task: "Add up all the numbers in field 2 and print the total once at the end. Use { s += $2 } to build it up, then END { print s } to show it.",
     starter: "{ print $2 }", solution: "{ s += $2 } END { print s }", expectedOutput: "42",
-    why: "You accumulated a running total and printed it at the end — a classic AWK job." },
-  { type: "awk", chapter: "3 · Totals", title: "Count the lines",
-    teach: "NR is the current line number — after the last line, it equals the total count. Print it in END.",
-    input: "red\ngreen\nblue\nyellow", task: "Print how many lines the input has.",
+    why: "s += $2 builds a running total; END prints it once after the last line. A classic AWK move." },
+  { type: "awk", chapter: "3 \u00b7 Totals", title: "Count the lines",
+    teach: "AWK keeps a built-in counter called NR \u2014 it stands for \"number of records,\" and a record just means a line. On line 1 it\u2019s 1, on line 2 it\u2019s 2, and so on.\n\nThat means after the last line, NR equals the total number of lines. Print it in an END block (which runs once at the end) and you get the count for free \u2014 you don\u2019t have to add anything up yourself.",
+    input: "red\ngreen\nblue\nyellow", task: "Print how many lines the input has. You don\u2019t need to count manually \u2014 print NR in an END block.",
     starter: "{ print }", solution: "END { print NR }", expectedOutput: "4",
-    why: "NR in an END block gives you the row count for free." },
-  { type: "awk", chapter: "4 · Building output", title: "Combine fields",
-    teach: "Put text and fields next to each other to join them. { print $1 \" has \" $2 } glues them into one string.",
-    input: "cat 4\ndog 4", task: 'For each animal print: the name, then " has ", then the number. Like:  cat has 4',
-    starter: "{ print $1 }", solution: '{ print $1 " has " $2 }', expectedOutput: "cat has 4\ndog has 4",
-    why: "You built a readable line out of raw fields." },
-  { type: "awk", chapter: "4 · Building output", title: "Uppercase a field",
-    teach: "toupper(x) returns x in capitals. You can wrap any field in it.",
-    input: "cat\nbird\ndog", task: "Print each animal's name in all capital letters.",
+    why: "NR is AWK\u2019s automatic line counter. In an END block, it\u2019s the total number of lines." },
+  { type: "awk", chapter: "4 \u00b7 Building output", title: "Join text and fields",
+    teach: "print can show more than one thing at once. If you put a piece of text (in quotes) and a field next to each other, AWK glues them together into one string.\n\n  print $1 \" has \" $2\n\nReads as: print field 1, then the literal text \" has \" (spaces included, because they\u2019re inside the quotes), then field 2. So the line `cat 4` comes out as `cat has 4`.",
+    input: "cat 4\ndog 4", task: "Print each line as: the name, then \" has \", then the number. Like:  cat has 4",
+    starter: "{ print $1 }", solution: "{ print $1 \" has \" $2 }", expectedOutput: "cat has 4\ndog has 4",
+    why: "Put quoted text next to fields and print glues them together \u2014 that\u2019s how you build readable output." },
+  { type: "awk", chapter: "4 \u00b7 Building output", title: "A built-in helper",
+    teach: "AWK comes with small helper functions you can wrap around a value. One is toupper( ) \u2014 give it some text and it hands back the SAME text in capital letters.\n\n  toupper($1)\n\nmeans \"take field 1 and make it uppercase.\" You can print the result directly. (There are others like tolower and length, and they all work the same way: name, then the value in parentheses.)",
+    input: "cat\nbird\ndog", task: "Print each animal\u2019s name in ALL CAPITALS. Wrap field 1 in toupper( ) before printing it.",
     starter: "{ print $1 }", solution: "{ print toupper($1) }", expectedOutput: "CAT\nBIRD\nDOG",
-    why: "AWK has handy string functions like toupper, substr, and length." },
+    why: "toupper($1) transforms a field before you print it \u2014 the first of AWK\u2019s handy built-in helpers." },
 ];
 
 const GENERAL_MULTIFILE_STEPS = [
@@ -1326,12 +1326,18 @@ function validateGenerated(L) {
   for (const t of L.tests) if (!Array.isArray(t.args) || !("expected" in t)) return { ok: false, p: ["bad tests"] };
   if (!verifyRuns(L.solution, L.fnName, L.tests).ok) p.push("sol fails");
   if (L.starter && verifyRuns(L.starter, L.fnName, L.tests).ok) p.push("starter passes");
+  // Teaching gate: a lesson with no real explanation can't reach a learner. We
+  // reject only clearly-broken teaching (missing or trivially short), not merely
+  // concise ones — a genuine explanation of a new concept is never < ~40 chars.
+  const teach = (L.teach || "").trim();
+  if (!teach) p.push("no teach");
+  else if (teach.length < 40) p.push("teach too thin");
   return { ok: p.length === 0, p };
 }
 const GEN_SYSTEM =
   "You write ONE beginner JavaScript practice exercise as the learner's NEXT step after some warm-up lessons. " +
   "Respond with ONLY JSON, no prose, no fences. Schema: {\"title\":string (short, friendly), " +
-  "\"teach\":string (1-2 plain sentences explaining the idea, may use `inline code`), \"fnName\":string (camelCase), " +
+  "\"teach\":string (explain the idea to a beginner: name it, SHOW its exact syntax inline, and give one concrete example; 2-4 sentences, may use `inline code`), \"fnName\":string (camelCase), " +
   "\"starter\":string (a function skeleton with the right name, an empty body, and a // comment — NOT a working solution), " +
   "\"solution\":string (complete correct code), \"tests\":array of >=2 {\"args\":array,\"expected\":any}}. " +
   "Keep it small and beginner-friendly (simple numbers/strings/arrays). Starter must NOT pass the tests; solution MUST pass.";
@@ -1347,7 +1353,7 @@ const topicSystemFor = (langLabel, runnable, count = null) =>
   "Respond with ONLY JSON, no prose, no fences: {\"topic\":string (2-4 words), \"lessons\":[ {" +
   "\"title\":string, " +
   "\"concept\":string — REQUIRED. A SHORT tag (2-4 words, lowercase) naming the ONE specific NEW capability this lesson teaches, e.g. \"f-strings\", \"list slicing\", \"for loop\", \"dictionary lookup\", \"try/except\". RULES for this field: (a) it must be the NEW thing introduced, not something the learner already knows that the lesson merely uses; (b) use the standard name for the concept, not a made-up synonym (say \"print\" not \"showing text\", \"for loop\" not \"repeating\"); (c) never leave it blank; (d) two lessons in this set must never share a concept, and it must not be a concept the learner already knows. If you can't name a genuinely new concept, don't make the lesson. " +
-  "\"teach\":string (2-3 plain sentences that EXPLAIN the new concept clearly, as if to a beginner who has never seen it; may use `inline code`), " +
+  "\"teach\":string — the EXPLANATION the learner reads before trying. It MUST genuinely teach the new concept to someone who has never seen it: (1) name the new thing in plain words and say what it is for; (2) show its exact syntax inline (e.g. `for x in list:`) — never mention a concept without showing what it literally looks like; (3) explain what each part does; (4) give ONE concrete example traced to its result (e.g. so `nums[0]` gives the first item, 5). Use short sentences with line breaks between ideas (\\n) rather than one dense block. Do NOT just name the concept and move on, and do NOT use any symbol you have not shown. 3-6 sentences. May use `inline code`. " +
   "\"example\":string (a short worked example line or two showing the idea in " + langLabel + ", e.g. an input and what it produces), " +
   "\"fnName\":string (camelCase), " +
   "\"io\":string — either \"return\" or \"print\". Use \"return\" for lessons where the function RETURNS a value, and \"print\" for lessons that TEACH printing, where the function PRINTS its output. IMPORTANT: if this set has 3 or more lessons, AT LEAST ONE must be a \"print\" lesson (and at least one \"return\"), so learners practice both. For a 2-lesson set, make one of each. Never make them all the same io style. " +
@@ -1390,7 +1396,7 @@ const markupTopicSystemFor = (langLabel, kind, count = null) =>
   "Respond with ONLY JSON, no prose, no fences: {\"topic\":string (2-4 words), \"lessons\":[ {" +
   "\"title\":string, " +
   "\"concept\":string — a SHORT lowercase tag (2-4 words) for the ONE new capability taught, e.g. \"unordered lists\", \"border-radius\", \"props\". Use the standard name. " +
-  "\"teach\":string (2-3 plain sentences explaining the new idea to someone who has never seen it), " +
+  "\"teach\":string — genuinely teach the new idea to a total beginner: name it plainly, SHOW its exact syntax inline, explain each part, and trace one concrete example to its result. Use line breaks (\\n) between ideas. Never name a concept without showing what it looks like. 3-6 sentences. " +
   "\"example\":string (a short worked example in " + langLabel + "), " +
   "\"starter\":string (what the learner begins with — a stub that does NOT yet satisfy the checks), " +
   "\"solution\":string (complete correct " + langLabel + " that DOES satisfy every check), " +
@@ -1890,6 +1896,14 @@ function normalizeConceptForCheck(c) {
 }
 
 async function validateLesson(L, classId) {
+  // Universal teaching gate: whatever the language or lesson type, a lesson with
+  // no real explanation must never reach a learner. This is separate from grading
+  // the code — a lesson can run perfectly and still teach nothing. We reject only
+  // clearly-broken teaching (missing / trivially short), so genuinely concise
+  // explanations still pass; a real explanation of a NEW concept is never tiny.
+  const teachText = (L && L.teach ? String(L.teach) : "").trim();
+  if (!teachText) return { ok: false, reason: "lesson has no explanation (teach)" };
+  if (teachText.length < 40) return { ok: false, reason: "explanation too thin to teach the concept" };
   // Markup lessons (HTML/CSS/JSX) aren't function-shaped, so they're checked
   // first and differently: we RENDER the author's own solution and require it to
   // satisfy its own checks, then render the starter and require it NOT to. Same
@@ -4373,12 +4387,12 @@ const langGenSystem = (cfg) =>
   `EVERY lesson must TEACH before it tests: explain the new idea plainly, then show a worked example. ` +
   `Respond with ONLY a JSON object: {"lessons":[ ... ]}, no prose, no fences. ` +
   (cfg.mode === "sql"
-    ? `Each lesson teaches ONE SQL idea via a real query challenge: {"title":string, "teach":string (2-3 plain sentences explaining the SQL concept to a beginner), "example":string (a short example query), "concept":string (e.g. "filtering rows with WHERE"), "seed":string (SQL that CREATEs one small table and INSERTs ~4-6 rows of data), "schema":string (a human-readable description of the table and its columns, shown to the learner), "starter":string (a partial query like "SELECT " for them to complete), "solution":string (the correct full query), "expected":array of rows (each row an array of values) that the solution returns}. The solution run against the seed MUST produce exactly the expected rows. Keep tables tiny and relatable (pets, books, students). Order from SELECT-all → WHERE → ORDER BY → COUNT/aggregate → GROUP BY.`
+    ? `Each lesson teaches ONE SQL idea via a real query challenge: {"title":string, "teach":string (teach the SQL idea to a beginner: name it, SHOW the exact clause/syntax, explain each part, and give one concrete example; 3-5 sentences), "example":string (a short example query), "concept":string (e.g. "filtering rows with WHERE"), "seed":string (SQL that CREATEs one small table and INSERTs ~4-6 rows of data), "schema":string (a human-readable description of the table and its columns, shown to the learner), "starter":string (a partial query like "SELECT " for them to complete), "solution":string (the correct full query), "expected":array of rows (each row an array of values) that the solution returns}. The solution run against the seed MUST produce exactly the expected rows. Keep tables tiny and relatable (pets, books, students). Order from SELECT-all → WHERE → ORDER BY → COUNT/aggregate → GROUP BY.`
     : cfg.mode === "real"
-    ? `Each lesson: {"title":string, "teach":string (2-3 plain sentences that EXPLAIN the new concept to a total beginner, may use \`inline code\`), "example":string (a short worked example in ${cfg.label} showing the idea), "concept":string (the underlying idea, e.g. "doubling a number"), "fnName":string, "starter":string (a ${cfg.label} function skeleton with the right name and an empty body + a comment, NOT a working solution), "solution":string (complete correct ${cfg.label} code), "tests":array of >=2 {"args":array,"expected":any}}. Starters must NOT pass; solutions MUST pass. Use ${cfg.label} syntax exactly.` + REAL_HARNESS_NOTE(cfg.label)
+    ? `Each lesson: {"title":string, "teach":string (genuinely teach it to a total beginner: name the concept, SHOW its exact syntax inline, explain the parts, and trace one concrete example; use \\n line breaks between ideas; 3-6 sentences; may use \`inline code\`), "example":string (a short worked example in ${cfg.label} showing the idea), "concept":string (the underlying idea, e.g. "doubling a number"), "fnName":string, "starter":string (a ${cfg.label} function skeleton with the right name and an empty body + a comment, NOT a working solution), "solution":string (complete correct ${cfg.label} code), "tests":array of >=2 {"args":array,"expected":any}}. Starters must NOT pass; solutions MUST pass. Use ${cfg.label} syntax exactly.` + REAL_HARNESS_NOTE(cfg.label)
     : cfg.mode === "output"
-    ? `Each lesson teaches ONE idea via a small PROGRAM the learner writes, graded by its OUTPUT. Shape: {"title":string, "teach":string (2-3 plain sentences explaining the concept to a total beginner), "example":string (a short worked ${cfg.label} snippet showing the idea), "concept":string (e.g. "a counting loop"), "task":string (plain-English: exactly what the program must print), "starter":string (a ${cfg.label} skeleton with a comment, NOT a working solution), "solution":string (a complete correct ${cfg.label} program), "expectedOutput":string (EXACTLY what the solution prints, newline-separated, no trailing blank line)}. The solution, when run, MUST print exactly expectedOutput. The starter must NOT already print it. ` + OUTPUT_DIALECT_NOTE(cfg.id)
-    : `Each lesson: {"title":string, "teach":string (2-3 plain sentences that EXPLAIN the new concept to a total beginner), "example":string (a short worked example in ${cfg.label} showing the idea), "concept":string, "starter":string (a ${cfg.label} code skeleton to fill in), "checks":array of >=2 short strings (criteria a correct answer meets)}. Use real ${cfg.label} syntax.`) +
+    ? `Each lesson teaches ONE idea via a small PROGRAM the learner writes, graded by its OUTPUT. Shape: {"title":string, "teach":string (teach it to a total beginner: name the concept, SHOW its exact syntax inline, explain the parts, and trace one concrete example to its result; use line breaks between ideas; 3-6 sentences), "example":string (a short worked ${cfg.label} snippet showing the idea), "concept":string (e.g. "a counting loop"), "task":string (plain-English: exactly what the program must print), "starter":string (a ${cfg.label} skeleton with a comment, NOT a working solution), "solution":string (a complete correct ${cfg.label} program), "expectedOutput":string (EXACTLY what the solution prints, newline-separated, no trailing blank line)}. The solution, when run, MUST print exactly expectedOutput. The starter must NOT already print it. ` + OUTPUT_DIALECT_NOTE(cfg.id)
+    : `Each lesson: {"title":string, "teach":string (genuinely teach it to a total beginner: name the concept, SHOW its exact syntax inline, explain the parts, and trace one concrete example; use \\n line breaks between ideas; 3-6 sentences), "example":string (a short worked example in ${cfg.label} showing the idea), "concept":string, "starter":string (a ${cfg.label} code skeleton to fill in), "checks":array of >=2 short strings (criteria a correct answer meets)}. Use real ${cfg.label} syntax.`) +
   ` Order lessons from easiest to hardest, each building on the last. Keep them small and beginner-friendly.`;
 
 // ---------- Full language catalog (everything Claude teaches well) ----------
@@ -4896,6 +4910,8 @@ async function generateCourse(classId, progressMap, signal) {
       if (!L.title || !L.seed || !L.solution || !Array.isArray(L.expected)) continue;
       const check = await verifySQL(L.solution, L.seed, L.expected, /order\s+by/i.test(L.solution || ""));
       if (!check.engineError && !check.ok) continue; // skip lessons whose own solution fails
+      // Teaching gate: a SQL lesson with no real explanation must not reach a learner.
+      if (!L.teach || String(L.teach).trim().length < 40) continue;
       out.push({ id: "g_" + Math.random().toString(36).slice(2, 7), type: "sqlquery", chapter: `${cfg.label} course`, generated: true,
         title: L.title, teach: L.teach || "", example: L.example || "", concept: L.concept || L.title,
         schema: L.schema || "", seed: L.seed, starter: L.starter || "SELECT ", expected: L.expected, lang: "sql",
@@ -4920,6 +4936,8 @@ async function generateCourse(classId, progressMap, signal) {
         catch { starterOut = "__errored__"; }
         if (outputMatches(starterOut, L.expectedOutput)) continue; // starter already solves it → skip
       }
+      // Teaching gate: an output-mode lesson with no real explanation must not reach a learner.
+      if (!L.teach || String(L.teach).trim().length < 40) continue;
       out.push({ id: "g_" + Math.random().toString(36).slice(2, 7), type: "output", chapter: `${cfg.label} course`, generated: true,
         title: L.title, intro: L.teach || "Write the program so it prints the expected output.", concept: L.concept || L.title,
         teach: L.teach || "", example: L.example || "", task: L.task || "",
@@ -4937,6 +4955,8 @@ async function generateCourse(classId, progressMap, signal) {
         why: "Solved — and it ran for real." });
     } else {
       if (!L.title || !Array.isArray(L.checks) || L.checks.length < 2) continue;
+      // Teaching gate: even AI-judged lessons must carry a real explanation.
+      if (!L.teach || String(L.teach).trim().length < 40) continue;
       out.push({ id: "g_" + Math.random().toString(36).slice(2, 7), type: "aitype", chapter: `${cfg.label} course`, generated: true, aiJudged: true,
         title: L.title, intro: L.teach || "", concept: L.concept || L.title, teach: L.teach || "", example: L.example || "",
         starter: L.starter || "", checks: L.checks, lang: classId, langLabel: cfg.label,
@@ -5154,7 +5174,7 @@ async function generateConceptPack({ concept, project, learnedConcepts = [], sig
     `CONCEPTS THEY ALREADY KNOW (you may use these freely, don't re-teach them): ${known}\n\n` +
     "Respond with ONLY JSON: {\"lessons\":[{" +
     "\"title\":string (short), " +
-    "\"teach\":string (2-3 plain sentences explaining this angle of the concept), " +
+    "\"teach\":string (re-explain this angle clearly: name it, show the exact syntax, and give one concrete example; 2-4 sentences), " +
     "\"example\":string (a tiny worked example), " +
     (runnable
       ? "\"fnName\":string (camelCase or snake_case function they write), \"starter\":string (skeleton, NOT a solution), \"solution\":string (a correct solution), \"tests\":array of >=2 {\"args\":array,\"expected\":any}, \"io\":\"return\"|\"print\""
@@ -8470,14 +8490,15 @@ function buildHintLadder(step) {
     }
     return levels;
   }
-  const io = step.io === "print" ? "print the answer with print(…)" : "return the answer with return";
+  const isOutputStyle = step.type === "awk" || step.type === "output" || step.io === "print";
+  const io = isOutputStyle ? "produce exactly the output the task asks for" : "return the answer with return";
   // 1) Gentle nudge — restate the concept / what's being asked.
   const concept = (step.concept || "").toString().trim();
   levels.push({
     label: "A nudge",
     body: concept
       ? `This one is about ${concept}. Re-read the task and think about how ${concept} applies here — you're closer than it feels.`
-      : `Re-read the task slowly. Make sure you ${io}, and check you've handled each part it asks for.`,
+      : `Re-read the task, then look back at the explanation above — the exact piece you need is in there. Make sure you ${io}.`,
   });
   // 2) Bigger nudge — point at the worked example / the teach text.
   if (step.example || step.teach) {
@@ -13263,7 +13284,7 @@ body{overflow-x:clip}
 .cq-plain-tag{display:inline-block;font-family:var(--mono);font-weight:600;color:var(--teal);background:var(--bg-0);padding:2px 8px;border-radius:6px;margin-right:10px}
 .cq-tapnote{text-align:center;color:var(--ink-faint);font-size:13px;margin:0 0 16px}
 .cq-teach{background:var(--bg-2);border:1px solid var(--line);border-left:3px solid var(--neon);border-radius:12px;padding:20px 22px;margin-bottom:24px}
-.cq-teach-text{font-size:15.5px;line-height:1.7;margin:0 0 14px;color:var(--ink)}
+.cq-teach-text{font-size:15.5px;line-height:1.7;margin:0 0 14px;color:var(--ink);white-space:pre-wrap}
 .cq-teach-text code{font-family:var(--mono);background:var(--bg-0);padding:2px 6px;border-radius:5px;color:var(--teal);font-size:.9em}
 .cq-teach-example{background:var(--bg-0);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:12px}
 .cq-teach-examplehead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px}
