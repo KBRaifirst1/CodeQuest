@@ -7,7 +7,7 @@ import { supabase } from "./lib/supabase";
 // Build marker — check this in the browser console to confirm which version is
 // actually running: type  window.__CQ_VERSION  in DevTools. If it's not the
 // value below, your browser/Vercel is serving an older bundle.
-const CQ_VERSION = "2026-07-12-v150-basic-print-comma";
+const CQ_VERSION = "2026-07-12-v153-header-scroll-strip";
 
 // Only this account (by Supabase user id) can read submitted feedback. Gating by
 // id, not email, so it survives email changes / adding Google login later.
@@ -6685,6 +6685,34 @@ function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, ge
 
       <TutorChat classLabel={cls.label} classKind={cls.tab} />
 
+      {cls.id === "general_multifile" && (() => {
+        // Surface the 8 real two-file combos as their own pickable cards, so
+        // learners can jump straight to "Python + Python", "C + C", etc. instead
+        // of scrolling past the general lessons to find them. Each card opens that
+        // combo's seed lesson directly.
+        const combos = cls.steps
+          .map((s, idx) => ({ s, idx }))
+          .filter(({ s }) => s.type === "multifile" && s.combo);
+        if (combos.length === 0) return null;
+        return (
+          <section className="cq-combopick">
+            <div className="cq-combopick-head">
+              <h2 className="cq-combopick-title">Real two-file programs</h2>
+              <p className="cq-combopick-sub">Jump straight to a language pairing — each one runs for real and is graded.</p>
+            </div>
+            <div className="cq-combogrid">
+              {combos.map(({ s, idx }) => (
+                <button key={s.id || idx} className={`cq-combocard ${doneSet.has(idx) ? "done" : ""}`} onClick={() => onOpenStep(idx)}>
+                  <span className="cq-combocard-label">{s.chapter || s.title}</span>
+                  <span className="cq-combocard-title">{s.title}</span>
+                  {doneSet.has(idx) && <span className="cq-combocard-check">✓</span>}
+                </button>
+              ))}
+            </div>
+          </section>
+        );
+      })()}
+
       <div className="cq-chapters">
         {chapters.map((ch) => {
           const chDone = ch.stepIdxs.filter((i) => doneSet.has(i)).length;
@@ -12169,7 +12197,8 @@ body{overflow-x:clip}
 .cq-root ::selection{background:var(--neon-ghost)}
 
 /* ============ HEADER ============ */
-.cq-header{display:flex;justify-content:space-between;align-items:center;gap:48px;padding:20px 40px;border-bottom:1px solid var(--line-soft);position:sticky;top:0;z-index:20;background:rgba(11,10,18,.82);backdrop-filter:blur(14px);flex-wrap:wrap}
+.cq-header{display:flex;justify-content:space-between;align-items:center;gap:20px;padding:14px 40px;border-bottom:1px solid var(--line-soft);position:sticky;top:0;z-index:20;background:rgba(11,10,18,.82);backdrop-filter:blur(14px)}
+.cq-brand{flex:0 0 auto}
 .cq-brand{display:flex;align-items:center;gap:11px}
 .cq-logo{display:inline-flex;align-items:center;justify-content:center;background:var(--bg-2);border:1px solid var(--line);padding:5px;border-radius:11px;box-shadow:0 0 18px -8px var(--neon)}
 .cq-name{font-family:var(--display);font-weight:600;letter-spacing:-.3px;font-size:20px}
@@ -12283,6 +12312,17 @@ body{overflow-x:clip}
 
 /* ============ CLASS HERO ============ */
 .cq-classhero{position:relative;overflow:hidden;background:linear-gradient(165deg,var(--bg-2),var(--bg-1) 75%);border:1px solid var(--line);border-radius:var(--radius-lg);padding:28px;margin-bottom:26px;box-shadow:var(--shadow)}
+.cq-combopick{margin-bottom:26px}
+.cq-combopick-head{margin-bottom:14px}
+.cq-combopick-title{font-size:17px;font-weight:700;margin:0 0 4px}
+.cq-combopick-sub{font-size:13.5px;color:var(--ink-soft);margin:0}
+.cq-combogrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px}
+.cq-combocard{position:relative;text-align:left;background:linear-gradient(165deg,var(--bg-2),var(--bg-1) 70%);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;cursor:pointer;transition:transform .18s cubic-bezier(.2,.7,.3,1),border-color .18s,box-shadow .18s;color:inherit;font-family:inherit;display:flex;flex-direction:column;gap:5px;overflow:hidden;min-height:64px}
+.cq-combocard:hover{transform:translateY(-2px);border-color:var(--teal);box-shadow:var(--shadow)}
+.cq-combocard.done{border-color:var(--teal-ghost)}
+.cq-combocard-label{font-size:14px;font-weight:700;color:var(--teal)}
+.cq-combocard-title{font-size:12.5px;color:var(--ink-soft);line-height:1.4}
+.cq-combocard-check{position:absolute;top:12px;right:14px;color:var(--teal);font-weight:700;font-size:14px}
 .cq-classhero::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:linear-gradient(180deg,var(--neon),var(--magenta));opacity:.8;box-shadow:0 0 8px -1px var(--neon)}
 .cq-classhero::after{content:"";position:absolute;top:-45%;right:-15%;width:300px;height:300px;background:radial-gradient(circle,var(--neon-ghost),transparent 65%);opacity:.5;pointer-events:none}
 .cq-classhero-top{display:flex;align-items:center;gap:16px;margin-bottom:20px}
@@ -12683,7 +12723,9 @@ body{overflow-x:clip}
 .cq-footer{text-align:center;color:var(--ink-faint);font-size:12px;padding:26px;border-top:1px solid var(--line-soft);margin-top:20px}
 
 /* ============ PROJECT MODE ============ */
-.cq-headerright{display:flex;align-items:center;gap:14px;flex-wrap:wrap;justify-content:flex-end}
+.cq-headerright{display:flex;align-items:center;gap:14px;flex-wrap:nowrap;justify-content:flex-start;overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;scrollbar-width:none;min-width:0;flex:1 1 auto;-webkit-mask-image:linear-gradient(to right,transparent 0,#000 12px,#000 calc(100% - 20px),transparent 100%);mask-image:linear-gradient(to right,transparent 0,#000 12px,#000 calc(100% - 20px),transparent 100%)}
+.cq-headerright::-webkit-scrollbar{display:none;height:0}
+.cq-headerright>*{flex:0 0 auto}
 .cq-offline-badge{font-size:12px;font-weight:600;padding:6px 11px;border-radius:999px;background:rgba(245,158,11,.14);color:#fbbf24;border:1px solid rgba(245,158,11,.35);white-space:nowrap}
 .cq-offline-badge.syncing{background:rgba(139,92,246,.14);color:#c4b5fd;border-color:rgba(139,92,246,.35)}
 .cq-projbtn{background:var(--bg-2);border:1px solid var(--line);color:var(--ink-soft);padding:10px 18px;border-radius:12px;font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;transition:.18s;letter-spacing:.01em}
@@ -12774,8 +12816,8 @@ body{overflow-x:clip}
   /* Header was using desktop padding/gaps (20px 40px, gap 48px) with no mobile
      shrink — on a phone that made it oversized and pushed content wider than the
      screen, causing the sideways slide + white gutter. Tighten it here. */
-  .cq-header{padding:11px 14px;gap:10px}
-  .cq-headerright{gap:8px;justify-content:flex-end}
+  .cq-header{padding:10px 0 10px 14px;gap:10px}
+  .cq-headerright{gap:8px;justify-content:flex-start;padding-right:14px}
   .cq-brand{gap:8px;min-width:0}
   .cq-projbtn,.cq-xp{font-size:13px;padding:6px 10px}
   .cq-brandname{font-size:16px;min-width:0}
