@@ -7,7 +7,7 @@ import { supabase } from "./lib/supabase";
 // Build marker — check this in the browser console to confirm which version is
 // actually running: type  window.__CQ_VERSION  in DevTools. If it's not the
 // value below, your browser/Vercel is serving an older bundle.
-const CQ_VERSION = "2026-07-12-v154-multifile-classes";
+const CQ_VERSION = "2026-07-12-v158-sandbox-multifile";
 
 // Only this account (by Supabase user id) can read submitted feedback. Gating by
 // id, not email, so it survives email changes / adding Google login later.
@@ -367,6 +367,52 @@ async function verifyLua(code, fnName, tests) {
 }
 // Puzzles first, then neutral code. Progressively harder. Three skills:
 // patterns/reading, breaking into steps, predicting what code does.
+// AWK lessons: each provides INPUT TEXT, the learner writes an AWK program, it
+// runs for real over that input, and the output is checked. This is the honest way
+// to teach AWK — it exists to process input, so every lesson feeds it input.
+const AWK_STEPS = [
+  { type: "awk", chapter: "1 · Fields", title: "Print a column",
+    teach: "AWK reads text one line at a time and splits each line into fields by spaces. $1 is the first field, $2 the second, and so on. The program { print $1 } means: for every line, print the first field.",
+    input: "cat 4\nbird 2\ndog 4", task: "Print just the animal name (the first field) of every line.",
+    starter: "{ print }", solution: "{ print $1 }", expectedOutput: "cat\nbird\ndog",
+    why: "You pulled out one column from every row — the core of what AWK does." },
+  { type: "awk", chapter: "1 · Fields", title: "Print the second column",
+    teach: "$2 is the second field. You can print any field the same way.",
+    input: "cat 4\nbird 2\ndog 4", task: "Print just the number of legs (the second field) of every line.",
+    starter: "{ print $1 }", solution: "{ print $2 }", expectedOutput: "4\n2\n4",
+    why: "Same idea, different column." },
+  { type: "awk", chapter: "2 · Patterns", title: "Filter rows",
+    teach: "Put a condition BEFORE the { } and AWK only runs the action on matching lines. $2 == 4 { print $1 } prints the name only when the second field equals 4.",
+    input: "cat 4\nbird 2\ndog 4\nfish 0", task: "Print the names of only the animals with 4 legs.",
+    starter: "{ print $1 }", solution: "$2 == 4 { print $1 }", expectedOutput: "cat\ndog",
+    why: "A pattern filters which lines get processed — like a built-in grep." },
+  { type: "awk", chapter: "2 · Patterns", title: "Numeric comparison",
+    teach: "Conditions can use >, <, >=, <=. AWK compares numbers when both sides look numeric.",
+    input: "apple 3\nbanana 12\ncherry 7\ndate 1", task: "Print the names of items with a count greater than 5.",
+    starter: "$2 > 0 { print $1 }", solution: "$2 > 5 { print $1 }", expectedOutput: "banana\ncherry",
+    why: "You filtered rows by a numeric threshold." },
+  { type: "awk", chapter: "3 · Totals", title: "Sum a column",
+    teach: "Variables persist across lines. Add to one on each line, then print it in an END block (which runs once, after all lines). { s += $2 } END { print s }",
+    input: "mon 10\ntue 25\nwed 7", task: "Add up all the numbers in the second column and print the total.",
+    starter: "{ print $2 }", solution: "{ s += $2 } END { print s }", expectedOutput: "42",
+    why: "You accumulated a running total and printed it at the end — a classic AWK job." },
+  { type: "awk", chapter: "3 · Totals", title: "Count the lines",
+    teach: "NR is the current line number — after the last line, it equals the total count. Print it in END.",
+    input: "red\ngreen\nblue\nyellow", task: "Print how many lines the input has.",
+    starter: "{ print }", solution: "END { print NR }", expectedOutput: "4",
+    why: "NR in an END block gives you the row count for free." },
+  { type: "awk", chapter: "4 · Building output", title: "Combine fields",
+    teach: "Put text and fields next to each other to join them. { print $1 \" has \" $2 } glues them into one string.",
+    input: "cat 4\ndog 4", task: 'For each animal print: the name, then " has ", then the number. Like:  cat has 4',
+    starter: "{ print $1 }", solution: '{ print $1 " has " $2 }', expectedOutput: "cat has 4\ndog has 4",
+    why: "You built a readable line out of raw fields." },
+  { type: "awk", chapter: "4 · Building output", title: "Uppercase a field",
+    teach: "toupper(x) returns x in capitals. You can wrap any field in it.",
+    input: "cat\nbird\ndog", task: "Print each animal's name in all capital letters.",
+    starter: "{ print $1 }", solution: "{ print toupper($1) }", expectedOutput: "CAT\nBIRD\nDOG",
+    why: "AWK has handy string functions like toupper, substr, and length." },
+];
+
 const GENERAL_MULTIFILE_STEPS = [
   { type: "concept", chapter: "1 · Why more than one file", title: "One giant file gets messy",
     teach: "When a program is tiny, one file is fine. But real programs grow to thousands of lines — and scrolling through one huge file to find anything becomes painful. So coders split a program across several files, each holding one clear job. It's the same reason a kitchen has separate drawers instead of one giant bin: things are easier to find and change.",
@@ -1989,7 +2035,7 @@ function projectLangMode(lang) {
 }
 // The default file name for a language — used when a project starts, and as the
 // basis for imports (e.g. a Python file "helpers.py" is imported as "helpers").
-const PROJECT_FILE_EXT = { py: "py", js: "js", ts: "ts", java: "java", lua: "lua", basic: "bas", asm: "asm", bash: "sh", php: "php", c: "c", cpp: "cpp", sql: "sql", scheme: "scm", p5: "js", html: "html", css: "css", jsx: "jsx", vue: "vue", svelte: "svelte" };
+const PROJECT_FILE_EXT = { py: "py", js: "js", ts: "ts", java: "java", lua: "lua", basic: "bas", asm: "asm", bash: "sh", php: "php", ruby: "rb", c: "c", cpp: "cpp", sql: "sql", scheme: "scm", p5: "js", html: "html", css: "css", jsx: "jsx", vue: "vue", svelte: "svelte" };
 function defaultFileName(lang, base) {
   const ext = PROJECT_FILE_EXT[lang] || "txt";
   if (lang === "java") return (base || "Main") + ".java"; // Java file must match class
@@ -3368,6 +3414,367 @@ function runProjectBash(code) {
   catch (e) { return { ok: false, output: "", error: String(e && e.message ? e.message : e) }; }
 }
 
+// ===== AWK-CORE: from-scratch interpreter for real text processing =====
+// From-scratch AWK-CORE interpreter: real AWK text processing, run for real over
+// a given input. Scope (honest): patterns { actions }, BEGIN/END blocks, fields
+// $0..$NF, NR/NF/FS/OFS, print/printf, variables, arithmetic, string concat,
+// comparison + regex match (/re/, ~, !~), if/else, for, while, built-ins
+// (length, substr, toupper, tolower, split, index, int). NO getline, no file I/O,
+// no system() — input is the fixed text the lesson provides.
+function runAwkCore(program, input) {
+  const out = [];
+  const globals = Object.create(null);
+  let FS = " ", OFS = " ", ORS = "\n";
+  globals["FS"] = FS; globals["OFS"] = OFS;
+
+  // ---------- tokenizer ----------
+  function tokenize(src) {
+    const toks = []; let i = 0;
+    const push = (t, v) => toks.push({ t, v });
+    while (i < src.length) {
+      const c = src[i];
+      if (c === " " || c === "\t") { i++; continue; }
+      if (c === "\n") { push("nl"); i++; continue; }
+      if (c === "#") { while (i < src.length && src[i] !== "\n") i++; continue; }
+      if (c === '"') {
+        let s = ""; i++;
+        while (i < src.length && src[i] !== '"') {
+          if (src[i] === "\\") { const n = src[i+1]; s += n === "n" ? "\n" : n === "t" ? "\t" : n === "\\" ? "\\" : n === '"' ? '"' : n; i += 2; continue; }
+          s += src[i]; i++;
+        }
+        i++; push("str", s); continue;
+      }
+      if (c === "/" && regexAllowed(toks)) {
+        let s = ""; i++;
+        while (i < src.length && src[i] !== "/") { if (src[i] === "\\") { s += src[i] + src[i+1]; i += 2; continue; } s += src[i]; i++; }
+        i++; push("regex", s); continue;
+      }
+      if (/[0-9]/.test(c) || (c === "." && /[0-9]/.test(src[i+1] || ""))) {
+        let s = ""; while (i < src.length && /[0-9.]/.test(src[i])) { s += src[i]; i++; } push("num", parseFloat(s)); continue;
+      }
+      if (/[A-Za-z_]/.test(c)) {
+        let s = ""; while (i < src.length && /[A-Za-z0-9_]/.test(src[i])) { s += src[i]; i++; }
+        const kw = ["BEGIN","END","print","printf","if","else","while","for","next","length","substr","toupper","tolower","split","index","int","sub","gsub","match","in"];
+        push(kw.includes(s) ? "kw" : "id", s); continue;
+      }
+      if (c === "$") { push("field"); i++; continue; }
+      // multi-char operators
+      const two = src.substr(i, 2);
+      if (["==","!=","<=",">=","&&","||","++","--","+=","-=","*=","/=","!~"].includes(two)) { push("op", two); i += 2; continue; }
+      if ("{}();,<>=+-*/%!~[]".includes(c)) { push("op", c); i++; continue; }
+      i++; // skip unknown
+    }
+    push("eof");
+    return toks;
+  }
+  function regexAllowed(toks) {
+    // a / starts a regex unless the previous token is a value (num/str/id/) )
+    for (let k = toks.length - 1; k >= 0; k--) {
+      const p = toks[k];
+      if (p.t === "nl") return true;
+      if (p.t === "num" || p.t === "str" || p.t === "id" || p.t === "regex") return false;
+      if (p.t === "op" && p.v === ")") return false;
+      return true;
+    }
+    return true;
+  }
+
+  // ---------- parser → rules [{pattern, action}] ----------
+  let T = [], p = 0;
+  const peek = () => T[p];
+  const next = () => T[p++];
+  const at = (t, v) => T[p].t === t && (v === undefined || T[p].v === v);
+  const eat = (t, v) => { if (!at(t, v)) throw new Error(`AWK parse: expected ${v || t}, got ${JSON.stringify(T[p])}`); return next(); };
+  const skipNL = () => { while (at("nl")) next(); };
+
+  function parseProgram(src) {
+    T = tokenize(src); p = 0;
+    const rules = [];
+    skipNL();
+    while (!at("eof")) {
+      let pattern = null, action = null, special = null;
+      if (at("kw", "BEGIN")) { next(); special = "BEGIN"; action = parseBlock(); }
+      else if (at("kw", "END")) { next(); special = "END"; action = parseBlock(); }
+      else {
+        if (!at("op", "{")) pattern = parseExpr();
+        if (at("op", "{")) action = parseBlock();
+        else action = [{ type: "print", args: [] }]; // bare pattern → print $0
+      }
+      rules.push({ pattern, action, special });
+      skipNL();
+      if (at("op", ";")) next();
+      skipNL();
+    }
+    return rules;
+  }
+
+  function parseBlock() {
+    eat("op", "{"); const stmts = []; skipNL();
+    while (!at("op", "}") && !at("eof")) {
+      stmts.push(parseStmt());
+      while (at("op", ";") || at("nl")) next();
+    }
+    eat("op", "}");
+    return stmts;
+  }
+
+  function parseStmt() {
+    if (at("kw", "print")) { next(); return { type: "print", args: parsePrintArgs() }; }
+    if (at("kw", "printf")) { next(); return { type: "printf", args: parsePrintArgs() }; }
+    if (at("kw", "next")) { next(); return { type: "next" }; }
+    if (at("kw", "if")) {
+      next(); eat("op", "("); const cond = parseExpr(); eat("op", ")"); skipNL();
+      const then = at("op", "{") ? parseBlock() : [parseStmt()];
+      while (at("op", ";") || at("nl")) next(); // allow "; else" and newlines before else
+      let els = null;
+      if (at("kw", "else")) { next(); skipNL(); els = at("op", "{") ? parseBlock() : [parseStmt()]; }
+      return { type: "if", cond, then, els };
+    }
+    if (at("kw", "while")) { next(); eat("op", "("); const cond = parseExpr(); eat("op", ")"); skipNL(); const body = at("op", "{") ? parseBlock() : [parseStmt()]; return { type: "while", cond, body }; }
+    if (at("kw", "for")) {
+      next(); eat("op", "(");
+      const init = at("op", ";") ? null : parseSimple(); eat("op", ";");
+      const cond = at("op", ";") ? null : parseExpr(); eat("op", ";");
+      const post = at("op", ")") ? null : parseSimple(); eat("op", ")"); skipNL();
+      const body = at("op", "{") ? parseBlock() : [parseStmt()];
+      return { type: "for", init, cond, post, body };
+    }
+    if (at("op", "{")) return { type: "block", body: parseBlock() };
+    return parseSimple();
+  }
+  function parseSimple() { return { type: "expr", expr: parseExpr() }; }
+
+  function parsePrintArgs() {
+    const args = [];
+    if (at("op", ";") || at("op", "}") || at("nl") || at("eof")) return args;
+    args.push(parseExpr());
+    while (at("op", ",")) { next(); args.push(parseExpr()); }
+    return args;
+  }
+
+  // expression parser (precedence climbing)
+  function parseExpr() { return parseAssign(); }
+  function parseAssign() {
+    const left = parseTernary();
+    if (at("op", "=") || at("op","+=")||at("op","-=")||at("op","*=")||at("op","/=")) {
+      const op = next().v; const right = parseAssign();
+      return { type: "assign", op, target: left, value: right };
+    }
+    return left;
+  }
+  function parseTernary() { return parseOr(); }
+  function parseOr() { let l = parseAnd(); while (at("op","||")) { next(); const r = parseAnd(); l = { type:"logic", op:"||", l, r }; } return l; }
+  function parseAnd() { let l = parseMatch(); while (at("op","&&")) { next(); const r = parseMatch(); l = { type:"logic", op:"&&", l, r }; } return l; }
+  function parseMatch() {
+    let l = parseCompare();
+    while (at("op","~")||at("op","!~")) { const op = next().v; const r = parseCompare(); l = { type:"match", op, l, r }; }
+    return l;
+  }
+  function parseCompare() {
+    let l = parseConcat();
+    while (at("op","==")||at("op","!=")||at("op","<")||at("op",">")||at("op","<=")||at("op",">=")) {
+      const op = next().v; const r = parseConcat(); l = { type:"cmp", op, l, r };
+    }
+    return l;
+  }
+  function parseConcat() {
+    let l = parseAdd();
+    // concatenation: adjacent expressions with no operator
+    while (at("num")||at("str")||at("id")||at("field")||at("regex")|| (at("op","(")) || at("kw","length")||at("kw","substr")||at("kw","toupper")||at("kw","tolower")||at("kw","int")||at("kw","index")||at("kw","split")) {
+      const r = parseAdd(); l = { type:"concat", l, r };
+    }
+    return l;
+  }
+  function parseAdd() { let l = parseMul(); while (at("op","+")||at("op","-")) { const op=next().v; const r=parseMul(); l={type:"bin",op,l,r}; } return l; }
+  function parseMul() { let l = parseUnary(); while (at("op","*")||at("op","/")||at("op","%")) { const op=next().v; const r=parseUnary(); l={type:"bin",op,l,r}; } return l; }
+  function parseUnary() {
+    if (at("op","!")) { next(); return { type:"not", e:parseUnary() }; }
+    if (at("op","-")) { next(); return { type:"neg", e:parseUnary() }; }
+    if (at("op","++")||at("op","--")) { const op=next().v; const e=parseUnary(); return {type:"preincr",op,e}; }
+    return parsePostfix();
+  }
+  function parsePostfix() {
+    let e = parsePrimary();
+    if (at("op","++")||at("op","--")) { const op=next().v; e = { type:"postincr", op, e }; }
+    return e;
+  }
+  function parsePrimary() {
+    if (at("field")) { next(); const idx = parsePrimary(); return { type:"field", idx }; }
+    if (at("num")) return { type:"num", v: next().v };
+    if (at("str")) return { type:"str", v: next().v };
+    if (at("regex")) return { type:"regex", v: next().v };
+    if (at("op","(")) { next(); const e = parseExpr(); eat("op",")"); return e; }
+    if (at("kw","length")) { next(); if (at("op","(")) { next(); const a = at("op",")")?null:parseExpr(); eat("op",")"); return {type:"call",name:"length",args:a?[a]:[]}; } return {type:"call",name:"length",args:[]}; }
+    if (at("kw","substr")||at("kw","index")||at("kw","split")||at("kw","toupper")||at("kw","tolower")||at("kw","int")||at("kw","sub")||at("kw","gsub")||at("kw","match")) {
+      const name = next().v; eat("op","("); const args=[];
+      if (!at("op",")")) { args.push(parseExpr()); while (at("op",",")) { next(); args.push(parseExpr()); } }
+      eat("op",")"); return { type:"call", name, args };
+    }
+    if (at("id")) { const name = next().v; if (at("op","[")) { next(); const k=parseExpr(); eat("op","]"); return {type:"index",name,key:k}; } return { type:"var", name }; }
+    throw new Error("AWK parse: unexpected " + JSON.stringify(T[p]));
+  }
+
+  // ---------- evaluation ----------
+  let fields = [], NR = 0, NF = 0;
+  const arrays = Object.create(null);
+  function num(v) { if (typeof v === "number") return v; const n = parseFloat(v); return isNaN(n) ? 0 : n; }
+  function str(v) { if (v === undefined || v === null) return ""; if (typeof v === "number") return Number.isInteger(v) ? String(v) : String(v); return String(v); }
+  function bool(v) { if (typeof v === "number") return v !== 0; if (v === "" || v === undefined || v === null) return false; const n = parseFloat(v); return isNaN(n) ? v.length > 0 : n !== 0; }
+
+  function getField(n) { if (n === 0) return fields.join(getVar("OFS") === undefined ? " " : "\x00nofix"); return fields[n-1] !== undefined ? fields[n-1] : ""; }
+  function field0() { return globals["__RAW0"] !== undefined ? globals["__RAW0"] : fields.join(" "); }
+  function getVar(name) {
+    if (name === "NR") return NR; if (name === "NF") return NF;
+    if (name === "FS") return FS; if (name === "OFS") return OFS;
+    return globals[name] !== undefined ? globals[name] : "";
+  }
+  function setVar(name, v) {
+    if (name === "FS") { FS = str(v); globals.FS = FS; return; }
+    if (name === "OFS") { OFS = str(v); globals.OFS = OFS; return; }
+    if (name === "NF") { NF = num(v); return; }
+    globals[name] = v;
+  }
+
+  function evalExpr(n) {
+    switch (n.type) {
+      case "num": return n.v;
+      case "str": return n.v;
+      case "regex": return testRegex(n.v, field0()) ? 1 : 0;
+      case "var": return getVar(n.name);
+      case "field": { const i = num(evalExpr(n.idx)); return i === 0 ? field0() : (fields[i-1] !== undefined ? fields[i-1] : ""); }
+      case "index": { const k = str(evalExpr(n.key)); arrays[n.name] = arrays[n.name] || {}; return arrays[n.name][k] !== undefined ? arrays[n.name][k] : ""; }
+      case "assign": return doAssign(n);
+      case "bin": { const a = num(evalExpr(n.l)), b = num(evalExpr(n.r)); return n.op === "+" ? a+b : n.op === "-" ? a-b : n.op === "*" ? a*b : n.op === "/" ? a/b : a%b; }
+      case "neg": return -num(evalExpr(n.e));
+      case "not": return bool(evalExpr(n.e)) ? 0 : 1;
+      case "concat": return str(evalExpr(n.l)) + str(evalExpr(n.r));
+      case "cmp": return doCmp(n) ? 1 : 0;
+      case "logic": return n.op === "&&" ? (bool(evalExpr(n.l)) && bool(evalExpr(n.r)) ? 1 : 0) : (bool(evalExpr(n.l)) || bool(evalExpr(n.r)) ? 1 : 0);
+      case "match": { const s = str(evalExpr(n.l)); const re = n.r.type === "regex" ? n.r.v : str(evalExpr(n.r)); const m = testRegex(re, s); return n.op === "~" ? (m?1:0) : (m?0:1); }
+      case "preincr": { const cur = num(evalRef(n.e)); const nv = n.op === "++" ? cur+1 : cur-1; assignRef(n.e, nv); return nv; }
+      case "postincr": { const cur = num(evalRef(n.e)); const nv = n.op === "++" ? cur+1 : cur-1; assignRef(n.e, nv); return cur; }
+      case "call": return doCall(n);
+      default: throw new Error("AWK eval: unknown node " + n.type);
+    }
+  }
+  function evalRef(n) { return evalExpr(n); }
+  function assignRef(n, v) {
+    if (n.type === "var") setVar(n.name, v);
+    else if (n.type === "field") { const i = num(evalExpr(n.idx)); if (i === 0) { setLine(str(v)); } else { fields[i-1] = str(v); if (i > NF) NF = i; globals["__RAW0"] = fields.join(str(getVar("OFS")||" ")); } }
+    else if (n.type === "index") { arrays[n.name] = arrays[n.name] || {}; arrays[n.name][str(evalExpr(n.key))] = v; }
+  }
+  function doAssign(n) {
+    let v = evalExpr(n.value);
+    if (n.op !== "=") { const cur = num(evalRef(n.target)); const rv = num(v); v = n.op === "+=" ? cur+rv : n.op === "-=" ? cur-rv : n.op === "*=" ? cur*rv : cur/rv; }
+    assignRef(n.target, v); return v;
+  }
+  function doCmp(n) {
+    const a = evalExpr(n.l), b = evalExpr(n.r);
+    const bothNum = (typeof a === "number" || !isNaN(parseFloat(a))) && (typeof b === "number" || !isNaN(parseFloat(b))) && String(a).trim() !== "" && String(b).trim() !== "";
+    let x, y;
+    if (bothNum && typeof a !== "string" && typeof b !== "string") { x = num(a); y = num(b); }
+    else if (bothNum) { x = num(a); y = num(b); }
+    else { x = str(a); y = str(b); }
+    switch (n.op) { case "==": return x===y; case "!=": return x!==y; case "<": return x<y; case ">": return x>y; case "<=": return x<=y; case ">=": return x>=y; }
+  }
+  function testRegex(re, s) { try { return new RegExp(re).test(s); } catch { return false; } }
+
+  function doCall(n) {
+    const a = n.args.map(evalExpr);
+    switch (n.name) {
+      case "length": return a.length ? str(a[0]).length : field0().length;
+      case "substr": { const s = str(a[0]); const start = num(a[1]); const len = a[2] !== undefined ? num(a[2]) : undefined; return len === undefined ? s.substr(start-1) : s.substr(start-1, len); }
+      case "toupper": return str(a[0]).toUpperCase();
+      case "tolower": return str(a[0]).toLowerCase();
+      case "int": return Math.trunc(num(a[0]));
+      case "index": return str(a[0]).indexOf(str(a[1])) + 1;
+      case "split": { const s = str(a[0]); const arrName = n.args[1].name; const sep = a[2] !== undefined ? str(a[2]) : str(getVar("FS")); const parts = sep === " " ? s.trim().split(/\s+/) : s.split(sep); arrays[arrName] = {}; parts.forEach((pp, i) => arrays[arrName][String(i+1)] = pp); return parts.length; }
+      case "match": { const s = str(a[0]); const re = n.args[1].type === "regex" ? n.args[1].v : str(a[1]); const m = s.match(new RegExp(re)); if (m) { setVar("RSTART", m.index+1); setVar("RLENGTH", m[0].length); return m.index+1; } setVar("RSTART",0); setVar("RLENGTH",-1); return 0; }
+      default: return "";
+    }
+  }
+
+  // ---------- execution ----------
+  const CONTROL = { next: Symbol("next") };
+  function execStmts(stmts) {
+    for (const s of stmts) { const r = execStmt(s); if (r === CONTROL.next) return r; }
+  }
+  function execStmt(s) {
+    switch (s.type) {
+      case "print": {
+        const parts = s.args.length ? s.args.map((a) => str(evalExpr(a))) : [field0()];
+        out.push(parts.join(str(getVar("OFS") || " "))); return;
+      }
+      case "printf": {
+        const f = str(evalExpr(s.args[0])); const rest = s.args.slice(1).map(evalExpr);
+        out.push(sprintf(f, rest)); return;
+      }
+      case "expr": evalExpr(s.expr); return;
+      case "if": if (bool(evalExpr(s.cond))) return execStmts(s.then); else if (s.els) return execStmts(s.els); return;
+      case "while": { let g=0; while (bool(evalExpr(s.cond))) { if (++g>1000000) throw new Error("AWK: loop too long"); const r=execStmts(s.body); if (r===CONTROL.next) return r; } return; }
+      case "for": { if (s.init) execStmt(s.init.type?s.init:{type:"expr",expr:s.init}); let g=0; while (s.cond ? bool(evalExpr(s.cond)) : true) { if (++g>1000000) throw new Error("AWK: loop too long"); const r=execStmts(s.body); if (r===CONTROL.next) return r; if (s.post) evalExpr(s.post.expr||s.post); } return; }
+      case "block": return execStmts(s.body);
+      case "next": return CONTROL.next;
+      default: return;
+    }
+  }
+  function sprintf(fmt, args) {
+    let i = 0;
+    return fmt.replace(/%[-+ 0]*\d*(?:\.\d+)?[sdifgxec%]/g, (m) => {
+      if (m === "%%") return "%";
+      const val = args[i++];
+      if (/[dif]/.test(m)) { const nn = Math.trunc(num(val)); return formatWidth(m, String(nn)); }
+      if (/[fg]/.test(m)) { const prec = /\.(\d+)/.exec(m); return formatWidth(m, num(val).toFixed(prec?parseInt(prec[1]):6)); }
+      return formatWidth(m, str(val));
+    });
+  }
+  function formatWidth(spec, s) {
+    const w = /%[-]?(\d+)/.exec(spec); if (!w) return s;
+    const width = parseInt(w[1]); const left = spec.includes("-");
+    if (s.length >= width) return s;
+    const pad = " ".repeat(width - s.length);
+    return left ? s + pad : pad + s;
+  }
+
+  function setLine(line) {
+    globals["__RAW0"] = line;
+    const f = str(getVar("FS"));
+    fields = f === " " ? line.trim().split(/\s+/).filter((x) => x !== "") : line.split(f);
+    if (line === "") fields = [];
+    NF = fields.length;
+  }
+
+  // ---------- run ----------
+  let rules;
+  try { rules = parseProgram(program); }
+  catch (e) { return { ok: false, output: "", error: e.message }; }
+
+  try {
+    for (const r of rules) if (r.special === "BEGIN") execStmts(r.action);
+    const lines = String(input == null ? "" : input).split("\n");
+    // drop trailing empty line from a final newline
+    if (lines.length && lines[lines.length-1] === "") lines.pop();
+    for (const line of lines) {
+      NR++; setLine(line);
+      for (const r of rules) {
+        if (r.special) continue;
+        let matches = true;
+        if (r.pattern) matches = bool(evalExpr(r.pattern));
+        if (matches) { const res = execStmts(r.action); if (res === CONTROL.next) break; }
+      }
+    }
+    for (const r of rules) if (r.special === "END") execStmts(r.action);
+  } catch (e) {
+    return { ok: false, output: out.join("\n"), error: e.message };
+  }
+  return { ok: true, output: out.join("\n") };
+}
+function runProjectAwk(program, input) {
+  try { return runAwkCore(program, input == null ? "" : input); }
+  catch (e) { return { ok: false, output: "", error: String(e && e.message ? e.message : e) }; }
+}
+
+
 
 // Run PHP for real via php-wasm (the official PHP interpreter compiled to WASM).
 // Loads as an ESM module from a CDN. Captures echo/print output and errors.
@@ -3427,7 +3834,7 @@ async function runProjectPHP(code, files = null) {
 // Loads the ESM VM from a CDN and evaluates the code, capturing $stdout.
 // First load downloads the Ruby runtime (~20MB), like the other WASM languages.
 let _rubyVM = null;
-async function runProjectRuby(code) {
+async function runProjectRuby(code, files = null, entryName = null) {
   let vm;
   try {
     if (!_rubyVM) {
@@ -3442,6 +3849,46 @@ async function runProjectRuby(code) {
     return { ok: false, output: "", error: "Couldn't load the Ruby engine: " + (e && e.message ? e.message : e) };
   }
   try {
+    // Multi-file: define each helper file as an in-memory module so require_relative
+    // resolves. ruby.wasm's WASI FS is awkward to write to portably, so instead we
+    // register each non-entry file's source under its basename and stub
+    // require_relative to eval the matching source the first time it's required.
+    // This keeps require_relative REAL (the learner must actually require the file)
+    // without depending on a writable filesystem.
+    let preamble = "";
+    if (Array.isArray(files) && files.length > 1) {
+      const entry = entryName || "main.rb";
+      const helpers = files.filter((f) => f.name !== entry);
+      const srcMap = helpers.map((f) => {
+        const base = f.name.replace(/\.rb$/, "");
+        // escape for a Ruby heredoc-free single-quoted-ish literal via Base64 to avoid
+        // any quoting issues with the learner/helper code.
+        const b64 = (typeof btoa === "function") ? btoa(unescape(encodeURIComponent(f.code))) : Buffer.from(f.code, "utf8").toString("base64");
+        return `  ${JSON.stringify(base)} => ${JSON.stringify(b64)}`;
+      }).join(",\n");
+      preamble = `
+require "base64"
+$__CQ_FILES = {
+${srcMap}
+}
+$__CQ_LOADED = {}
+module Kernel
+  alias_method :__cq_orig_require_relative, :require_relative rescue nil
+  def require_relative(path)
+    key = File.basename(path.to_s).sub(/\\.rb$/, "")
+    if $__CQ_FILES.key?(key)
+      unless $__CQ_LOADED[key]
+        $__CQ_LOADED[key] = true
+        eval(Base64.decode64($__CQ_FILES[key]), TOPLEVEL_BINDING)
+      end
+      return true
+    end
+    begin; __cq_orig_require_relative(path); rescue; end
+  end
+end
+`;
+    }
+    const runCode = preamble + code;
     // Capture stdout by redirecting $stdout to a StringIO, run the user code,
     // then read what was printed. This is the standard ruby.wasm capture pattern.
     const wrapped = `
@@ -3450,7 +3897,7 @@ $__buf = StringIO.new
 $__old = $stdout
 $stdout = $__buf
 begin
-${code.split("\n").map((l) => "  " + l).join("\n")}
+${runCode.split("\n").map((l) => "  " + l).join("\n")}
 rescue => e
   $stdout = $__old
   $__buf.string + "\\nRUBYERR:" + e.message
@@ -4223,6 +4670,29 @@ const MULTIFILE_SEED_LESSONS = [
       { name: "Helper.java", lang: "java", code: "public class Helper {\n    public static int triple(int n) {\n        return n * 3;\n    }\n}\n" },
     ], expectedOutput: "12",
     why: "Main called a static method on the Helper class — real multi-file Java." },
+  { type: "multifile", lang: "py", combo: "py_py3", chapter: "Python · 3 files", title: "Two helpers working together",
+    teach: "Real programs split work across many files, not just two. Here main.py imports from two helper modules — one does math, one formats text — and combines them. Each file has one clear job.",
+    files: [
+      { name: "main.py", lang: "py", code: "import mathutil\nimport textutil\n\n# Print textutil.shout(...) of mathutil.add(4, 5)\n# Should print:  RESULT: 9!\n" },
+      { name: "mathutil.py", lang: "py", code: "def add(a, b):\n    return a + b\n" },
+      { name: "textutil.py", lang: "py", code: 'def shout(n):\n    return "RESULT: " + str(n) + "!"\n' },
+    ], expectedOutput: "RESULT: 9!",
+    why: "main.py pulled from two separate modules and combined them — how real Python projects are structured." },
+  { type: "multifile", lang: "js", combo: "js_js3", chapter: "JavaScript · 3 files", title: "A module chain",
+    teach: "Modules can build on each other. Here main.js uses a math module and a greeting module that itself uses the math module. Each file exports what the next one needs.",
+    files: [
+      { name: "main.js", lang: "js", code: "const greet = require('./greet');\n\n// Log greet.forSum(6, 6) — should print:  Total is 12\n" },
+      { name: "greet.js", lang: "js", code: "const math = require('./math');\nmodule.exports = { forSum: (a, b) => 'Total is ' + math.sum(a, b) };\n" },
+      { name: "math.js", lang: "js", code: "module.exports = { sum: (a, b) => a + b };\n" },
+    ], expectedOutput: "Total is 12",
+    why: "One module used another, and main.js used both — a real dependency chain across three files." },
+  { type: "multifile", lang: "ruby", combo: "ruby_ruby", chapter: "Ruby + Ruby", title: "Greet with a helper",
+    teach: "main.rb pulls in helper.rb with require_relative, then calls a method defined there. Ruby splits code across files the same way — one file's methods become available to another once you require it.",
+    files: [
+      { name: "main.rb", lang: "ruby", code: 'require_relative "helper"\n\n# Print greet("Sam") — should print:  Hi, Sam!\n' },
+      { name: "helper.rb", lang: "ruby", code: 'def greet(name)\n  "Hi, " + name + "!"\nend\n' },
+    ], expectedOutput: "Hi, Sam!",
+    why: "main.rb required helper.rb for real and called its method — real multi-file Ruby." },
 ];
 
 const MULTIFILE_COMBOS = {
@@ -4232,6 +4702,9 @@ const MULTIFILE_COMBOS = {
   "c_c":    { id: "c_c",    label: "C + C", entry: "c", files: ["main.c", "helpers.c", "helpers.h"], how: "helpers.h declares a function, helpers.c defines it, main.c includes helpers.h and calls it" },
   "cpp_cpp":{ id: "cpp_cpp",label: "C++ + C++", entry: "cpp", files: ["main.cpp", "helpers.cpp", "helpers.h"], how: "helpers.h declares a function, helpers.cpp defines it, main.cpp includes helpers.h and calls it" },
   "java_java": { id: "java_java", label: "Java + Java", entry: "java", files: ["Main.java", "Helper.java"], how: "Helper.java defines a public class with a static method, Main.java calls Helper.method()" },
+  "py_py3": { id: "py_py3", label: "Python · 3 files", entry: "py", files: ["main.py", "mathutil.py", "textutil.py"], how: "main.py imports two helper modules and combines their functions" },
+  "js_js3": { id: "js_js3", label: "JavaScript · 3 files", entry: "js", files: ["main.js", "greet.js", "math.js"], how: "main.js requires greet.js, which itself requires math.js — a dependency chain" },
+  "ruby_ruby": { id: "ruby_ruby", label: "Ruby + Ruby", entry: "ruby", files: ["main.rb", "helper.rb"], how: "main.rb uses require_relative to load helper.rb and calls a method defined there" },
   "lua_lua": { id: "lua_lua", label: "Lua + Lua", entry: "lua", files: ["main.lua", "helpers.lua"], how: "helpers.lua returns a table of functions, main.lua does local h = require('helpers') and calls one" },
   "php_php": { id: "php_php", label: "PHP + PHP", entry: "php", files: ["main.php", "helpers.php"], how: "helpers.php defines a function, main.php does require 'helpers.php' and calls it" },
 };
@@ -5164,6 +5637,7 @@ function visualStepFor(langId) {
 
 const CLASSES = [
   { id: "general", tab: "coding", label: "General Coding", emoji: "🧠", mode: "concept", blurb: "Start here. Learn to THINK like a coder — patterns, steps, and the universal building blocks (functions, return, loops…) that exist in every language.", steps: GENERAL_STEPS },
+  { id: "awk", tab: "coding", label: "AWK", emoji: "📊", mode: "awktext", blurb: "The classic text-processing language — pull columns, filter rows, and total things up. Runs for real over input you're given.", steps: AWK_STEPS },
   { id: "general_multifile", tab: "coding", label: "General Multi-file", emoji: "📁", mode: "concept", blurb: "How real programs span many files — entry points, imports, and how files work together. General throughout, then real two-file programs you run in each language.", steps: [...GENERAL_MULTIFILE_STEPS, ...MULTIFILE_SEED_LESSONS] },
   // Standalone multi-file combo classes: each pairs the shared "how multi-file
   // works" intro with one real two-file program in that language pairing, graded
@@ -5264,7 +5738,7 @@ const chaptersOf = (cls) => {
   return order.map((name) => ({ name, stepIdxs: map[name] }));
 };
 const resumeIdx = (cls, doneSet) => { for (let i = 0; i < cls.steps.length; i++) if (!doneSet.has(i)) return i; return Math.max(0, cls.steps.length - 1); };
-const modeLabel = (mode) => mode === "real" ? "real test grading" : mode === "output" ? "real output grading" : mode === "multifile" ? "multi-file · real test grading" : mode === "sql" ? "real query grading" : mode === "markup" ? "live preview" : mode === "concept" ? "think like a coder" : "AI-guided";
+const modeLabel = (mode) => mode === "real" ? "real test grading" : mode === "output" ? "real output grading" : mode === "awktext" ? "real output grading" : mode === "multifile" ? "multi-file · real test grading" : mode === "sql" ? "real query grading" : mode === "markup" ? "live preview" : mode === "concept" ? "think like a coder" : "AI-guided";
 
 // ---------- Module-level generation store ----------
 // Generation state lives OUTSIDE React because the parent auth wrapper remounts
@@ -5329,6 +5803,31 @@ const LAB_SAVE = {
   },
   saveAuto(lab, state) { try { CQ_STORE.set(this.autoKey(lab), JSON.stringify(state)); } catch {} },
   loadAuto(lab) { try { return JSON.parse(CQ_STORE.get(this.autoKey(lab))); } catch { return null; } },
+};
+
+// Named sandbox snippets, saved locally so the sandbox isn't throwaway. Each snippet
+// stores its language + code under its own key; an index lists {id, name, lang, ts}.
+// Capped at 40 total. Uses the same CQ_STORE the rest of the app persists through.
+const SANDBOX_SNIPPETS = {
+  idxKey: "cq_sandbox_snippets",
+  itemKey: (id) => `cq_sandbox_snippet_${id}`,
+  list() { try { return JSON.parse(CQ_STORE.get(this.idxKey) || "[]"); } catch { return []; } },
+  save(name, lang, code) {
+    const id = "sn" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+    const idx = this.list();
+    idx.unshift({ id, name: (name || "Untitled").slice(0, 60), lang, ts: Date.now() });
+    CQ_STORE.set(this.idxKey, JSON.stringify(idx.slice(0, 40)));
+    CQ_STORE.set(this.itemKey(id), JSON.stringify({ lang, code }));
+    return id;
+  },
+  load(id) { try { return JSON.parse(CQ_STORE.get(this.itemKey(id))); } catch { return null; } },
+  remove(id) {
+    CQ_STORE.set(this.idxKey, JSON.stringify(this.list().filter((s) => s.id !== id)));
+    CQ_STORE.remove(this.itemKey(id));
+  },
+  rename(id, name) {
+    CQ_STORE.set(this.idxKey, JSON.stringify(this.list().map((s) => s.id === id ? { ...s, name: (name || s.name).slice(0, 60) } : s)));
+  },
 };
 
 const GEN_STORE = {
@@ -5744,6 +6243,8 @@ function AppInner({ initialState, onPersist, onSignOut, user } = {}) {
     }
   };
   const clearDone = (classId, idx) => setProgress((p) => { const s = new Set(p[classId] || new Set()); s.delete(idx); return { ...p, [classId]: s }; });
+  // Clear ALL progress for one class (so a learner can redo it from scratch).
+  const resetClass = (classId) => setProgress((p) => { const next = { ...p }; next[classId] = new Set(); return next; });
   const addAiLesson = (classId, lesson) => setAiLessons((a) => ({ ...a, [classId]: [...(a[classId] || []), lesson] }));
   // Reorder generated lessons within a class (drag-to-reorder). Persists via the
   // aiLessons autosave. from/to are indices within aiLessons[classId].
@@ -5988,6 +6489,7 @@ function AppInner({ initialState, onPersist, onSignOut, user } = {}) {
           reviewCount={reviewSets.length}
           onOpenStep={(idx) => setScreen({ name: "lesson", id: cls.id, idx })}
           onOpenClass={(id) => setScreen({ name: "class", id })}
+          onResetClass={() => resetClass(cls.id)}
           onContinue={() => setScreen({ name: "lesson", id: cls.id, idx: resumeIdx(cls, doneSetFor(cls.id)) })}
           onAddAi={addAndOpenOne}
           onAddCourse={(lessons) => setAiLessons((a) => ({ ...a, [baseCls.id]: [...(a[baseCls.id] || []), ...lessons] }))}
@@ -6385,7 +6887,7 @@ function Home({ progress, aiLessons, savedProjects = [], profileDescription = ""
           // (a query against a real database), so it gets its own honest heading
           // rather than being counted under "real test grading" — otherwise the
           // count reads one too high for code that runs and is checked.
-          const groupOf = (m) => m === "real" ? "real" : m === "output" ? "output" : m === "multifile" ? "multifile" : m === "sql" ? "sql" : m === "markup" ? "markup" : "ai";
+          const groupOf = (m) => m === "real" ? "real" : (m === "output" || m === "awktext") ? "output" : m === "multifile" ? "multifile" : m === "sql" ? "sql" : m === "markup" ? "markup" : "ai";
           const groups = {
             real: { label: "Real test grading — your code runs and is checked", items: [] },
             output: { label: "Real output grading — your program runs and its output is checked", items: [] },
@@ -6511,7 +7013,7 @@ function TutorChat({ classLabel = null, classKind = null }) {
   );
 }
 
-function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, generation, onStartGeneration, onCancelGeneration, onClearGenerationError, onBack, onReview, reviewCount = 0, onOpenStep, onOpenClass, onContinue, onAddAi, onAddCourse, onAddAndOpenSet, onMoveAiLesson, onRenameChapter, baseStepCount = 0, onStayOnClass }) {
+function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, generation, onStartGeneration, onCancelGeneration, onClearGenerationError, onBack, onReview, reviewCount = 0, onOpenStep, onOpenClass, onResetClass, onContinue, onAddAi, onAddCourse, onAddAndOpenSet, onMoveAiLesson, onRenameChapter, baseStepCount = 0, onStayOnClass }) {
   const chapters = chaptersOf(cls);
   const done = doneSet.size, total = cls.steps.length;
   const pct = total ? Math.round((100 * done) / total) : 0;
@@ -6655,6 +7157,12 @@ function ClassView({ cls, doneSet, progress, lessonStats, profileDescription, ge
         <div className="cq-classtop-row">
           <button className="cq-back" onClick={onBack}>← All classes</button>
           {onReview && <button className="cq-classreview-btn" onClick={onReview}>🔁 Review{reviewCount > 0 ? ` (${reviewCount})` : ""}</button>}
+          {onResetClass && doneSet.size > 0 && (
+            <button className="cq-reset-btn" onClick={() => {
+              if (typeof window !== "undefined" && window.confirm && !window.confirm("Reset your progress for this class? This clears which lessons are marked done — your saved work elsewhere isn't affected.")) return;
+              onResetClass();
+            }}>↺ Reset progress</button>
+          )}
         </div>
         <section className="cq-classhero">
           <div className="cq-classhero-top">
@@ -6925,6 +7433,7 @@ function LessonRunner({ cls, idx, doneSet, onDone, onUndone, onBack, goStep }) {
       {activeStep.type === "aitype" && <AITypeStep key={stepKey} step={activeStep} onDone={complete} />}
       {activeStep.type === "sqlquery" && <SQLStep key={stepKey} step={activeStep} onDone={complete} />}
       {activeStep.type === "output" && <OutputStep key={stepKey} step={activeStep} onDone={complete} />}
+      {activeStep.type === "awk" && <AwkStep key={stepKey} step={activeStep} onDone={complete} />}
       {activeStep.type === "markup" && <MarkupStep key={stepKey} step={activeStep} onDone={complete} />}
 
       {/* In-lesson AI helper — knows this lesson, saves its chat per lesson */}
@@ -7285,7 +7794,7 @@ function ConceptStep({ step, onDone }) {
         <h1 className="cq-h1">{step.title}</h1>
         {step.teach && <p className="cq-teach-text">{step.teach}</p>}
         {step.plain && <p className="cq-concept-plain">{step.plain}</p>}
-        {step.example && <div className="cq-teach-example"><span className="cq-teach-label">Example</span><pre>{step.example}</pre></div>}
+        {step.example && <div className="cq-teach-example"><div className="cq-teach-examplehead"><span className="cq-teach-label">Example</span><CopyButton text={step.example} /></div><pre>{step.example}</pre></div>}
         {step.why && <div className="cq-takeaway big">{step.why}</div>}
         <button className="cq-run" style={{ marginTop: 18 }} onClick={() => onDone(stats.buildStats({ applicable: false }))}>Got it →</button>
       </div>
@@ -7630,7 +8139,7 @@ function RunStep({ step, onDone }) {
       {(step.teach || step.example) ? (
         <div className="cq-teach">
           {step.teach && <p className="cq-teach-text">{step.teach}</p>}
-          {step.example && <div className="cq-teach-example"><span className="cq-teach-label">Example</span><pre>{step.example}</pre></div>}
+          {step.example && <div className="cq-teach-example"><div className="cq-teach-examplehead"><span className="cq-teach-label">Example</span><CopyButton text={step.example} /></div><pre>{step.example}</pre></div>}
           <p className="cq-teach-now">Now you try 👇</p>
         </div>
       ) : (step.intro && <p className="cq-intro">{step.intro}</p>)}
@@ -7685,6 +8194,7 @@ function MultiFileStep({ step, onDone }) {
         : lang === "py" ? await runProjectPython(entry.code, files, entry.name)
         : lang === "lua" ? await runProjectLua(entry.code, files)
         : lang === "php" ? await runProjectPHP(entry.code, files)
+        : lang === "ruby" ? await runProjectRuby(entry.code, files, entry.name)
         : lang === "c" ? await runProjectCFamily(entry.code, false, files, entry.name)
         : lang === "cpp" ? await runProjectCFamily(entry.code, true, files, entry.name)
         : lang === "java" ? await runProjectJava(entry.code, null, null, files)
@@ -7707,7 +8217,7 @@ function MultiFileStep({ step, onDone }) {
       {(step.teach || step.example) ? (
         <div className="cq-teach">
           {step.teach && <p className="cq-teach-text">{step.teach}</p>}
-          {step.example && <div className="cq-teach-example"><span className="cq-teach-label">Example</span><pre>{step.example}</pre></div>}
+          {step.example && <div className="cq-teach-example"><div className="cq-teach-examplehead"><span className="cq-teach-label">Example</span><CopyButton text={step.example} /></div><pre>{step.example}</pre></div>}
           <p className="cq-teach-now">Now you try 👇</p>
         </div>
       ) : (step.intro && <p className="cq-intro">{step.intro}</p>)}
@@ -7727,6 +8237,8 @@ function MultiFileStep({ step, onDone }) {
       </div>
       <CodeEditor code={cur.code} setCode={setCode} onChange={() => setOut(null)} onKeyDown={onKeyDown} lang={cur.lang || step.lang} minHeight={180} />
       <div className="cq-buildrow"><button className="cq-run" onClick={run} disabled={running}>{running ? "Running\u2026" : "\u25b6 Run " + entryName}</button></div>
+
+      <StuckLadder step={step} />
 
       {err && <div className="cq-nudge">{err}</div>}
       {out && (
@@ -7815,7 +8327,7 @@ function AiRunStep({ step, onDone }) {
       {(step.teach || step.example) ? (
         <div className="cq-teach">
           {step.teach && <p className="cq-teach-text">{step.teach}</p>}
-          {step.example && <div className="cq-teach-example"><span className="cq-teach-label">Example</span><pre>{step.example}</pre></div>}
+          {step.example && <div className="cq-teach-example"><div className="cq-teach-examplehead"><span className="cq-teach-label">Example</span><CopyButton text={step.example} /></div><pre>{step.example}</pre></div>}
           <p className="cq-teach-now">Now you try 👇</p>
         </div>
       ) : (step.intro && <p className="cq-intro">{step.intro}</p>)}
@@ -7904,7 +8416,7 @@ function VisualStep({ step, onDone }) {
       {(step.teach || step.example) ? (
         <div className="cq-teach">
           {step.teach && <p className="cq-teach-text">{step.teach}</p>}
-          {step.example && <div className="cq-teach-example"><span className="cq-teach-label">Example</span><pre>{step.example}</pre></div>}
+          {step.example && <div className="cq-teach-example"><div className="cq-teach-examplehead"><span className="cq-teach-label">Example</span><CopyButton text={step.example} /></div><pre>{step.example}</pre></div>}
           <p className="cq-teach-now">Write it, then tap “Run visually” 👇</p>
         </div>
       ) : (step.intro && <p className="cq-intro">{step.intro}</p>)}
@@ -7930,6 +8442,32 @@ function VisualStep({ step, onDone }) {
 // controls how far they go.
 function buildHintLadder(step) {
   const levels = [];
+  // Multi-file lessons have `files` instead of a single `solution`. Build hints
+  // from the file structure: which file is the entry, what it must produce, and
+  // (last resort) the shape of the entry file. This mirrors the single-step ladder.
+  if (step.type === "multifile" && Array.isArray(step.files) && step.files.length) {
+    const entry = step.files.find((f) => /main/i.test(f.name)) || step.files[0];
+    const others = step.files.filter((f) => f !== entry);
+    levels.push({
+      label: "A nudge",
+      body: `Start in ${entry.name} — that's the file that runs. The other file${others.length > 1 ? "s" : ""} (${others.map((f) => f.name).join(", ")}) already ${others.length > 1 ? "define what you need" : "defines what you need"}; your job is to use ${others.length > 1 ? "them" : "it"} from ${entry.name}.`,
+    });
+    if (step.expectedOutput != null) {
+      levels.push({
+        label: "A bigger hint",
+        body: `${entry.name} should end up printing exactly:\n${step.expectedOutput}\nLook at what the other file provides (a function or value) and call it with the right argument to get that.`,
+      });
+    }
+    // Show the helper file(s) so they can see what's available to call.
+    if (others.length) {
+      levels.push({
+        label: "Show what's available",
+        body: others.map((f) => `${f.name}:\n${f.code}`).join("\n\n"),
+        code: true,
+      });
+    }
+    return levels;
+  }
   const io = step.io === "print" ? "print the answer with print(…)" : "return the answer with return";
   // 1) Gentle nudge — restate the concept / what's being asked.
   const concept = (step.concept || "").toString().trim();
@@ -7965,6 +8503,33 @@ function buildHintLadder(step) {
     levels.push({ label: "Show the answer", body: step.solution, code: true, isAnswer: true });
   }
   return levels;
+}
+
+// Small reusable copy-to-clipboard button. Shows a brief "Copied!" confirmation.
+// Falls back silently if the clipboard API isn't available (older/locked contexts).
+function CopyButton({ text, label = "Copy" }) {
+  const [copied, setCopied] = useState(false);
+  const doCopy = async (e) => {
+    e.stopPropagation();
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text || "");
+      } else {
+        const ta = document.createElement("textarea");
+        ta.value = text || ""; ta.style.position = "fixed"; ta.style.opacity = "0";
+        document.body.appendChild(ta); ta.select();
+        try { document.execCommand("copy"); } catch {}
+        document.body.removeChild(ta);
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1400);
+    } catch {}
+  };
+  return (
+    <button type="button" className="cq-copybtn" onClick={doCopy} aria-label="Copy code">
+      {copied ? "✓ Copied" : label}
+    </button>
+  );
 }
 
 function StuckLadder({ step }) {
@@ -8059,6 +8624,54 @@ function TypeStep({ step, onDone }) {
 // program; we run it through the actual interpreter and compare its output to the
 // lesson's expectedOutput. Genuinely real — real execution, real output check —
 // just output-based rather than function-tested, which is the honest model for
+// AWK lesson: the learner writes an AWK program that runs over the lesson's given
+// input text, for real, and the output is checked. Shows the input alongside the
+// editor so it's clear what the program is processing.
+function AwkStep({ step, onDone }) {
+  const [code, setCode] = useState(step.starter || "");
+  const [result, setResult] = useState(null);
+  const [running, setRunning] = useState(false);
+  const stats = useLessonStats();
+  const run = async () => {
+    if (!code.trim()) return;
+    setRunning(true);
+    let r;
+    try { r = runProjectAwk(code, step.input || ""); }
+    catch (e) { setResult({ ok: false, engineError: true, why: "Couldn't run it: " + (e && e.message ? e.message : "unknown error") }); setRunning(false); return; }
+    if (!r.ok) { setResult({ ok: false, engineError: true, why: r.error || "Your program didn't run.", output: r.output || "" }); setRunning(false); return; }
+    const passed = outputMatches(r.output || "", step.expectedOutput || "");
+    setResult({ ok: passed, output: r.output || "", why: passed ? (step.why || "Correct — it ran for real.") : "Not quite — the output doesn't match yet." });
+    setRunning(false);
+    if (passed) onDone(stats.buildStats()); else stats.recordWrong();
+  };
+  const onKeyDown = makeCodeKeyDown(code, setCode);
+  return (
+    <div className="cq-card2">
+      <h1 className="cq-h1">{step.title} <span className="cq-universal">real output grading</span></h1>
+      {step.intro && <p className="cq-intro">{step.intro}</p>}
+      {step.teach && <div className="cq-teach"><p className="cq-teach-text">{step.teach}</p></div>}
+      {step.input != null && (
+        <div className="cq-teach-example" style={{ marginBottom: 12 }}>
+          <div className="cq-teach-examplehead"><span className="cq-teach-label">Input text</span></div>
+          <pre>{step.input}</pre>
+        </div>
+      )}
+      {step.task && <div className="cq-goal">🎯 {step.task}</div>}
+      <CodeEditor code={code} setCode={setCode} onKeyDown={onKeyDown} lang="bash" minHeight={130} />
+      <div className="cq-buildrow">
+        <button className="cq-run" onClick={run} disabled={result?.ok || running || !code.trim()}>{running ? "Running…" : "▶ Run it"}</button>
+      </div>
+      <StuckLadder step={step} />
+      {result && result.engineError && <div className="cq-runout-note">⚠ {result.why}</div>}
+      {result && !result.ok && !result.engineError && <div className="cq-nudge">Almost — {result.why}</div>}
+      {result && result.output != null && result.output !== "" && (
+        <div className="cq-runout"><div className="cq-runout-label">Your output</div><pre className="cq-console">{result.output}</pre></div>
+      )}
+      {result?.ok && <div className="cq-takeaway big">{step.why || "Solved — it ran for real."}</div>}
+    </div>
+  );
+}
+
 // these whole-program languages.
 function OutputStep({ step, onDone }) {
   const [code, setCode] = useState(step.starter || "");
@@ -8096,7 +8709,7 @@ function OutputStep({ step, onDone }) {
       {(step.teach || step.example) && (
         <div className="cq-teach">
           {step.teach && <p className="cq-teach-text">{step.teach}</p>}
-          {step.example && <div className="cq-teach-example"><span className="cq-teach-label">Example</span><pre>{step.example}</pre></div>}
+          {step.example && <div className="cq-teach-example"><div className="cq-teach-examplehead"><span className="cq-teach-label">Example</span><CopyButton text={step.example} /></div><pre>{step.example}</pre></div>}
         </div>
       )}
       {step.task && <div className="cq-goal">🎯 {step.task}</div>}
@@ -8141,7 +8754,7 @@ function SQLStep({ step, onDone }) {
       {(step.teach || step.example) && (
         <div className="cq-teach">
           {step.teach && <p className="cq-teach-text">{step.teach}</p>}
-          {step.example && <div className="cq-teach-example"><span className="cq-teach-label">Example</span><pre>{step.example}</pre></div>}
+          {step.example && <div className="cq-teach-example"><div className="cq-teach-examplehead"><span className="cq-teach-label">Example</span><CopyButton text={step.example} /></div><pre>{step.example}</pre></div>}
         </div>
       )}
       {step.schema && (
@@ -8261,7 +8874,7 @@ function MarkupStep({ step, onDone }) {
       {(step.teach || step.example) ? (
         <div className="cq-teach">
           {step.teach && <p className="cq-teach-text">{step.teach}</p>}
-          {step.example && <div className="cq-teach-example"><span className="cq-teach-label">Example</span><pre>{step.example}</pre></div>}
+          {step.example && <div className="cq-teach-example"><div className="cq-teach-examplehead"><span className="cq-teach-label">Example</span><CopyButton text={step.example} /></div><pre>{step.example}</pre></div>}
           <p className="cq-teach-now">Write it below — the preview updates live 👇</p>
         </div>
       ) : (step.intro && <p className="cq-intro">{step.intro}</p>)}
@@ -8639,6 +9252,33 @@ async function runSandbox(lang, code) {
   return { ok: false, output: "", error: "That language can't run in the sandbox." };
 }
 
+// Languages the sandbox can run across MULTIPLE files, using the same real project
+// runners the multi-file lessons use. (ts/bash/sql/asm/basic stay single-file.)
+const SANDBOX_MULTIFILE_LANGS = ["py", "js", "c", "cpp", "java", "php", "lua", "ruby"];
+
+// Shared multi-file runner: give it the language, the files array, and which file
+// is the entry point. Same dispatch the multi-file lessons use, in one place.
+async function runMultiFileProject(lang, files, entryName) {
+  const entry = files.find((f) => f.name === entryName) || files[0];
+  if (!entry) return { ok: false, output: "", error: "No entry file to run." };
+  const hasSql = files.some((f) => /\.sql$/i.test(f.name));
+  try {
+    const r = (lang === "js" && hasSql) ? await runProjectJSWithSQL(files, entry.name)
+      : lang === "js" ? runProjectJS(entry.code, files, entry.name)
+      : lang === "py" ? await runProjectPython(entry.code, files, entry.name)
+      : lang === "lua" ? await runProjectLua(entry.code, files)
+      : lang === "php" ? await runProjectPHP(entry.code, files)
+      : lang === "ruby" ? await runProjectRuby(entry.code, files, entry.name)
+      : lang === "c" ? await runProjectCFamily(entry.code, false, files, entry.name)
+      : lang === "cpp" ? await runProjectCFamily(entry.code, true, files, entry.name)
+      : lang === "java" ? await runProjectJava(entry.code, null, null, files)
+      : await runProjectPython(entry.code, files, entry.name);
+    return r;
+  } catch (e) {
+    return { ok: false, output: "", error: String(e && e.message ? e.message : e) };
+  }
+}
+
 function Sandbox({ onBack, onHome }) {
   const [langId, setLangId] = React.useState("py");
   const lang = SANDBOX_LANGS.find((l) => l.id === langId) || SANDBOX_LANGS[0];
@@ -8652,6 +9292,102 @@ function Sandbox({ onBack, onHome }) {
   const [out, setOut] = React.useState(null);
   const [err, setErr] = React.useState("");
   const [running, setRunning] = React.useState(false);
+  // Named snippets: save the current code+lang locally, reload later. Not throwaway.
+  const [snippets, setSnippets] = React.useState(() => SANDBOX_SNIPPETS.list());
+  const [savedFlash, setSavedFlash] = React.useState("");
+  const refreshSnippets = () => setSnippets(SANDBOX_SNIPPETS.list());
+  const saveSnippet = () => {
+    if (!code.trim()) { setErr("Write some code first, then save it."); return; }
+    const name = (typeof window !== "undefined" && window.prompt) ? window.prompt("Name this snippet:", lang.label + " snippet") : null;
+    if (name === null) return; // cancelled
+    SANDBOX_SNIPPETS.save(name || (lang.label + " snippet"), langId, code);
+    refreshSnippets();
+    setSavedFlash("Saved!"); setTimeout(() => setSavedFlash(""), 1400);
+  };
+  const loadSnippet = (id) => {
+    const s = SANDBOX_SNIPPETS.load(id);
+    if (!s) return;
+    if (s.lang && s.lang !== langId) { setLangId(s.lang); }
+    setCodeByLang((prev) => ({ ...prev, [s.lang || langId]: s.code || "" }));
+    setOut(null); setErr("");
+  };
+  const deleteSnippet = (id) => { SANDBOX_SNIPPETS.remove(id); refreshSnippets(); };
+  const renameSnippet = (id, cur) => {
+    const name = (typeof window !== "undefined" && window.prompt) ? window.prompt("Rename snippet:", cur) : null;
+    if (name === null) return;
+    SANDBOX_SNIPPETS.rename(id, name); refreshSnippets();
+  };
+
+  // ---- Multi-file mode: run 2-3 files together with the real project runners ----
+  const [multiMode, setMultiMode] = React.useState(false);
+  const canMulti = SANDBOX_MULTIFILE_LANGS.includes(langId);
+  // Default starter file sets per language (entry file first).
+  const defaultFiles = (lid) => {
+    switch (lid) {
+      case "py": return [
+        { name: "main.py", lang: "py", code: "import helper\n\nprint(helper.greet(\"world\"))\n" },
+        { name: "helper.py", lang: "py", code: 'def greet(name):\n    return "Hello, " + name + "!"\n' },
+      ];
+      case "js": return [
+        { name: "main.js", lang: "js", code: "const helper = require('./helper');\nconsole.log(helper.greet('world'));\n" },
+        { name: "helper.js", lang: "js", code: "module.exports = { greet: (n) => 'Hello, ' + n + '!' };\n" },
+      ];
+      case "c": return [
+        { name: "main.c", lang: "c", code: '#include <stdio.h>\n#include "helper.h"\nint main() { printf("%d\\n", square(7)); return 0; }\n' },
+        { name: "helper.c", lang: "c", code: '#include "helper.h"\nint square(int n) { return n * n; }\n' },
+        { name: "helper.h", lang: "c", code: "int square(int n);\n" },
+      ];
+      case "cpp": return [
+        { name: "main.cpp", lang: "cpp", code: '#include <iostream>\n#include "helper.h"\nint main() { std::cout << square(7) << "\\n"; return 0; }\n' },
+        { name: "helper.cpp", lang: "cpp", code: '#include "helper.h"\nint square(int n) { return n * n; }\n' },
+        { name: "helper.h", lang: "cpp", code: "int square(int n);\n" },
+      ];
+      case "java": return [
+        { name: "Main.java", lang: "java", code: "public class Main {\n  public static void main(String[] args) {\n    System.out.println(Helper.square(7));\n  }\n}\n" },
+        { name: "Helper.java", lang: "java", code: "public class Helper {\n  public static int square(int n) { return n * n; }\n}\n" },
+      ];
+      case "php": return [
+        { name: "main.php", lang: "php", code: '<?php\nrequire "helper.php";\necho greet("world") . "\\n";\n' },
+        { name: "helper.php", lang: "php", code: '<?php\nfunction greet($n) { return "Hello, " . $n . "!"; }\n' },
+      ];
+      case "lua": return [
+        { name: "main.lua", lang: "lua", code: 'local helper = require("helper")\nprint(helper.greet("world"))\n' },
+        { name: "helper.lua", lang: "lua", code: 'local M = {}\nfunction M.greet(n) return "Hello, " .. n .. "!" end\nreturn M\n' },
+      ];
+      case "ruby": return [
+        { name: "main.rb", lang: "ruby", code: 'require_relative "helper"\nputs greet("world")\n' },
+        { name: "helper.rb", lang: "ruby", code: 'def greet(name)\n  "Hello, " + name + "!"\nend\n' },
+      ];
+      default: return [];
+    }
+  };
+  const [filesByLang, setFilesByLang] = React.useState({});
+  const files = filesByLang[langId] || defaultFiles(langId);
+  const [activeFileByLang, setActiveFileByLang] = React.useState({});
+  const activeFileName = activeFileByLang[langId] || (files[0] && files[0].name);
+  const activeFile = files.find((f) => f.name === activeFileName) || files[0];
+  const setFiles = (updater) => setFilesByLang((prev) => ({ ...prev, [langId]: typeof updater === "function" ? updater(prev[langId] || defaultFiles(langId)) : updater }));
+  const setActiveFile = (name) => setActiveFileByLang((prev) => ({ ...prev, [langId]: name }));
+  const setFileCode = (v) => setFiles((fs) => fs.map((f) => f.name === activeFileName ? { ...f, code: typeof v === "function" ? v(f.code) : v } : f));
+  const ext = PROJECT_FILE_EXT[langId] || "txt";
+  const addFile = () => {
+    if (files.length >= 4) { setErr("Sandbox multi-file is capped at 4 files."); return; }
+    const base = (typeof window !== "undefined" && window.prompt) ? window.prompt("New file name (without extension):", "extra") : "extra";
+    if (!base) return;
+    const clean = base.replace(/[^A-Za-z0-9_]/g, "") || "extra";
+    const name = clean + "." + ext;
+    if (files.some((f) => f.name === name)) { setErr("A file named " + name + " already exists."); return; }
+    setFiles((fs) => [...fs, { name, lang: langId, code: "" }]);
+    setActiveFile(name); setErr("");
+  };
+  const removeFile = (name) => {
+    if (files.length <= 1) return;
+    setFiles((fs) => fs.filter((f) => f.name !== name));
+    if (activeFileName === name) setActiveFile(files[0].name === name ? files[1].name : files[0].name);
+  };
+  const resetMultiFiles = () => { setFiles(defaultFiles(langId)); setActiveFile(defaultFiles(langId)[0].name); setOut(null); setErr(""); };
+  // First file is the entry point (main). Basename must be unique across files.
+  const entryName = (files.find((f) => /^main/i.test(f.name)) || files[0] || {}).name;
 
   const run = async () => {
     if (!code.trim()) { setErr("Write some code first, then run it."); setOut(null); return; }
@@ -8665,6 +9401,18 @@ function Sandbox({ onBack, onHome }) {
     } finally { setRunning(false); }
   };
   const onKeyDown = makeCodeKeyDown(code, setCode);
+  const runMulti = async () => {
+    if (!files.some((f) => f.code.trim())) { setErr("Write some code first, then run it."); setOut(null); return; }
+    setRunning(true); setErr(""); setOut(null);
+    try {
+      const r = await runMultiFileProject(langId, files, entryName);
+      if (r.ok) setOut(r);
+      else setErr(r.error || "Something went wrong running that.");
+    } catch (e) {
+      setErr("Couldn't run it: " + (e && e.message ? e.message : "unknown error"));
+    } finally { setRunning(false); }
+  };
+  const onKeyDownMulti = makeCodeKeyDown(activeFile ? activeFile.code : "", setFileCode);
   const firstRunNote = langId === "py" ? "🐍 First Python run downloads the engine (~10s), then it's quick."
     : (langId === "c" || langId === "cpp") ? "⚙️ First run downloads the compiler — give it a moment."
     : (langId === "java") ? "☕ First Java run downloads the engine — give it a moment."
@@ -8689,14 +9437,51 @@ function Sandbox({ onBack, onHome }) {
         ))}
       </div>
 
-      <CodeEditor code={code} setCode={setCode} onKeyDown={onKeyDown} lang={langId} minHeight={220} />
-      {firstRunNote && <p className="cq-tapnote">{firstRunNote}</p>}
+      {canMulti && (
+        <div className="cq-sandbox-moderow">
+          <button className={"cq-modetoggle" + (!multiMode ? " active" : "")} onClick={() => { setMultiMode(false); setOut(null); setErr(""); }}>Single file</button>
+          <button className={"cq-modetoggle" + (multiMode ? " active" : "")} onClick={() => { setMultiMode(true); setOut(null); setErr(""); }}>Multi-file</button>
+        </div>
+      )}
 
-      <div className="cq-sandbox-actions">
-        <button className="cq-run" onClick={run} disabled={running}>{running ? "Running…" : "▶ Run"}</button>
-        <button className="cq-ai-chip" onClick={() => { setCode(lang.starter); setOut(null); setErr(""); }}>↺ Reset to example</button>
-        <button className="cq-ai-chip" onClick={() => { setCode(""); setOut(null); setErr(""); }}>🗑 Clear</button>
-      </div>
+      {multiMode && canMulti ? (
+        <>
+          <div className="cq-sandbox-filetabs">
+            {files.map((f) => (
+              <div key={f.name} className={"cq-sandbox-filetab" + (f.name === activeFileName ? " active" : "")}>
+                <button className="cq-sandbox-filetab-name" onClick={() => setActiveFile(f.name)}>
+                  {f.name}{f.name === entryName ? " ▶" : ""}
+                </button>
+                {files.length > 1 && f.name !== entryName && (
+                  <button className="cq-sandbox-filetab-x" onClick={() => removeFile(f.name)} title="Remove file">×</button>
+                )}
+              </div>
+            ))}
+            {files.length < 4 && <button className="cq-sandbox-addfile" onClick={addFile}>+ file</button>}
+          </div>
+          <p className="cq-tapnote">The first file ({entryName}) is the entry point — it's the one that runs. The others are imported/included by it.</p>
+          <CodeEditor code={activeFile ? activeFile.code : ""} setCode={setFileCode} onKeyDown={onKeyDownMulti} lang={langId} minHeight={200} />
+          {firstRunNote && <p className="cq-tapnote">{firstRunNote}</p>}
+          <div className="cq-sandbox-actions">
+            <button className="cq-run" onClick={runMulti} disabled={running}>{running ? "Running…" : "▶ Run " + entryName}</button>
+            <button className="cq-ai-chip" onClick={resetMultiFiles}>↺ Reset files</button>
+            <CopyButton text={activeFile ? activeFile.code : ""} label="📋 Copy file" />
+          </div>
+        </>
+      ) : (
+        <>
+          <CodeEditor code={code} setCode={setCode} onKeyDown={onKeyDown} lang={langId} minHeight={220} />
+          {firstRunNote && <p className="cq-tapnote">{firstRunNote}</p>}
+
+          <div className="cq-sandbox-actions">
+            <button className="cq-run" onClick={run} disabled={running}>{running ? "Running…" : "▶ Run"}</button>
+            <button className="cq-ai-chip" onClick={() => { setCode(lang.starter); setOut(null); setErr(""); }}>↺ Reset to example</button>
+            <button className="cq-ai-chip" onClick={saveSnippet}>{savedFlash || "💾 Save snippet"}</button>
+            <CopyButton text={code} label="📋 Copy" />
+            <button className="cq-ai-chip" onClick={() => { setCode(""); setOut(null); setErr(""); }}>🗑 Clear</button>
+          </div>
+        </>
+      )}
 
       {err && <div className="cq-runout-note">{err}</div>}
       {out && (
@@ -8707,6 +9492,28 @@ function Sandbox({ onBack, onHome }) {
           ) : (
             <pre className="cq-console">{out.output != null && out.output !== "" ? out.output : "(ran with no output)"}</pre>
           )}
+        </div>
+      )}
+
+      {snippets.length > 0 && (
+        <div className="cq-snippets">
+          <div className="cq-snippets-head">Saved snippets</div>
+          <div className="cq-snippets-list">
+            {snippets.map((s) => {
+              const sl = SANDBOX_LANGS.find((l) => l.id === s.lang);
+              return (
+                <div key={s.id} className="cq-snippet">
+                  <button className="cq-snippet-open" onClick={() => loadSnippet(s.id)} title="Load this snippet">
+                    <span className="cq-snippet-emoji">{sl ? sl.emoji : "📄"}</span>
+                    <span className="cq-snippet-name">{s.name}</span>
+                    <span className="cq-snippet-lang">{sl ? sl.label : s.lang}</span>
+                  </button>
+                  <button className="cq-snippet-act" onClick={() => renameSnippet(s.id, s.name)} title="Rename">✎</button>
+                  <button className="cq-snippet-act" onClick={() => deleteSnippet(s.id)} title="Delete">🗑</button>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>
@@ -12457,6 +13264,9 @@ body{overflow-x:clip}
 .cq-teach-text{font-size:15.5px;line-height:1.7;margin:0 0 14px;color:var(--ink)}
 .cq-teach-text code{font-family:var(--mono);background:var(--bg-0);padding:2px 6px;border-radius:5px;color:var(--teal);font-size:.9em}
 .cq-teach-example{background:var(--bg-0);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:12px}
+.cq-teach-examplehead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px}
+.cq-copybtn{font-size:11.5px;font-weight:600;padding:4px 10px;border-radius:7px;border:1px solid var(--line);background:var(--bg-2);color:var(--ink-soft);cursor:pointer;transition:border-color .15s,color .15s,background .15s;font-family:inherit;flex:0 0 auto}
+.cq-copybtn:hover{border-color:var(--teal);color:var(--teal)}
 .cq-sql-schema{background:var(--bg-0);border:1px solid var(--teal-deep);border-radius:10px;padding:12px 14px;margin-bottom:12px}
 .cq-sql-schema pre{margin:6px 0 0;font-family:var(--mono);font-size:12.5px;color:var(--ink-soft);white-space:pre-wrap}
 .cq-teach-label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:var(--teal);font-weight:700;margin-bottom:6px}
@@ -12477,6 +13287,31 @@ body{overflow-x:clip}
 .cq-sandbox-lang.active{background:var(--neon-ghost);border-color:var(--neon);color:var(--ink)}
 .cq-sandbox-emoji{font-size:15px}
 .cq-sandbox-actions{display:flex;flex-wrap:wrap;gap:11px;align-items:center;margin-top:14px}
+.cq-sandbox-moderow{display:flex;gap:8px;margin-bottom:12px}
+.cq-modetoggle{font-size:13px;font-weight:600;padding:6px 14px;border-radius:8px;border:1px solid var(--line);background:var(--bg-2);color:var(--ink-soft);cursor:pointer;font-family:inherit;transition:border-color .15s,color .15s,background .15s}
+.cq-modetoggle.active{border-color:var(--teal);color:var(--teal);background:var(--bg-1)}
+.cq-modetoggle:hover{border-color:var(--teal);color:var(--teal)}
+.cq-sandbox-filetab-name:hover{color:var(--teal)}
+.cq-sandbox-filetabs{display:flex;flex-wrap:wrap;gap:7px;align-items:center;margin-bottom:10px}
+.cq-sandbox-filetab{display:flex;align-items:center;background:var(--bg-2);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.cq-sandbox-filetab.active{border-color:var(--teal)}
+.cq-sandbox-filetab-name{background:transparent;border:none;color:inherit;font-family:var(--mono,monospace);font-size:12.5px;padding:6px 10px;cursor:pointer}
+.cq-sandbox-filetab.active .cq-sandbox-filetab-name{color:var(--teal);font-weight:600}
+.cq-sandbox-filetab-x{background:transparent;border:none;color:var(--ink-soft);cursor:pointer;padding:6px 8px;font-size:15px;line-height:1}
+.cq-sandbox-filetab-x:hover{color:var(--amber)}
+.cq-sandbox-addfile{background:var(--bg-2);border:1px dashed var(--line);border-radius:8px;color:var(--ink-soft);cursor:pointer;font-size:12.5px;padding:6px 12px;font-family:inherit;transition:border-color .15s,color .15s}
+.cq-sandbox-addfile:hover{border-color:var(--teal);color:var(--teal)}
+.cq-snippets{margin-top:22px;border-top:1px solid var(--line-soft);padding-top:16px}
+.cq-snippets-head{font-size:13px;font-weight:700;color:var(--ink-soft);margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px}
+.cq-snippets-list{display:flex;flex-direction:column;gap:8px}
+.cq-snippet{display:flex;align-items:center;gap:6px}
+.cq-snippet-open{flex:1 1 auto;display:flex;align-items:center;gap:10px;text-align:left;background:var(--bg-2);border:1px solid var(--line);border-radius:9px;padding:9px 12px;cursor:pointer;color:inherit;font-family:inherit;font-size:14px;transition:border-color .15s,background .15s;min-width:0}
+.cq-snippet-open:hover{border-color:var(--teal);background:var(--bg-1)}
+.cq-snippet-emoji{flex:0 0 auto}
+.cq-snippet-name{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cq-snippet-lang{flex:0 0 auto;font-size:11.5px;color:var(--ink-soft);opacity:.8}
+.cq-snippet-act{flex:0 0 auto;background:var(--bg-2);border:1px solid var(--line);border-radius:8px;padding:8px 10px;cursor:pointer;color:var(--ink-soft);font-size:13px;transition:border-color .15s,color .15s}
+.cq-snippet-act:hover{border-color:var(--teal);color:var(--teal)}
 .cq-stats-summary{display:flex;flex-wrap:wrap;gap:12px;margin:20px 0 8px}
 .cq-stats-cell{flex:1;min-width:120px;background:var(--bg-2);border:1px solid var(--line);border-radius:14px;padding:16px 18px;display:flex;flex-direction:column;gap:4px}
 .cq-stats-num{font-size:30px;font-weight:800;color:var(--neon);line-height:1}
@@ -12503,6 +13338,8 @@ body{overflow-x:clip}
 .cq-review-go{font-size:13px;font-weight:600;color:var(--ink)}
 .cq-classtop-row{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .cq-classreview-btn{background:var(--bg-2);border:1px solid var(--line);border-radius:10px;padding:8px 14px;font-size:13px;font-weight:600;color:var(--ink-soft);cursor:pointer;font-family:inherit;transition:border-color .15s,color .15s}
+.cq-reset-btn{background:transparent;border:1px solid var(--line);border-radius:10px;padding:8px 14px;font-size:13px;font-weight:600;color:var(--ink-soft);cursor:pointer;font-family:inherit;transition:border-color .15s,color .15s;opacity:.85}
+.cq-reset-btn:hover{border-color:var(--amber);color:var(--amber);opacity:1}
 .cq-classreview-btn:hover{border-color:var(--neon);color:var(--ink)}
 .cq-stuck{margin-top:14px}
 .cq-stuck-level{background:var(--amber-ghost);border:1px solid rgba(245,201,123,.35);border-radius:12px;padding:13px 15px;margin-bottom:10px;animation:cq-settle .3s cubic-bezier(.22,.61,.36,1)}
