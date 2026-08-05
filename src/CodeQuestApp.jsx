@@ -7,7 +7,7 @@ import { supabase } from "./lib/supabase";
 // Build marker — check this in the browser console to confirm which version is
 // actually running: type  window.__CQ_VERSION  in DevTools. If it's not the
 // value below, your browser/Vercel is serving an older bundle.
-const CQ_VERSION = "2026-07-12-v165-teach-filler-check";
+const CQ_VERSION = "2026-07-12-v168-hint-no-collapse";
 
 // Only this account (by Supabase user id) can read submitted feedback. Gating by
 // id, not email, so it survives email changes / adding Google login later.
@@ -8477,6 +8477,29 @@ function VisualStep({ step, onDone }) {
 // hints are instant, free, offline-safe, and can never drift from the actual
 // answer the tests expect. Levels go from gentlest to full reveal; the learner
 // controls how far they go.
+// Blank out the meaningful expressions in a solution while preserving its scaffold
+// (braces, keywords, awk patterns, control words), so the "Show the structure" hint
+// reveals the SHAPE of the answer without handing it over. Careful not to: treat
+// comparison ops (== != <= >=) as assignments, swallow closing braces/blocks, or
+// cross a statement boundary. Handles conventional code AND awk/basic bare `print`.
+function blankStructure(sol) {
+  let s = sol;
+  s = s.replace(/\breturn\s+[^;\n}]+/g, "return …");         // return EXPR
+  s = s.replace(/\bprintf\s*\([^)]*\)/g, "printf(…)");        // C printf
+  s = s.replace(/\bprintln\s*\([^)]*\)/g, "println(…)");      // Java System.out.println
+  s = s.replace(/\bprint\s*\([^)]*\)/g, "print(…)");          // print( ... )
+  s = s.replace(/\bcout\s*<<[^;\n}]+/g, "cout << …");         // C++ cout
+  s = s.replace(/\becho\b[^;\n}]+/g, "echo …");               // PHP/shell echo
+  s = s.replace(/\bputs\b[^;\n}]+/g, "puts …");               // Ruby puts
+  s = s.replace(/\bprint\s+(?!\()[^;\n}]+/g, "print … ");     // bare print EXPR (awk)
+  s = s.replace(/\bPRINT\s+[^;\n:]+/g, "PRINT …");            // PRINT EXPR (basic)
+  s = s.replace(/\bSELECT\s+[^;\n]*?\s+FROM/gi, "SELECT … FROM"); // SQL columns
+  s = s.replace(/\bWHERE\s+[^;\n]+/gi, "WHERE …");            // SQL filter
+  s = s.replace(/(\b[A-Za-z_]\w*\s*[-+*/%]?=)(?![=])\s*[^;\n}]+/g, (m, lhs) => lhs + " …"); // NAME = EXPR (not ==)
+  s = s.replace(/…\}/g, "… }");                              // tidy spacing before a closing brace
+  return s;
+}
+
 function buildHintLadder(step) {
   const levels = [];
   // Multi-file lessons have `files` instead of a single `solution`. Build hints
@@ -8515,24 +8538,30 @@ function buildHintLadder(step) {
       ? `This one is about ${concept}. Re-read the task and think about how ${concept} applies here — you're closer than it feels.`
       : `Re-read the task, then look back at the explanation above — the exact piece you need is in there. Make sure you ${io}.`,
   });
-  // 2) Bigger nudge — point at the worked example / the teach text.
-  if (step.example || step.teach) {
-    levels.push({
-      label: "A bigger hint",
-      body: step.example
-        ? "Look back at the Example above — your answer follows the same shape. Adapt it to what this exercise asks for."
-        : (step.teach || "").toString(),
-      showExample: !!step.example,
-    });
-  }
-  // 3) The structure — the solution with its core logic blanked, so they see the
-  //    shape without the answer handed to them.
+  // 2) Bigger nudge — point at the worked example / the teach text, or (if the
+  //    lesson has neither) a still-useful generic hint. This rung ALWAYS exists so
+  //    no lesson — in any language, however sparse its fields — can collapse to a
+  //    bare nudge→answer jump.
+  levels.push({
+    label: "A bigger hint",
+    body: step.example
+      ? "Look back at the Example above — your answer follows the same shape. Adapt it to what this exercise asks for."
+      : (step.teach
+          ? step.teach.toString()
+          : `Break the task into the smallest step that ${io}. Write just that one line first, run it, then build outward from what works.`),
+    showExample: !!step.example,
+  });
+  // 3) The structure — the solution with its core expressions blanked, so they see
+  //    the shape without the answer handed over. blankStructure preserves the
+  //    scaffold (braces, keywords, awk patterns, control words) and never crosses a
+  //    brace/newline boundary, so awk/output lessons get a real intermediate rung
+  //    instead of garbage or a jump straight to the answer.
   if (typeof step.solution === "string" && step.solution.trim()) {
-    const structured = step.solution
-      .replace(/=\s*[^;\n]+/g, "= …")           // hide right-hand sides of assignments
-      .replace(/return\s+[^;\n]+/g, "return …") // hide the returned expression
-      .replace(/\bprint\s*\([^)]*\)/g, "print(…)");
-    if (structured !== step.solution) {
+    const structured = blankStructure(step.solution);
+    // only offer it if it actually hides something AND still shows real scaffold
+    const hidSomething = structured !== step.solution;
+    const keptScaffold = structured.replace(/…/g, "").trim().length >= 2;
+    if (hidSomething && keptScaffold) {
       levels.push({ label: "Show the structure", body: structured, code: true });
     }
   }
