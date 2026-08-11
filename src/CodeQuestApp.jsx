@@ -7,7 +7,24 @@ import { supabase } from "./lib/supabase";
 // Build marker — check this in the browser console to confirm which version is
 // actually running: type  window.__CQ_VERSION  in DevTools. If it's not the
 // value below, your browser/Vercel is serving an older bundle.
-const CQ_VERSION = "2026-07-12-v168-hint-no-collapse";
+const CQ_VERSION = "2026-08-10-v171-studyit-link-shared-supabase";
+
+// ---------------------------------------------------------------------------
+// Companion app. CodeQuest and Study It are separate deploys that share one
+// Supabase project, so this is just a plain outbound link — no auth handoff,
+// no state passed.
+//
+// Study It now sits behind Lectern, the hub, in Lectern's deploy. The hub is
+// the front door at "/" and Study It is one route in at "/#/study" — so that
+// route is what this points at, since the button says Study It and should land
+// on Study It rather than on the hub.
+//
+// ⚠️ CHECK THE DOMAIN. This is the one thing that could not be verified from
+// the code: Study It reads window.location.origin rather than hardcoding its
+// own address, so its live URL appears nowhere in either repo. If it is wrong,
+// THIS is the only line to change — it appears exactly once in this file.
+// ---------------------------------------------------------------------------
+const STUDY_IT_URL = "https://study-it-five.vercel.app/#/study";
 
 // Only this account (by Supabase user id) can read submitted feedback. Gating by
 // id, not email, so it survives email changes / adding Google login later.
@@ -18,7 +35,7 @@ async function submitFeedback({ message, category, user }) {
   if (!msg) return { ok: false, error: "Write a message first." };
   if (msg.length > 4000) return { ok: false, error: "That's a bit long — keep it under 4000 characters." };
   try {
-    const { error } = await supabase.from("feedback").insert({
+    const { error } = await supabase.from("codequest_feedback").insert({
       message: msg,
       category: ["bug", "idea", "other"].includes(category) ? category : "other",
       user_id: user?.id ?? null,
@@ -34,7 +51,7 @@ async function submitFeedback({ message, category, user }) {
 // gets an empty list even if they call this.
 async function fetchAllFeedback() {
   try {
-    const { data, error } = await supabase.from("feedback").select("*").order("created_at", { ascending: false });
+    const { data, error } = await supabase.from("codequest_feedback").select("*").order("created_at", { ascending: false });
     if (error) return { ok: false, error: error.message, rows: [] };
     return { ok: true, rows: data || [] };
   } catch (e) {
@@ -4931,6 +4948,7 @@ async function generateCourse(classId, progressMap, signal) {
         title: L.title, teach: L.teach || "", example: L.example || "", concept: L.concept || L.title,
         schema: L.schema || "", seed: L.seed, starter: L.starter || "SELECT ", expected: L.expected, lang: "sql",
         orderMatters: /order\s+by/i.test(L.solution || ""),
+        solution: L.solution || "",
         why: "That query ran on a real database — correct!" });
       continue;
     }
@@ -6362,6 +6380,11 @@ function AppInner({ initialState, onPersist, onSignOut, user } = {}) {
           <button className="cq-projbtn" onClick={() => setScreen({ name: "sandbox" })}>🧪 Sandbox</button>
           <button className="cq-projbtn" onClick={() => setScreen({ name: "stats" })}>📊 Progress</button>
           <button className="cq-projbtn" onClick={() => setScreen({ name: "review" })}>🔁 Review{reviewSets.length > 0 ? ` (${reviewSets.length})` : ""}</button>
+          {/* Study It — cross-app gateway, mirror of the CodeQuest button in Study It's
+              header. Opens the companion study app in a new tab. Magenta so it reads as
+              "somewhere else", not as another CodeQuest screen. */}
+          <a className="cq-projbtn cq-studyit" href={STUDY_IT_URL} target="_blank" rel="noopener noreferrer"
+            title="Open Study It — notebooks, AI tutor, flashcards" aria-label="Open Study It">📖 Study It</a>
           <FeedbackWidget user={user} />
           {totalDone > 0 && <div className="cq-xp">{totalDone} lessons complete</div>}
           {onSignOut && <button className="cq-projbtn" onClick={onSignOut}>Sign out</button>}
@@ -8836,6 +8859,7 @@ function SQLStep({ step, onDone }) {
       <div className="cq-buildrow"><button className="cq-run" onClick={run} disabled={running || !code.trim()}>{running ? "Running…" : "▶ Run query"}</button></div>
       {result && !result.ok && <div className="cq-nudge">Almost — {result.why || "that's not the expected result yet"}.</div>}
       {result?.ok && <div className="cq-takeaway big">{step.why || "Correct — that query ran on a real database!"}</div>}
+      <StuckLadder step={step} />
     </div>
   );
 }
@@ -8885,6 +8909,7 @@ function AITypeStep({ step, onDone }) {
           {result.verdict === "pass" && <div className="cq-takeaway" style={{ marginTop: 12 }}>{step.why}</div>}
         </div>
       )}
+      <StuckLadder step={step} />
     </div>
   );
 }
@@ -8967,6 +8992,7 @@ function MarkupStep({ step, onDone }) {
           {result.verdict === "pass" && <div className="cq-takeaway" style={{ marginTop: 12 }}>{step.why}</div>}
         </div>
       )}
+      <StuckLadder step={step} />
     </div>
   );
 }
@@ -13658,6 +13684,17 @@ body{overflow-x:clip}
 .cq-projbtn{background:var(--bg-2);border:1px solid var(--line);color:var(--ink-soft);padding:10px 18px;border-radius:12px;font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;transition:.18s;letter-spacing:.01em}
 .cq-projbtn:hover{border-color:var(--neon);color:var(--ink)}
 .cq-projbtn:hover{filter:brightness(1.12)}
+/* Study It cross-app link. It's an <a>, not a <button>, so it needs the bits
+   cq-projbtn takes for granted on a real button: no underline, flex centring,
+   and nowrap so it can't wrap or overflow in the scrolling header row.
+   Selectors are a.cq-studyit (element + class) on purpose: a later global
+   .cq-projbtn:hover rule further down this stylesheet sets border-color to
+   --neon, and at equal specificity the later rule would win and turn this
+   cyan like every other header button. The extra element wins regardless of
+   order, so the link keeps its magenta "somewhere else" identity while still
+   inheriting the shared lift + glow transition. */
+a.cq-studyit{display:inline-flex;align-items:center;gap:6px;text-decoration:none;white-space:nowrap;line-height:1.15;color:var(--magenta);border-color:var(--magenta);background:var(--magenta-ghost)}
+a.cq-studyit:hover{border-color:var(--magenta);color:var(--ink);background:var(--magenta-ghost)}
 .cq-projhero{width:100%;display:flex;align-items:center;justify-content:space-between;gap:16px;background:linear-gradient(120deg,var(--violet-ghost),var(--bg-1));border:1px solid var(--violet);border-radius:var(--radius-lg);padding:20px 24px;margin-bottom:22px;cursor:pointer;font-family:inherit;color:inherit;box-shadow:0 14px 34px -22px var(--neon-deep);transition:transform .18s,filter .18s;text-align:left}
 .cq-projhero:hover{transform:translateY(-2px);filter:brightness(1.05)}
 .cq-projhero-left{display:flex;align-items:center;gap:16px}
