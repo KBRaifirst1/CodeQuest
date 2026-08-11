@@ -7,7 +7,7 @@ import { supabase } from "./lib/supabase";
 // Build marker — check this in the browser console to confirm which version is
 // actually running: type  window.__CQ_VERSION  in DevTools. If it's not the
 // value below, your browser/Vercel is serving an older bundle.
-const CQ_VERSION = "2026-08-11-v172-shared-ai-proxy";
+const CQ_VERSION = "2026-08-11-v173-lectern-button";
 
 // ---------------------------------------------------------------------------
 // Companion app. CodeQuest and Study It are separate deploys that share one
@@ -24,7 +24,13 @@ const CQ_VERSION = "2026-08-11-v172-shared-ai-proxy";
 // own address, so its live URL appears nowhere in either repo. If it is wrong,
 // THIS is the only line to change — it appears exactly once in this file.
 // ---------------------------------------------------------------------------
-const STUDY_IT_URL = "https://study-it-five.vercel.app/#/study";
+// Lectern and Study It are ONE deploy: Lectern is the front door at "/", Study
+// It is one route in at "/#/study". Two separate buttons because they are two
+// different destinations, but ONE domain constant — so if the domain is ever
+// wrong, there is exactly one line to change, not two that could drift apart.
+const HUB_ORIGIN = "https://study-it-five.vercel.app";
+const LECTERN_URL = HUB_ORIGIN + "/";
+const STUDY_IT_URL = HUB_ORIGIN + "/#/study";
 
 // Only this account (by Supabase user id) can read submitted feedback. Gating by
 // id, not email, so it survives email changes / adding Google login later.
@@ -6186,7 +6192,7 @@ function AppInner({ initialState, onPersist, onSignOut, user } = {}) {
     } else if (firstErr === "cancelled") {
       GEN_STORE.set({ classId, sets, status: "error", error: "Generation cancelled.", lastTopic: "" });
     } else if (/rate-limited|429/i.test(firstErr)) {
-      GEN_STORE.set({ classId, sets, status: "error", error: "Gemini's free-tier limit was hit. Wait a minute (or until tomorrow if the daily cap ran out), then try again.", lastTopic: "" });
+      GEN_STORE.set({ classId, sets, status: "error", error: "The AI limit was reached. Daily limits reset at midnight UTC; short bursts clear in a minute. Try again shortly.", lastTopic: "" });
     } else {
       GEN_STORE.set({ classId, sets, status: "error", error: "Couldn't generate those sets right now. " + (firstErr ? "(" + firstErr + ")" : "Please try again."), lastTopic: "" });
     }
@@ -6424,6 +6430,10 @@ function AppInner({ initialState, onPersist, onSignOut, user } = {}) {
           {/* Study It — cross-app gateway, mirror of the CodeQuest button in Study It's
               header. Opens the companion study app in a new tab. Magenta so it reads as
               "somewhere else", not as another CodeQuest screen. */}
+          {/* Lectern — the hub. Sits left of Study It so the pair reads
+              hub-then-app, matching the order everywhere else. */}
+          <a className="cq-projbtn cq-lectern" href={LECTERN_URL} target="_blank" rel="noopener noreferrer"
+            title="Open Lectern — the hub" aria-label="Open Lectern">📚 Lectern</a>
           <a className="cq-projbtn cq-studyit" href={STUDY_IT_URL} target="_blank" rel="noopener noreferrer"
             title="Open Study It — notebooks, AI tutor, flashcards" aria-label="Open Study It">📖 Study It</a>
           <FeedbackWidget user={user} />
@@ -8492,7 +8502,7 @@ function VisualStep({ step, onDone }) {
       } catch (e) {
         stats.recordWrong();
         const msg = e?.message || "";
-        if (/rate-limited|429/i.test(msg)) setErr("Gemini's free-tier limit was hit. Wait a minute, then tap Run again.");
+        if (/rate-limited|429/i.test(msg)) setErr("The AI limit was reached. Wait a minute, then tap Run again.");
         else if (/timeout/i.test(msg)) setErr("The AI took too long to translate this. Tap Run to try again.");
         else if (/cancelled/i.test(msg)) setErr("Cancelled.");
         else setErr("Couldn't translate this to a drawing just now: " + (msg || "unknown") + ". Tap Run to try again.");
@@ -13734,6 +13744,11 @@ body{overflow-x:clip}
    cyan like every other header button. The extra element wins regardless of
    order, so the link keeps its magenta "somewhere else" identity while still
    inheriting the shared lift + glow transition. */
+/* Lectern link. Same shape as the Study It one; violet rather than magenta so
+   the hub is visually distinct from the app beside it. Element+class selectors
+   for the same cascade reason documented below. */
+a.cq-lectern{display:inline-flex;align-items:center;gap:6px;text-decoration:none;white-space:nowrap;line-height:1.15;color:var(--violet, #a78bfa);border-color:var(--violet, #a78bfa);background:rgba(139,124,246,.12)}
+a.cq-lectern:hover{border-color:var(--violet, #a78bfa);color:var(--ink);background:rgba(139,124,246,.2)}
 a.cq-studyit{display:inline-flex;align-items:center;gap:6px;text-decoration:none;white-space:nowrap;line-height:1.15;color:var(--magenta);border-color:var(--magenta);background:var(--magenta-ghost)}
 a.cq-studyit:hover{border-color:var(--magenta);color:var(--ink);background:var(--magenta-ghost)}
 .cq-projhero{width:100%;display:flex;align-items:center;justify-content:space-between;gap:16px;background:linear-gradient(120deg,var(--violet-ghost),var(--bg-1));border:1px solid var(--violet);border-radius:var(--radius-lg);padding:20px 24px;margin-bottom:22px;cursor:pointer;font-family:inherit;color:inherit;box-shadow:0 14px 34px -22px var(--neon-deep);transition:transform .18s,filter .18s;text-align:left}
