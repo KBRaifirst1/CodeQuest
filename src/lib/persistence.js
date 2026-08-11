@@ -1,58 +1,50 @@
 // src/lib/persistence.js
-// Loads and saves the user's entire CodeQuest state to Supabase.
 //
-// Your app keeps three pieces of state:
-//   progress    = { classId: Set(doneStepIdx) }   <-- Sets aren't JSON, we convert
-//   aiLessons   = { classId: [generatedStep, ...] }
-//   savedProjects = [ finishedProjectPlan, ... ]
+// The read/write layer behind useCloudSave.js. One row per user in the
+// `codequest_state` table holds their whole saved CodeQuest state as a JSON
+// blob: { progress, aiLessons, savedProjects }.
 //
-// These helpers convert to/from JSON-safe shapes and read/write the single
-// user_state row (protected by Row Level Security so each user sees only theirs).
+// This table lives in Study It's Supabase project, namespaced `codequest_`
+// so it sits alongside Study It's own tables (profiles / notebooks / feedback)
+// without colliding. Row Level Security (codequest-supabase-schema.sql) scopes
+// every row to its owner: a user can only read and write their own row.
 
 import { supabase } from "./supabase";
 
-// ---- Set <-> array conversion for `progress` ----
-export function serializeProgress(progress) {
-  const out = {};
-  for (const [k, v] of Object.entries(progress || {})) out[k] = Array.from(v);
-  return out;
-}
-export function deserializeProgress(obj) {
-  const out = {};
-  for (const [k, v] of Object.entries(obj || {})) out[k] = new Set(v);
-  return out;
-}
+const TABLE = "codequest_state";
 
-// ---- Load everything for the signed-in user ----
-// Returns { progress, aiLessons, savedProjects } (with defaults if no row yet).
+// The honest empty state — matches what useCloudSave falls back to on error.
+const EMPTY = { progress: {}, aiLessons: {}, savedProjects: [] };
+
+// Load a user's saved state. Returns the empty shape (never throws to the
+// caller for a simply-absent row) so a brand-new account starts clean.
 export async function loadState(userId) {
+  if (!userId) return { ...EMPTY };
   const { data, error } = await supabase
-    .from("user_state")
-    .select("progress, ai_lessons, projects")
+    .from(TABLE)
+    .select("data")
     .eq("user_id", userId)
-    .maybeSingle(); // returns null instead of throwing when there's no row yet
-
+    .maybeSingle();
   if (error) throw error;
-  if (!data) {
-    return { progress: {}, aiLessons: {}, savedProjects: [] };
-  }
-  return {
-    progress: deserializeProgress(data.progress),
-    aiLessons: data.ai_lessons || {},
-    savedProjects: data.projects || [],
-  };
+  const saved = data && data.data ? data.data : null;
+  // Merge over EMPTY so any key the saved blob is missing is filled honestly.
+  return saved ? { ...EMPTY, ...saved } : { ...EMPTY };
 }
 
-// ---- Save everything for the signed-in user (upsert = insert or update) ----
-export async function saveState(userId, { progress, aiLessons, savedProjects }) {
-  const { error } = await supabase.from("user_state").upsert(
-    {
-      user_id: userId,
-      progress: serializeProgress(progress),
-      ai_lessons: aiLessons || {},
-      projects: savedProjects || [],
+// Upsert a user's whole state. Debounced by the caller (useCloudSave).
+export async function saveState(userId, state) {
+  if (!userId) return;
+  const payload = {
+    user_id: userId,
+    data: {
+      progress: (state && state.progress) || {},
+      aiLessons: (state && state.aiLessons) || {},
+      savedProjects: (state && state.savedProjects) || [],
     },
-    { onConflict: "user_id" }
-  );
+    updated_at: new Date().toISOString(),
+  };
+  const { error } = await supabase
+    .from(TABLE)
+    .upsert(payload, { onConflict: "user_id" });
   if (error) throw error;
 }
