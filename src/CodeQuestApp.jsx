@@ -7,7 +7,7 @@ import { supabase } from "./lib/supabase";
 // Build marker — check this in the browser console to confirm which version is
 // actually running: type  window.__CQ_VERSION  in DevTools. If it's not the
 // value below, your browser/Vercel is serving an older bundle.
-const CQ_VERSION = "2026-08-10-v171-studyit-link-shared-supabase";
+const CQ_VERSION = "2026-08-11-v172-shared-ai-proxy";
 
 // ---------------------------------------------------------------------------
 // Companion app. CodeQuest and Study It are separate deploys that share one
@@ -716,6 +716,38 @@ const PY_STEPS = [
 ];
 
 // ---------- AI lesson generation (typing-style, validated) ----------
+
+/* Send one request to the shared AI function.
+
+   supabase.functions.invoke handles attaching the caller's session, which is
+   exactly what the function checks — an anonymous call is refused server-side,
+   so no key is needed or possible in this bundle.
+
+   The return shape is deliberately { ok, status, data } so the caller below can
+   keep the branching it already had for /api/ai: a non-2xx still carries a
+   readable `error` in the body, and the 429 path still sees RESOURCE_EXHAUSTED. */
+async function aiFetch(body, signal) {
+  if (signal && signal.aborted) throw new Error("cancelled");
+  let out;
+  try {
+    out = await supabase.functions.invoke("ai", { body });
+  } catch (e) {
+    return { ok: false, status: 0, data: { error: "Couldn't reach the AI service." } };
+  }
+  const data = out.data || {};
+  // invoke() reports non-2xx via `error` while still giving us the body, so the
+  // body's own message wins — it's the one written for a human to read.
+  if (data.error) {
+    const rateLimited = /RESOURCE_EXHAUSTED|limit/i.test(String(data.error) + String(data.detail || ""));
+    return { ok: false, status: rateLimited ? 429 : 400, data };
+  }
+  if (out.error) {
+    const msg = String(out.error.message || "");
+    return { ok: false, status: 0, data: { error: msg || "The AI request failed." } };
+  }
+  return { ok: true, status: 200, data };
+}
+
 async function callClaude(messages, { system, maxTokens = 900, signal, timeoutMs = 45000, thinking = false } = {}) {
   // Calls our own backend (/api/ai), which holds the Gemini key secretly and
   // returns { text }. Keeps the same signature + string return as before, so
@@ -736,18 +768,27 @@ async function callClaude(messages, { system, maxTokens = 900, signal, timeoutMs
     signal.addEventListener("abort", () => controller.abort(), { once: true });
   }
   try {
-    const res = await fetch("/api/ai", {
-      method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
-      body: JSON.stringify({ messages, system, maxTokens, thinking }),
-    });
-    const data = await res.json().catch(() => ({}));
+    // Routed through the SHARED Supabase Edge Function rather than this app's
+    // own /api/ai. All three apps now go through one function holding one
+    // Gemini key, so there is one place to rotate it and one meter counting
+    // against it — CodeQuest's usage used to be invisible and uncapped.
+    //
+    // The trade, stated plainly: the function requires a signed-in Supabase
+    // session, so AI generation in CodeQuest now needs an account. It is the
+    // same account as Study It and Lectern. Everything that isn't AI — the
+    // interpreters, the built-in lessons, the sandbox — still works signed out.
+    const res = await aiFetch({ messages, system, maxTokens, thinking }, controller.signal);
+    const data = res.data;
     if (!res.ok) {
       // Rate limits get a distinct, non-retryable error: retrying a 429
       // immediately just burns more quota and makes the limit worse.
       if (res.status === 429 || /429|RESOURCE_EXHAUSTED|quota/i.test(String(data.error || "") + String(data.detail || ""))) {
-        throw new Error("rate-limited: Gemini free-tier quota hit — wait a minute and try again");
+        // The server already wrote a message a human can act on — which limit
+        // was hit and when it resets. Repeating a guess about Gemini's free
+        // tier here would be wrong now that a per-account daily cap exists.
+        throw new Error("rate-limited: " + (data.error || "AI limit reached — try again later"));
       }
-      // Surface the real reason (from api/ai.js) so failures are diagnosable.
+      // Surface the real reason from the AI function so failures are diagnosable.
       const reason = data.error || `HTTP ${res.status}`;
       const extra = data.detail ? ` — ${String(data.detail).slice(0, 160)}` : "";
       throw new Error(reason + extra);
