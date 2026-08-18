@@ -767,7 +767,7 @@ async function callClaude(messages, { system, maxTokens = 900, signal, timeoutMs
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   // If caller passed their own signal, forward its abort. CRITICAL: also check
   // if it's ALREADY aborted — addEventListener never fires for a signal that
-  // aborted before registration, which previously let a "cancelled" fetch run
+  // aborted before registration, which previously let a "canceled" fetch run
   // the full 45s.
   if (signal) {
     if (signal.aborted) { clearTimeout(timer); throw new Error("cancelled"); }
@@ -1023,7 +1023,7 @@ async function precheckPython(code) {
     // __all__ then getattr's each name (which our __getattr__ answers with a
     // _NoOp). Without it, star imports either crash or import nothing — and
     // `from turtle import *` is THE most common style in kid turtle tutorials.
-    "    m.__all__ = ['Turtle','Screen','forward','fd','backward','bk','back','right','rt','left','lt','goto','setpos','setposition','penup','pu','up','pendown','pd','down','pencolor','color','fillcolor','begin_fill','end_fill','speed','circle','dot','stamp','hideturtle','ht','showturtle','st','setheading','seth','home','clear','clearscreen','reset','write','shape','pensize','width','bgcolor','title','done','mainloop','exitonclick','tracer','update','position','pos','xcor','ycor','heading','distance','towards','undo','Tk','Canvas','Frame','Label','Button','Entry','Text','mainloop','StringVar','IntVar','PhotoImage','Menu','Toplevel','messagebox','ttk','font','N','S','E','W','NE','NW','SE','SW','CENTER','TOP','BOTTOM','LEFT','RIGHT','BOTH','X','Y','END','NORMAL','DISABLED']",
+    "    m.__all__ = ['Turtle','Screen','forward','fd','backward','bk','back','right','rt','left','lt','goto','setpos','setposition','penup','pu','up','pendown','pd','down','pencolor','color','fillcolor','begin_fill','end_fill','speed','circle','dot','stamp','hideturtle','ht','showturtle','st','setheading','seth','home','clear','clearscreen','reset','write','shape','pensize','width','bgcolor','title','done','mainloop','exitonclick','tracer','update','position','pos','xcor','ycor','heading','distance','toward','undo','Tk','Canvas','Frame','Label','Button','Entry','Text','mainloop','StringVar','IntVar','PhotoImage','Menu','Toplevel','messagebox','ttk','font','N','S','E','W','NE','NW','SE','SW','CENTER','TOP','BOTTOM','LEFT','RIGHT','BOTH','X','Y','END','NORMAL','DISABLED']",
     "    return m",
     // Stub turtle, tkinter (and its submodules commonly imported)
     'for _lib in ["turtle","tkinter","tkinter.ttk","tkinter.font","tkinter.messagebox","tkinter.filedialog"]:',
@@ -1246,7 +1246,7 @@ function markupProjectHTML(files) {
   const pick = (re) => files.filter((f) => re.test(f.name));
   const htmlFile = pick(/\.html?$/i)[0];
   const cssFiles = pick(/\.css$/i);
-  // One behaviour file drives the page, in a clear priority order.
+  // One behavior file drives the page, in a clear priority order.
   const find = (re) => files.find((f) => re.test(f.name));
   const p5File = files.find((f) => f.lang === "p5");
   const svelteFile = find(/\.svelte$/i);
@@ -1491,7 +1491,7 @@ async function withRetry(fn, attempts = 3, delayMs = 400, signal) {
     if (signal?.aborted) throw new Error("cancelled");
     try { return await fn(); }
     catch (e) {
-      // If cancelled OR the error came from an abort/timeout, propagate immediately
+      // If canceled OR the error came from an abort/timeout, propagate immediately
       // instead of retrying — otherwise a Cancel click just triggers 3 more attempts.
       // Rate limits (429) are also non-retryable: immediate retries burn MORE quota
       // and extend the lockout. Fail fast with the friendly message instead.
@@ -4633,7 +4633,7 @@ const CONCEPT_SECTIONS = {
 // wording alone doesn't stop Gemini from writing a CPU lesson inside the circuits
 // class, so after generation we check each lesson's text against these. A lesson
 // that reads like a SIBLING class's subject — heavy in the sibling's terms, empty
-// of its own — is rejected. Deterministic, no AI judgement.
+// of its own — is rejected. Deterministic, no AI judgment.
 const CONCEPT_SIGNATURES = {
   ai_general: ["artificial intelligence", "learn", "pattern", "data", "rules", "predict", "training", "intelligent"],
   ai_ml: ["machine learning", "training", "data", "label", "example", "model", "learn", "dataset"],
@@ -4664,7 +4664,7 @@ function countSignatureHits(text, terms) {
 // off-topic when a sibling clearly dominates: the sibling scores at least 2 and
 // beats this class's own score by 2+. That catches a CPU/RAM or LED lesson that
 // merely brushes a circuits word ("current") in passing, without dropping a
-// genuine circuits lesson that names a neighbour once.
+// genuine circuits lesson that names a neighbor once.
 function conceptLessonOffTopic(lesson, section) {
   const cfg = CONCEPT_SECTIONS[section];
   const own = CONCEPT_SIGNATURES[section];
@@ -4887,7 +4887,7 @@ async function generateConceptLessons(section, { customTopic = null, count = nul
   if (!cfg) throw new Error("unknown-section");
   const howMany = count && count >= 1 && count <= 10 ? count : 4;
   const diff = difficultyClause(difficulty);
-  // Name the neighbouring classes explicitly. Telling the model what this class
+  // Name the neighboring classes explicitly. Telling the model what this class
   // IS leaves too much room; telling it what belongs to the class next door is
   // what actually keeps CPU lessons out of the circuits class.
   const siblings = Object.entries(CONCEPT_SECTIONS)
@@ -5072,7 +5072,7 @@ async function suggestProjects(lang = "py", signal) {
   const sys =
     `You suggest 4 small, motivating beginner projects to build in ${label}. ` +
     (kind === "web" ? "These are web projects that show something on screen (a page, a styled card, a small interactive widget). "
-      : kind === "database" ? "These are small database projects: create a table, put some rows in, and query it to answer a question (e.g. a movie list, a scores table, a library catalogue). Each should be doable with plain SQL in one editor. "
+      : kind === "database" ? "These are small database projects: create a table, put some rows in, and query it to answer a question (e.g. a movie list, a scores table, a library catalog). Each should be doable with plain SQL in one editor. "
       : kind === "drawing" ? "These are small p5.js drawing/animation sketches that appear on a canvas (e.g. a bouncing ball, a simple pattern, a mouse-following shape, a tiny game). "
       : "These are small programs a near-beginner could build (a calculator, a converter, a little text game, a checker). ") +
     "Each should be achievable by a motivated beginner and genuinely fun to finish. " +
@@ -5492,7 +5492,7 @@ function cssHasRule(css, selector, prop, valRe) {
 // gradeMarkupReal already runs against the real rendered document. The model
 // decides WHAT matters; we decide HOW it's measured. Nothing is eval'd.
 //
-// Anything we don't recognise makes the whole lesson unusable (compile returns
+// Anything we don't recognize makes the whole lesson unusable (compile returns
 // null) rather than quietly passing — an uncheckable lesson must never ship.
 const MARKUP_GRADED = ["html", "css", "jsx", "vue", "svelte"];
 const MARKUP_CHECKS = {
@@ -6169,15 +6169,15 @@ function AppInner({ initialState, onPersist, onSignOut, user } = {}) {
     }
     GEN_STORE.ctrl = null;
 
-    // If the user cancelled (signal aborted, or cancelGeneration already flipped
-    // the store to a cancelled/idle state), do NOT resurrect the run by setting
+    // If the user canceled (signal aborted, or cancelGeneration already flipped
+    // the store to a canceled/idle state), do NOT resurrect the run by setting
     // "done" or adding lessons. Respect the cancel.
     const wasCancelled = controller.signal.aborted || firstErr === "cancelled" || GEN_STORE.get().status !== "running";
     if (wasCancelled) {
-      // cancelGeneration already set the cancelled message; just make sure we
+      // cancelGeneration already set the canceled message; just make sure we
       // don't leave a running state hanging.
       if (GEN_STORE.get().status === "running") {
-        GEN_STORE.set({ classId, sets, status: "error", error: "Generation cancelled.", lastTopic: "" });
+        GEN_STORE.set({ classId, sets, status: "error", error: "Generation canceled.", lastTopic: "" });
       }
       return { blocked: false };
     }
@@ -6190,7 +6190,7 @@ function AppInner({ initialState, onPersist, onSignOut, user } = {}) {
       GEN_STORE.pendingLessons = { classId: cls.id, lessons: all };
       GEN_STORE.set((g) => ({ classId: null, sets: null, status: "done", error: "", lastTopic: g.lastTopic }));
     } else if (firstErr === "cancelled") {
-      GEN_STORE.set({ classId, sets, status: "error", error: "Generation cancelled.", lastTopic: "" });
+      GEN_STORE.set({ classId, sets, status: "error", error: "Generation canceled.", lastTopic: "" });
     } else if (/rate-limited|429/i.test(firstErr)) {
       GEN_STORE.set({ classId, sets, status: "error", error: "The AI limit was reached. Daily limits reset at midnight UTC; short bursts clear in a minute. Try again shortly.", lastTopic: "" });
     } else {
@@ -6199,7 +6199,7 @@ function AppInner({ initialState, onPersist, onSignOut, user } = {}) {
     return { blocked: false };
   };
   const cancelGeneration = () => {
-    // Abort the in-flight request AND flip the UI to a cancelled state immediately,
+    // Abort the in-flight request AND flip the UI to a canceled state immediately,
     // so the Stop button responds instantly instead of waiting for the current
     // batch/verification to unwind. The generation promise will also see the
     // aborted signal and stop; whichever sets state first, the result is the same.
@@ -6207,7 +6207,7 @@ function AppInner({ initialState, onPersist, onSignOut, user } = {}) {
     GEN_STORE.ctrl = null;
     // Only flip if we're actually running (don't clobber a just-finished "done").
     if (GEN_STORE.get().status === "running") {
-      GEN_STORE.set((g) => ({ ...g, status: "error", error: "Generation cancelled.", sets: g.sets }));
+      GEN_STORE.set((g) => ({ ...g, status: "error", error: "Generation canceled.", sets: g.sets }));
     }
   };
   const clearGenerationError = () => {
@@ -8504,7 +8504,7 @@ function VisualStep({ step, onDone }) {
         const msg = e?.message || "";
         if (/rate-limited|429/i.test(msg)) setErr("The AI limit was reached. Wait a minute, then tap Run again.");
         else if (/timeout/i.test(msg)) setErr("The AI took too long to translate this. Tap Run to try again.");
-        else if (/cancelled/i.test(msg)) setErr("Cancelled.");
+        else if (/cancelled/i.test(msg)) setErr("Canceled.");
         else setErr("Couldn't translate this to a drawing just now: " + (msg || "unknown") + ". Tap Run to try again.");
         setBusy(false);
         return;
@@ -8953,7 +8953,7 @@ function AITypeStep({ step, onDone }) {
       <CodeEditor code={code} setCode={setCode} onChange={() => setResult(null)} onKeyDown={onKeyDown} lang={(typeof step !== "undefined" && step && step.lang) ? step.lang : "js"} minHeight={180} />
       <div className="cq-buildrow"><button className="cq-run" onClick={submit} disabled={result?.verdict === "pass" || running || !code.trim()}>{running ? "Reviewing…" : "✦ Submit for review"}</button></div>
       {result && (
-        <div className="cq-results" style={{ padding: "12px 0 0" }}>
+        <div className="cq-results" role="status" aria-live="polite" style={{ padding: "12px 0 0" }}>
           <div className={`cq-verdict-badge ${result.verdict}`}>{result.verdict === "pass" ? "✓ AI says: looks good" : "✗ AI says: not yet"}<span className="cq-verdict-note">AI-judged · not a real test run</span></div>
           {result.checks?.map((c, i) => (<div key={i} className={`cq-testrow ${c.met ? "pass" : "fail"}`}><span className="cq-test-icon">{c.met ? "✓" : "✗"}</span><span className="cq-test-detail">{c.label}</span></div>))}
           {result.feedback && <p className="cq-ai-feedback">{result.feedback}</p>}
@@ -9036,8 +9036,8 @@ function MarkupStep({ step, onDone }) {
       <div className="cq-buildrow"><button className="cq-run" onClick={submit} disabled={running || !code.trim()}>{running ? "Reviewing…" : "✦ Submit for review"}</button></div>
 
       {result && (
-        <div className="cq-results" style={{ padding: "12px 0 0" }}>
-          <div className={`cq-verdict-badge ${result.verdict}`}>{result.verdict === "pass" ? (result.real ? "✓ Passed" : "✓ AI says: looks good") : result.renderFailed ? "⚠ Couldn't render" : (result.real ? "✗ Not yet" : "✗ AI says: not yet")}<span className="cq-verdict-note">{result.renderFailed ? "nothing rendered · not a judgement on your answer" : result.real ? "real test · checked your rendered result" : "AI-judged · preview is real"}</span></div>
+        <div className="cq-results" role="status" aria-live="polite" style={{ padding: "12px 0 0" }}>
+          <div className={`cq-verdict-badge ${result.verdict}`}>{result.verdict === "pass" ? (result.real ? "✓ Passed" : "✓ AI says: looks good") : result.renderFailed ? "⚠ Couldn't render" : (result.real ? "✗ Not yet" : "✗ AI says: not yet")}<span className="cq-verdict-note">{result.renderFailed ? "nothing rendered · not a judgment on your answer" : result.real ? "real test · checked your rendered result" : "AI-judged · preview is real"}</span></div>
           {result.checks?.map((c, i) => (<div key={i} className={`cq-testrow ${c.met ? "pass" : "fail"}`}><span className="cq-test-icon">{c.met ? "✓" : "✗"}</span><span className="cq-test-detail">{c.label}</span></div>))}
           {result.feedback && <p className="cq-ai-feedback">{result.feedback}</p>}
           {result.verdict === "pass" && <div className="cq-takeaway" style={{ marginTop: 12 }}>{step.why}</div>}
@@ -9443,7 +9443,7 @@ function Sandbox({ onBack, onHome }) {
   const saveSnippet = () => {
     if (!code.trim()) { setErr("Write some code first, then save it."); return; }
     const name = (typeof window !== "undefined" && window.prompt) ? window.prompt("Name this snippet:", lang.label + " snippet") : null;
-    if (name === null) return; // cancelled
+    if (name === null) return; // canceled
     SANDBOX_SNIPPETS.save(name || (lang.label + " snippet"), langId, code);
     refreshSnippets();
     setSavedFlash("Saved!"); setTimeout(() => setSavedFlash(""), 1400);
