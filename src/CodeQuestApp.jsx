@@ -442,7 +442,7 @@ const GENERAL_MULTIFILE_STEPS = [
     why: "Splitting code into files keeps each part small, focused, and easy to find — the bigger the program, the more it matters." },
   { type: "puzzle", chapter: "1 · Why more than one file", title: "Why split it up?",
     intro: "You've written a 4,000-line program in one file and can never find anything.",
-    q: "What's the main reason to split it into several files?", choices: ["To make it run faster", "To keep each part small and easy to find", "So it uses less memory"], correctIndex: 1,
+    q: "What's the main reason to split it into several files?", choices: ["To make the program run faster", "To keep each part small and easy to find", "So that it uses less memory"], correctIndex: 1,
     why: "Right — splitting is about keeping code organized and findable for humans. It doesn't make the program faster or smaller; it makes it manageable." },
 
   { type: "concept", chapter: "2 · The file that runs", title: "One file starts everything",
@@ -574,7 +574,7 @@ const GENERAL_STEPS = [
   { type: "concept", chapter: "5 · Building blocks (every language)", title: "If / else (decisions)",
     plain: "Code can choose between paths. \"If\" runs one block when something is true; \"else\" runs the other when it isn't.",
     neutral: 'if sweets > 5:\n  show "lots!"\nelse:\n  show "a few"', langs: [["JavaScript", 'if (sweets > 5) {\n  console.log("lots!");\n} else {\n  console.log("a few");\n}'], ["Python", 'if sweets > 5:\n  print("lots!")\nelse:\n  print("a few")']],
-    q: "What does \"else\" cover?", choices: ["What happens when the \"if\" is not true", "Every case, always", "Nothing"], answer: 0,
+    q: "What does \"else\" cover?", choices: ["What happens when the \"if\" is not true", "Every case, always", "Nothing at all until you add a case"], answer: 0,
     why: "Making decisions with if/else is one of the most universal ideas in all of programming." },
   { type: "concept", chapter: "5 · Building blocks (every language)", title: "Comparisons & true/false",
     plain: "Code compares things and gets back true or false (called a \"boolean\"). Like 5 > 3 is true. Comparisons power every decision.",
@@ -589,13 +589,125 @@ const GENERAL_STEPS = [
   { type: "concept", chapter: "5 · Building blocks (every language)", title: "Lists / arrays",
     plain: "A list (or array) holds many values in order under one name — like a row of boxes. You can grab any one by its position.",
     neutral: 'fruits = ["apple", "pear", "plum"]', langs: [["JavaScript", 'let fruits = ["apple", "pear", "plum"];'], ["Python", 'fruits = ["apple", "pear", "plum"]']],
-    q: "What is a list/array?", choices: ["Many values in order under one name", "A single number", "A function"], answer: 0,
+    q: "What is a list/array?", choices: ["Many values in order under one name", "A single number", "An ordinary function"], answer: 0,
     why: "Called 'array' in some languages, 'list' in others — same idea: a collection of values in order." },
   { type: "concept", chapter: "5 · Building blocks (every language)", title: "Comments",
     plain: "A comment is a note for humans that the computer ignores completely. You use it to explain what your code does.",
     neutral: "# this is a note", langs: [["JavaScript", "// this is a note"], ["Python", "# this is a note"]],
     q: "Who are comments for?", choices: ["Humans reading the code (the computer ignores them)", "The computer only", "Nobody"], answer: 0,
     why: "Every language has comments. The symbol differs (`//`, `#`), but they're always notes the computer skips." },
+{ type: "concept", chapter: "6 \u00b7 Thinking about cost", title: "Some approaches scale badly",
+    plain: "Checking every pair of items in a list takes far longer as the list grows. With 10 items that is 100 checks; with 1000 it is a million. The approach matters more than the language once lists get large.",
+    neutral: "nested loops over the same data grow as the square of its size",
+    langs: ["general"],
+    q: "A program checks every pair in a list. The list grows from 100 to 1000 items. Roughly how much more work?",
+    choices: ["About 100 times more", "About 10 times more", "The same"], answer: 0,
+    why: "Ten times the items means ten times ten times the pairs. Recognising that shape before writing the code is what stops a program that works on test data crawling on real data." },
+  { type: "concept", chapter: "6 \u00b7 Thinking about cost", title: "Looking things up quickly",
+    plain: "Searching a list means checking items one by one. A dictionary or map jumps straight to the answer instead, so replacing a list lookup inside a loop is one of the biggest speed wins available.",
+    neutral: "a map trades memory for near-instant lookup",
+    langs: ["general"],
+    q: "You repeatedly search a 10,000-item list inside a loop. What is the usual fix?",
+    choices: ["Put the items in a map or dictionary first", "Sort the list every time", "Use a faster language"], answer: 0,
+    why: "Building the map costs one pass; every lookup afterwards is nearly free. Changing language would speed up a bad approach without fixing it." },
+  { type: "concept", chapter: "7 \u00b7 Finding bugs", title: "Reproduce it before fixing it",
+    plain: "A bug you cannot reproduce is a bug you cannot confirm you fixed. Getting it to happen reliably \u2014 same input, same steps \u2014 comes before changing anything.",
+    neutral: "a reliable reproduction is what makes a fix verifiable",
+    langs: ["general"],
+    q: "A user reports a crash you have never seen. What comes first?",
+    choices: ["Find the exact steps that trigger it", "Change the code you suspect", "Add error handling"], answer: 0,
+    why: "Without a reproduction you cannot tell a fix from a coincidence. Changing suspect code first is how bugs get declared fixed and come back." },
+  { type: "concept", chapter: "7 \u00b7 Finding bugs", title: "Narrow it down by halves",
+    plain: "Rather than reading everything, check whether the problem exists halfway through. That tells you which half to look in, and repeating it finds the cause in a handful of steps even in a large program.",
+    neutral: "bisection halves the search space each time",
+    langs: ["general"],
+    q: "A 1000-line script fails. About how many checks does halving need to locate the line?",
+    choices: ["About 10", "About 500", "About 1000"], answer: 0,
+    why: "Each check halves what is left, and ten halvings covers a thousand lines. It is also how git bisect finds the commit that broke something." },
+  { type: "concept", chapter: "8 \u00b7 Working with others", title: "Version control keeps history",
+    plain: "A commit records what changed and why. That history lets you find when something broke, undo a change safely and work on the same file as someone else without overwriting them.",
+    neutral: "commits record intent as well as content",
+    langs: ["general"],
+    q: "What makes a commit message useful six months later?",
+    choices: ["Saying why the change was made", "Listing the files changed", "Being short"], answer: 0,
+    why: "The diff already shows what changed. What it cannot show is the reason, which is exactly what you need when deciding whether the change is still required." },
+  { type: "concept", chapter: "8 \u00b7 Working with others", title: "Naming is part of the work",
+    plain: "A name is read far more often than it is written. total_price says what a value is; tp and temp and data say nothing, and the next reader has to reconstruct it.",
+    neutral: "clear names remove the need for comments explaining what something is",
+    langs: ["general"],
+    q: "Which name is best for a variable holding a customer's unpaid balance?",
+    choices: ["outstanding_balance", "x", "temp2"], answer: 0,
+    why: "The good name makes the following lines readable without any comment. The others force the reader to hold a translation in their head." },
+{ type: "concept", chapter: "9 \u00b7 Data structures", title: "Choosing the right shape",
+    plain: "A list keeps order and is slow to search. A map finds things instantly but has no order. A set holds each item once and answers membership fast. Picking the wrong one shows up as slow code later.",
+    neutral: "each structure trades one property for another",
+    langs: ["general"],
+    q: "You need to check repeatedly whether a name has been seen before. What fits best?",
+    choices: ["A set", "A list", "A string"], answer: 0,
+    why: "A set answers membership in one step regardless of size. A list has to walk through everything, which is fine at ten items and painful at a million." },
+  { type: "concept", chapter: "9 \u00b7 Data structures", title: "Stacks and queues",
+    plain: "A stack takes the most recent item first; a queue takes the oldest. Undo history is a stack, a print queue is a queue, and choosing wrongly reverses the order everything happens in.",
+    neutral: "last in first out against first in first out",
+    langs: ["general"],
+    q: "Which structure fits an undo feature?",
+    choices: ["A stack", "A queue", "A set"], answer: 0,
+    why: "Undo reverses the most recent action first, which is exactly last-in-first-out. A queue would undo your oldest action, which is not what anyone means by undo." },
+  { type: "concept", chapter: "10 \u00b7 Recursion", title: "A function that calls itself",
+    plain: "Recursion solves a problem by solving a smaller version of it. Every recursive function needs a base case that stops it, or it runs until the program gives up.",
+    neutral: "a base case and a smaller subproblem",
+    langs: ["general"],
+    q: "What must every recursive function have?",
+    choices: ["A case that stops without recursing", "A loop", "Two parameters"], answer: 0,
+    why: "Without a base case it calls itself forever and overflows the stack. The base case is what makes the shrinking end somewhere." },
+  { type: "concept", chapter: "10 \u00b7 Recursion", title: "When recursion fits",
+    plain: "Recursion suits problems shaped like themselves \u2014 folders inside folders, comments replying to comments, branches of a tree. For a flat list, a loop is simpler and usually faster.",
+    neutral: "nested structure suits recursion; flat structure suits iteration",
+    langs: ["general"],
+    q: "Which of these is naturally recursive?",
+    choices: ["Listing every file in nested folders", "Adding up a list of numbers", "Printing ten lines"], answer: 0,
+    why: "A folder contains folders that contain folders, so the problem repeats its own shape. Summing a flat list has no such nesting." },
+  { type: "concept", chapter: "11 \u00b7 Security basics", title: "Never trust input",
+    plain: "Anything from a user, a file or a network can be crafted to break assumptions. Validate what you expect rather than trying to block what you do not \u2014 the list of bad things is always incomplete.",
+    neutral: "allow what is known good rather than blocking what is known bad",
+    langs: ["general"],
+    q: "Why is an allow-list better than a block-list?",
+    choices: ["You cannot list every bad input in advance", "It is shorter to write", "It runs faster that way"], answer: 0,
+    why: "Blocking known attacks leaves every unknown one through. Defining what is acceptable rejects everything else by default, including things nobody has thought of yet." },
+  { type: "concept", chapter: "11 \u00b7 Security basics", title: "Never store passwords",
+    plain: "Store a hash instead \u2014 a one-way transformation that cannot be reversed. Checking a login means hashing what was typed and comparing, so a stolen database gives an attacker nothing directly usable.",
+    neutral: "hashing is one-way; encryption is not",
+    langs: ["general"],
+    q: "Why hash rather than encrypt a password?",
+    choices: ["Encryption can be reversed with the key", "Hashing is faster", "Encryption is illegal"], answer: 0,
+    why: "Anyone who steals the database probably steals the key too. A hash cannot be reversed at all, which is why it is the right tool here." },
+{ type: "concept", chapter: "12 \u00b7 Reading code", title: "Most of the work is reading",
+    plain: "You will read far more code than you write, including your own from six months ago. Code that is easy to read beats code that is clever, because the clever version costs someone an hour every time they meet it.",
+    neutral: "readability is a cost paid once and saved repeatedly",
+    langs: ["general"],
+    q: "A one-line solution takes ten minutes to understand. A five-line one is obvious. Which is better?",
+    choices: ["The five-line version", "The one-liner", "Whichever runs faster"], answer: 0,
+    why: "Both do the same job, and one of them costs every future reader ten minutes. Unless the speed difference is measured and matters, the readable version wins." },
+  { type: "concept", chapter: "12 \u00b7 Reading code", title: "Comments say why, not what",
+    plain: "The code already says what it does. A comment earns its place by explaining why \u2014 the constraint, the bug it works around, the reason the obvious approach failed.",
+    neutral: "the reasoning is the part the code cannot carry",
+    langs: ["general"],
+    q: "Which comment is worth writing?",
+    choices: ["// retry twice: the API drops the first call after a cold start", "// add one to i", "// loop"], answer: 0,
+    why: "The first explains something no reader could deduce. The others repeat what the line already says and go stale the moment it changes." },
+  { type: "concept", chapter: "13 \u00b7 Finishing", title: "Handle the edge cases",
+    plain: "Empty input, a single item, the largest allowed value, a negative number, a name with an apostrophe. Most bugs live at the boundaries rather than in the ordinary case you tested.",
+    neutral: "the middle usually works; the edges are where it breaks",
+    langs: ["general"],
+    q: "Your function averages a list. What should you check first?",
+    choices: ["What it does with an empty list", "That it is fast", "That it handles a million items"], answer: 0,
+    why: "An empty list divides by zero. It is the smallest possible input and the one most likely to be missed." },
+  { type: "concept", chapter: "13 \u00b7 Finishing", title: "Fail clearly",
+    plain: "When something goes wrong, say what happened and what would fix it. \"Error\" tells the user nothing; \"Cannot open config.json: file not found\" tells them exactly what to do.",
+    neutral: "a good message names the thing and the problem",
+    langs: ["general"],
+    q: "Which error message is most useful?",
+    choices: ["Cannot open config.json: file not found", "Something went wrong", "Error 4"], answer: 0,
+    why: "It names what failed and why, so the reader can act. The others send them to search the source code or give up." }
 ];
 
 // ---------- The JS beginner course (read-first, no typing early) ----------
@@ -679,6 +791,90 @@ const JS_STEPS = [
       intro: "Type the whole return line to TRIPLE the number. You've seen the shape: `return n * 3`.",
       starter: "function triple(n) {\n  \n}", fnName: "triple", tests: [{ args: [5], expected: 15 }, { args: [3], expected: 9 }],
       why: "You wrote a whole line on your own. That's writing code." } },
+  { type: "read", chapter: "6 \u00b7 Variables", lang: "js",
+    title: "let and const, not var",
+    teach: "const cannot be reassigned and let can. var is the old form with confusing scope rules \u2014 modern JavaScript avoids it entirely.",
+    example: "const name = \"Ada\";\nlet count = 0;\ncount += 1;",
+    q: "What happens if you reassign a const?",
+    choices: ["A TypeError", "It changes", "A warning"], correctIndex: 0,
+    why: "It throws. Note that const stops REASSIGNMENT, not mutation \u2014 a const array can still have items pushed onto it." },
+  { type: "predict", chapter: "6 \u00b7 Variables", lang: "js",
+    title: "Three equals, not two",
+    teach: "== converts types before comparing and === does not. Always use === unless you specifically want the conversion.",
+    example: "console.log(\"5\" == 5);\nconsole.log(\"5\" === 5);",
+    q: "What does the second line log?",
+    choices: ["false", "true", "an error"], correctIndex: 0,
+    why: "=== compares type as well as value, and a string is not a number. The loose == is behind a great many JavaScript bugs." },
+  { type: "read", chapter: "7 \u00b7 Arrays and objects", lang: "js",
+    title: "map builds a new array",
+    teach: "map runs a function over every item and returns a NEW array. The original is untouched, which is why it chains so well.",
+    example: "const n = [1, 2, 3];\nconst d = n.map(x => x * 2);   // [2,4,6]",
+    q: "What is n afterwards?",
+    choices: ["[1,2,3]", "[2,4,6]", "empty"], correctIndex: 0,
+    why: "map does not modify the original. Reaching for a for loop and pushing is the older habit; map says what you want rather than how to build it." },
+  { type: "predict", chapter: "7 \u00b7 Arrays and objects", lang: "js",
+    title: "Objects are references",
+    teach: "Assigning an object copies the reference, not the object. Both names then point at the same thing.",
+    example: "const a = { n: 1 };\nconst b = a;\nb.n = 2;",
+    q: "What is a.n now?",
+    choices: ["2", "1", "undefined"], correctIndex: 0,
+    why: "There is only one object and both names point at it. Same idea as C#'s classes \u2014 expecting a copy here is a very common bug." },
+  { type: "read", chapter: "8 \u00b7 Asynchronous code", lang: "js",
+    title: "Why callbacks exist",
+    teach: "JavaScript does not wait for slow things like network requests. It carries on and runs your code later, when the result arrives.",
+    example: "console.log(\"a\");\nsetTimeout(() => console.log(\"b\"), 0);\nconsole.log(\"c\");",
+    q: "In what order do these print?",
+    choices: ["a c b", "a b c", "c a b"], correctIndex: 0,
+    why: "Even with a zero delay, the callback waits until the current code finishes. That queue is the single most important thing to understand about JavaScript." },
+  { type: "predict", chapter: "8 \u00b7 Asynchronous code", lang: "js",
+    title: "await pauses, but only inside async",
+    teach: "await waits for a promise to resolve and can only be used inside an async function. It makes asynchronous code read like ordinary sequential code.",
+    example: "async function load() {\n  const r = await fetch(url);\n  return r.json();\n}",
+    q: "What does await do to the surrounding function?",
+    choices: ["Pauses it until the promise settles", "Blocks the whole page", "Runs it twice"], correctIndex: 0,
+    why: "It suspends that function only \u2014 the rest of the page keeps running. Blocking everything is exactly what it avoids." },
+{ type: "read", chapter: "9 \u00b7 Scope and closures", lang: "js",
+    title: "A function remembers where it was made",
+    teach: "A function keeps access to the variables that were in scope when it was defined, even after that scope has finished. That is a closure, and it is how callbacks keep their context.",
+    example: "function counter() {\n  let n = 0;\n  return () => ++n;\n}",
+    q: "What does the returned function have access to?",
+    choices: ["n, even after counter has returned", "Nothing once counter has returned", "A copy of n"], correctIndex: 0,
+    why: "The inner function holds the actual variable, not a copy, so each call increments the same n. It is why counters and private state work this way." },
+  { type: "predict", chapter: "9 \u00b7 Scope and closures", lang: "js",
+    title: "this depends on how a function is called",
+    teach: "In a regular function, this is decided at call time. An arrow function has no this of its own and uses the surrounding one \u2014 which is usually what you wanted.",
+    example: "const o = { n: 1, get() { return this.n; } };\nconst f = o.get;\nf();",
+    q: "What does f() return?",
+    choices: ["undefined", "1", "an error"], correctIndex: 0,
+    why: "Detached from the object, this is no longer o. It is the classic JavaScript surprise, and arrow functions exist largely because of it." },
+  { type: "read", chapter: "10 \u00b7 Modern syntax", lang: "js",
+    title: "Destructuring",
+    teach: "Destructuring pulls values out of an object or array into named variables in one step, and can supply a default when a key is missing.",
+    example: "const { name, age = 0 } = user;\nconst [first, second] = list;",
+    q: "What is age if user has no age property?",
+    choices: ["0", "undefined", "an error"], correctIndex: 0,
+    why: "The default fills in only when the value is undefined. Note that null does NOT trigger it, which surprises people." },
+{ type: "read", chapter: "11 \u00b7 Errors", lang: "js",
+    title: "try, catch and async",
+    teach: "try/catch handles a thrown error. An awaited promise that rejects throws, so it can be caught the same way \u2014 but a promise without await escapes the try entirely.",
+    example: "try {\n  await risky();\n} catch (e) { }",
+    q: "What happens if you drop the await?",
+    choices: ["The rejection escapes the try block", "It is still caught", "It never rejects"], correctIndex: 0,
+    why: "Without await the function returns before the promise settles, so the catch is long gone. It is the most common async bug there is." },
+{ type: "read", chapter: "12 \u00b7 Modules", lang: "js",
+    title: "import and export",
+    teach: "Modules keep each file's scope to itself. Only what you export is visible elsewhere, which is why modern JavaScript no longer pollutes a global namespace.",
+    example: "export function add(a, b) { return a + b; }\nimport { add } from './math.js';",
+    q: "What is visible to another file?",
+    choices: ["Only what is exported", "Everything in the file", "Only the default export"], correctIndex: 0,
+    why: "Everything else stays private to the module. Before modules, every script shared one global scope and name collisions were constant." },
+{ type: "read", chapter: "13 \u00b7 The event loop", lang: "js",
+    title: "One thread, a queue of work",
+    teach: "JavaScript runs on a single thread. Timers, network responses and promises queue callbacks, and the loop runs each when the current work finishes \u2014 which is why a long synchronous loop freezes the page.",
+    example: "setTimeout(() => console.log('later'), 0);\nconsole.log('now');",
+    q: "Which prints first?",
+    choices: ["now", "later", "Unpredictable"], correctIndex: 0,
+    why: "Even a zero-millisecond timer waits for the current code to finish. It queues the callback rather than running it." }
 ];
 
 // ---------- Python course (mirrors the arc, Python syntax) ----------
@@ -719,6 +915,118 @@ const PY_STEPS = [
     fnName: "greet", io: "print",
     tests: [{ args: ["Sam"], expected: "Hi, Sam!" }, { args: ["Alex"], expected: "Hi, Alex!" }],
     why: "You printed it! Notice you used print(), not return — that's the difference this lesson teaches." },
+  { type: "read", chapter: "6 \u00b7 Variables and types", lang: "py",
+    title: "Names point at values",
+    teach: "A Python variable is a name pointing at a value. You do not declare a type \u2014 the value has one, and the name can later point at something else entirely.",
+    example: "count = 3\ncount = \"three\"   # allowed",
+    q: "What type is count after the second line?",
+    choices: ["str", "int", "an error"], correctIndex: 0,
+    why: "The name now points at a string. Python tracks types on values, not on names, which is why this is allowed where Java or C would refuse." },
+  { type: "pick", chapter: "6 \u00b7 Variables and types", lang: "py",
+    title: "Integer versus float division",
+    teach: "/ always gives a float, even when it divides evenly. // does floor division and keeps whole numbers.",
+    example: "print(7 / 2)    # 3.5\nprint(7 // 2)   # 3",
+    q: "What does 8 / 2 give?",
+    choices: ["4.0", "4", "an error"], correctIndex: 0,
+    why: "A single slash always produces a float, so it is 4.0 rather than 4. Using // is how you keep an integer." },
+  { type: "predict", chapter: "7 \u00b7 Lists and loops", lang: "py",
+    title: "Looping over a list",
+    teach: "for walks through a list directly \u2014 there is no index to manage. If you need positions as well, enumerate gives both.",
+    example: "for name in [\"Ada\", \"Bob\"]:\n    print(name)",
+    q: "How many lines does this print?",
+    choices: ["2", "1", "3"], correctIndex: 0,
+    why: "One per item. Python loops over the values themselves rather than counting to a length, which removes a whole class of off-by-one error." },
+  { type: "read", chapter: "7 \u00b7 Lists and loops", lang: "py",
+    title: "Slicing",
+    teach: "A slice takes part of a list or string. The start is included and the end is not \u2014 [1:3] gives items 1 and 2.",
+    example: "nums = [10, 20, 30, 40]\nprint(nums[1:3])   # [20, 30]",
+    q: "Why does nums[1:3] not include item 3?",
+    choices: ["The end is excluded", "It is a bug", "Lists start at 1"], correctIndex: 0,
+    why: "The end index is exclusive, which makes lengths easy: 3 minus 1 is 2 items. Same convention as range()." },
+  { type: "predict", chapter: "8 \u00b7 Dictionaries", lang: "py",
+    title: "Key and value",
+    teach: "A dictionary maps keys to values. Looking up a missing key raises an error, so .get() is used when the key might be absent.",
+    example: "ages = {\"Ada\": 36}\nprint(ages.get(\"Bob\"))",
+    q: "What does this print?",
+    choices: ["None", "an error", "0"], correctIndex: 0,
+    why: ".get() returns None for a missing key instead of raising. Writing ages[\"Bob\"] would raise a KeyError." },
+  { type: "read", chapter: "9 \u00b7 Functions", lang: "py",
+    title: "Default arguments",
+    teach: "A parameter can have a default, used when the caller leaves it out. Never use a list or dict as a default \u2014 it is created once and shared between every call.",
+    example: "def greet(name, greeting=\"Hello\"):\n    return f\"{greeting}, {name}\"",
+    q: "What does greet(\"Ada\") return?",
+    choices: ["Hello, Ada", "an error", "None"], correctIndex: 0,
+    why: "The default fills in the missing argument. The mutable-default trap is separate and worth remembering: def f(items=[]) reuses the same list on every call." },
+  { type: "predict", chapter: "9 \u00b7 Functions", lang: "py",
+    title: "Return is not print",
+    teach: "print shows something on screen; return hands a value back to the caller. A function that prints but does not return gives None to whoever called it.",
+    example: "def double(n):\n    print(n * 2)\n\nresult = double(4)",
+    q: "What is result?",
+    choices: ["None", "8", "4"], correctIndex: 0,
+    why: "The function printed 8 but returned nothing, so result is None. It is the single most common beginner confusion in any language." },
+{ type: "read", chapter: "10 \u00b7 Errors", lang: "py",
+    title: "try and except",
+    teach: "Code that might fail goes in a try block, and the except block says what to do when it does. Catching a specific error is better than catching everything \u2014 a bare except hides bugs you wanted to know about.",
+    example: "try:\n    n = int(text)\nexcept ValueError:\n    n = 0",
+    q: "Why name ValueError rather than using a bare except?",
+    choices: ["A bare except also swallows bugs you did not anticipate", "It runs faster that way", "It is required"], correctIndex: 0,
+    why: "A bare except catches typos, interrupts and everything else. Naming the error you expect means anything else still surfaces." },
+  { type: "predict", chapter: "10 \u00b7 Errors", lang: "py",
+    title: "Mutable default arguments",
+    teach: "A default argument is created ONCE, when the function is defined \u2014 not on each call. A list or dict default is therefore shared between every call, which is almost never what you want.",
+    example: "def add(item, items=[]):\n    items.append(item)\n    return items",
+    q: "What does calling add(1) twice return the second time?",
+    choices: ["[1, 1]", "[1]", "an error"], correctIndex: 0,
+    why: "The same list persists between calls. The fix is items=None and creating a new list inside \u2014 this is one of Python's most notorious traps." },
+  { type: "read", chapter: "11 \u00b7 Comprehensions", lang: "py",
+    title: "Building a list in one line",
+    teach: "A comprehension builds a list from an existing iterable. It replaces the three-line loop-and-append pattern and reads closer to what you meant.",
+    example: "squares = [n * n for n in range(5)]",
+    q: "What does that produce?",
+    choices: ["[0, 1, 4, 9, 16]", "[1, 4, 9, 16, 25]", "[0, 1, 2, 3, 4]"], correctIndex: 0,
+    why: "range(5) gives 0 to 4, and each is squared. Starting at zero catches people out more often than the squaring does." },
+{ type: "read", chapter: "12 \u00b7 Classes", lang: "py",
+    title: "self is explicit",
+    teach: "Every method takes self as its first parameter, and Python passes it for you when you call the method on an object. It is explicit where most languages hide it.",
+    example: "class Dog:\n    def __init__(self, name):\n        self.name = name",
+    q: "What is self?",
+    choices: ["The instance the method was called on", "The class", "A reserved keyword in the language"], correctIndex: 0,
+    why: "It is an ordinary parameter, not a keyword \u2014 you could name it anything. Forgetting it is the most common error when writing a first class." },
+  { type: "predict", chapter: "12 \u00b7 Classes", lang: "py",
+    title: "Everything is an object",
+    teach: "Functions, classes and modules are all objects you can pass around and store. That is why decorators work \u2014 they take a function and return another one.",
+    example: "def shout(f):\n    return lambda: f().upper()",
+    q: "What does shout take and return?",
+    choices: ["A function, and returns a function", "A string", "A class"], correctIndex: 0,
+    why: "Functions being ordinary values is what makes decorators possible. The @ syntax is just a shorthand for applying one." },
+{ type: "read", chapter: "13 \u00b7 Files and context", lang: "py",
+    title: "with closes the file",
+    teach: "A with block closes the file when it ends, including if an exception is raised. Opening without it leaves the handle open until the garbage collector happens to notice.",
+    example: "with open('data.txt') as f:\n    text = f.read()",
+    q: "When is the file closed?",
+    choices: ["At the end of the with block, whatever happens", "When the program exits", "When you call close"], correctIndex: 0,
+    why: "The context manager guarantees it. It is the same idea as C#'s using and C++'s destructors \u2014 tie release to scope rather than to memory." },
+  { type: "predict", chapter: "13 \u00b7 Files and context", lang: "py",
+    title: "Generators produce lazily",
+    teach: "A function using yield returns values one at a time without building a list. It can read a file larger than memory, because only one line exists at once.",
+    example: "def lines(path):\n    with open(path) as f:\n        for line in f:\n            yield line",
+    q: "How much memory does this use for a 10 GB file?",
+    choices: ["Roughly one line at a time", "10 GB", "Half the file"], correctIndex: 0,
+    why: "Nothing accumulates. Reading with f.readlines() would try to hold all 10 GB, which is the difference between working and crashing." },
+{ type: "read", chapter: "14 \u00b7 Modules", lang: "py",
+    title: "if __name__ == '__main__'",
+    teach: "A module's code runs when it is imported. Guarding the script part means importing it for its functions does not also run the whole program.",
+    example: "def main(): ...\n\nif __name__ == '__main__':\n    main()",
+    q: "What does the guard prevent?",
+    choices: ["The script running when the file is imported", "Syntax errors", "Slow startup"], correctIndex: 0,
+    why: "Without it, importing one function from the file executes everything at the top level, which is rarely what the importer wanted." },
+{ type: "read", chapter: "15 \u00b7 Testing", lang: "py",
+    title: "A test is just a function that asserts",
+    teach: "pytest finds functions beginning with test_ and runs them. A failing assert is a failing test \u2014 there is no framework to learn before writing the first one.",
+    example: "def test_add():\n    assert add(2, 2) == 4",
+    q: "What makes a test fail?",
+    choices: ["An assert that is not true", "A print statement", "A return value"], correctIndex: 0,
+    why: "The assert is the whole mechanism. Writing the test before the fix is what proves the fix did something." }
 ];
 
 // ---------- AI lesson generation (typing-style, validated) ----------
@@ -1965,6 +2273,52 @@ function normalizeConceptForCheck(c) {
 // so a genuine concise explanation in plain prose still passes — we deliberately do
 // NOT require code syntax, which would wrongly reject legitimate prose explanations.
 const TEACH_FILLER_WORDS = new Set(["this","lesson","teaches","teach","you","your","about","concept","here","now","today","exercise","will","learn","important","idea","topic","read","carefully","think","what","trying","show","showing","explore","new","useful","beginner","beginners","know","well","introduces","something","helpful","later","hard","every","learner","should","understand","before","moving","ahead","the","a","an","and","is","are","to","of","for","in","on","that","it","we","ok","very","find"]);
+/* Is the explanation ABOUT the code it ships with?
+
+   teachIsSubstantive already rejects prose that is too short or mostly filler.
+   What it cannot see is prose that is perfectly good and describes something
+   else \u2014 a fluent paragraph about loops attached to a lesson whose code is
+   about string formatting. Both halves pass their own checks and the lesson is
+   still incoherent.
+
+   The code is the ONE part of a generated lesson that is genuinely verified:
+   it is executed and its output compared. So requiring the prose to mention
+   what the code actually contains borrows that verification rather than
+   inventing a new one.
+
+   WHAT THIS CANNOT DO, stated plainly: it does not check the explanation is
+   correct, or well-pitched, or a good way to teach the idea. A wrong sentence
+   that names the right function passes. It rules out the specific failure of
+   prose and code being about different things. */
+function teachMatchesCode(teach, solution, fnName) {
+  const t = String(teach || "").toLowerCase();
+  const code = String(solution || "");
+  if (!t.trim() || !code.trim()) return { ok: true };      // other gates handle empties
+
+  // The declared function name is the strongest anchor when there is one.
+  if (fnName && t.indexOf(String(fnName).toLowerCase()) !== -1) return { ok: true };
+
+  /* Otherwise look for identifiers and keywords the code actually uses. A
+     single shared token is enough — the aim is to catch prose about a wholly
+     different subject, not to police vocabulary. */
+  const tokens = (code.match(/[A-Za-z_][A-Za-z0-9_]{2,}/g) || [])
+    .map(function (w) { return w.toLowerCase(); })
+    .filter(function (w) { return !CODE_NOISE_WORDS.has(w); });
+  if (!tokens.length) return { ok: true };                 // nothing to anchor to
+
+  const hit = tokens.some(function (w) { return t.indexOf(w) !== -1; });
+  if (hit) return { ok: true };
+  return { ok: false,
+    reason: "the explanation never mentions anything the code does \u2014 they appear to be about different things" };
+}
+
+/* Words that appear in almost any program and so anchor nothing. */
+const CODE_NOISE_WORDS = new Set([
+  "the", "and", "for", "let", "var", "const", "function", "return", "true",
+  "false", "null", "this", "new", "class", "def", "print", "int", "str",
+  "console", "log", "value", "result", "data", "item", "items", "temp", "out"
+]);
+
 function teachIsSubstantive(teach) {
   const t = (teach == null ? "" : String(teach)).trim();
   if (!t) return { ok: false, reason: "lesson has no explanation (teach)" };
@@ -1983,6 +2337,9 @@ async function validateLesson(L, classId) {
   // an explanation is PRESENT and non-filler; genuine quality rides on the prompt.
   const teachCheck = teachIsSubstantive(L && L.teach);
   if (!teachCheck.ok) return { ok: false, reason: teachCheck.reason };
+  // And it has to be about THIS lesson's code, not merely well written.
+  const matchCheck = teachMatchesCode(L && L.teach, L && L.solution, L && L.fnName);
+  if (!matchCheck.ok) return { ok: false, reason: matchCheck.reason };
   // Markup lessons (HTML/CSS/JSX) aren't function-shaped, so they're checked
   // first and differently: we RENDER the author's own solution and require it to
   // satisfy its own checks, then render the starter and require it NOT to. Same
@@ -5354,6 +5711,76 @@ const JAVA_STEPS = [
     starter: 'public class Main {\n  public static void main(String[] args) {\n    // print 7 + 5\n    \n  }\n}',
     expectedOutput: "12",
     why: "Java math printed out — nicely done." },
+  { type: "read", chapter: "2 \u00b7 Types and classes", lang: "java",
+    title: "Every type is declared",
+    teach: "Java requires a type on every variable, and the compiler checks them all before the program runs. var will infer a local type but the type is still fixed.",
+    example: "int count = 3;\nString name = \"Ada\";",
+    q: "What happens if you assign a String to an int?",
+    choices: ["A compile error", "It converts", "It becomes 0"], correctIndex: 0,
+    why: "The compiler rejects it before anything runs. Java's verbosity buys you that check." },
+  { type: "predict", chapter: "2 \u00b7 Types and classes", lang: "java",
+    title: "Comparing strings",
+    teach: "== on objects compares references, not contents. Two strings with the same text can be different objects, so .equals() is what compares the text.",
+    example: "String a = new String(\"hi\");\nString b = new String(\"hi\");\nSystem.out.println(a == b);",
+    q: "What does this print?",
+    choices: ["false", "true", "an error"], correctIndex: 0,
+    why: "They are two separate objects, so == is false even though the text matches. Using .equals() is the fix, and forgetting it is a classic Java bug." },
+  { type: "read", chapter: "3 \u00b7 Collections", lang: "java",
+    title: "Lists over arrays",
+    teach: "An array has a fixed length. ArrayList grows as you add to it, which is why almost all real Java code uses it instead.",
+    example: "List<String> names = new ArrayList<>();\nnames.add(\"Ada\");",
+    q: "What can a List do that an array cannot?",
+    choices: ["Grow after creation", "Hold objects", "Be looped over"], correctIndex: 0,
+    why: "Arrays are fixed at creation. The angle brackets say what it holds, so the compiler catches you adding the wrong type." },
+{ type: "read", chapter: "4 \u00b7 Objects", lang: "java",
+    title: "A class is a template",
+    teach: "A class describes what its objects hold and can do. new creates an instance, and each instance carries its own copy of the fields.",
+    example: "class Dog {\n  String name;\n  void bark() { System.out.println(name); }\n}",
+    q: "What does new Dog() create?",
+    choices: ["One object with its own name field", "A copy of the class", "A static method"], correctIndex: 0,
+    why: "Each instance has its own fields, which is why two dogs can have different names from one class." },
+  { type: "predict", chapter: "4 \u00b7 Objects", lang: "java",
+    title: "null is not an object",
+    teach: "A reference that points at nothing is null. Calling a method on it throws a NullPointerException \u2014 the most common runtime error in Java.",
+    example: "String s = null;\ns.length();",
+    q: "What happens?",
+    choices: ["A NullPointerException at runtime", "It returns 0", "It fails to compile"], correctIndex: 0,
+    why: "It compiles fine, because the type is right \u2014 there is simply nothing there. Kotlin's nullable types exist to move this to compile time." },
+{ type: "read", chapter: "5 \u00b7 Inheritance", lang: "java",
+    title: "extends and override",
+    teach: "A subclass inherits the superclass's members and can override a method to change its behaviour. @Override is optional and worth writing \u2014 it makes the compiler check you really are overriding something.",
+    example: "class Puppy extends Dog {\n  @Override void bark() { ... }\n}",
+    q: "What does @Override actually do?",
+    choices: ["Makes the compiler verify a method is being overridden", "It forces the override to happen", "Nothing at all at compile time"], correctIndex: 0,
+    why: "Without it, a typo in the method name silently creates a new method instead of overriding, and the original still runs." },
+  { type: "predict", chapter: "5 \u00b7 Inheritance", lang: "java",
+    title: "Interfaces over inheritance",
+    teach: "A class can implement many interfaces but extend only one class. Deep inheritance chains become brittle, so most modern Java favours interfaces and composition.",
+    example: "class Duck implements Swimmer, Flyer { }",
+    q: "Why not solve this with inheritance?",
+    choices: ["A class can only extend one parent", "Inheritance is slower", "It is not allowed"], correctIndex: 0,
+    why: "Java has single inheritance for classes, so a duck cannot extend both Swimmer and Flyer. Interfaces are the way round it." },
+{ type: "read", chapter: "6 \u00b7 Exceptions", lang: "java",
+    title: "Checked and unchecked",
+    teach: "A checked exception must be declared or caught \u2014 the compiler insists. An unchecked one, like NullPointerException, need not be, because it usually signals a bug rather than a foreseeable condition.",
+    example: "void read() throws IOException { }",
+    q: "Why is IOException checked but NullPointerException not?",
+    choices: ["A missing file is foreseeable; a null dereference is a bug", "IOException is more serious", "It is arbitrary"], correctIndex: 0,
+    why: "You cannot stop a file being deleted, so you must handle it. A null dereference should be fixed rather than caught." },
+  { type: "predict", chapter: "6 \u00b7 Exceptions", lang: "java",
+    title: "Streams describe, then run",
+    teach: "Stream operations like filter and map are lazy. Nothing happens until a terminal operation such as collect or forEach is called.",
+    example: "list.stream().filter(x -> x > 2).collect(toList());",
+    q: "What runs the filter?",
+    choices: ["The collect at the end", "The filter call itself", "The stream method"], correctIndex: 0,
+    why: "Without a terminal operation the pipeline is only a description. It is the same laziness as Rust iterators and Clojure sequences." },
+{ type: "read", chapter: "7 \u00b7 Collections", lang: "java",
+    title: "Declare the interface, not the class",
+    teach: "ArrayList keeps order and allows duplicates, HashSet holds each item once, HashMap stores pairs. Declaring the variable as List rather than ArrayList keeps the implementation swappable.",
+    example: "List<String> names = new ArrayList<>();",
+    q: "Why declare it as List?",
+    choices: ["You can swap the implementation without changing callers", "It runs faster that way", "ArrayList is deprecated"], correctIndex: 0,
+    why: "Only the interface's methods are used, so switching to LinkedList later touches one line. Declaring the concrete class ties everything to it." }
 ];
 const CPP_STEPS = [
   { type: "airun", lang: "cpp", langLabel: "C++", chapter: "1 · Write C++", title: "Print a greeting",
@@ -5362,8 +5789,2865 @@ const CPP_STEPS = [
     starter: '#include <iostream>\nint main() {\n  // print Hello, CodeQuest!\n  \n  return 0;\n}',
     expectedOutput: "Hello, CodeQuest!",
     why: "That's what your C++ code would print — real C++ syntax." },
+  { type: "read", chapter: "2 \u00b7 Memory you control", lang: "cpp",
+    title: "Stack and heap",
+    teach: "A local variable lives on the stack and disappears when the function returns. Anything created with new lives on the heap and stays until deleted \u2014 or leaks.",
+    example: "int a = 5;              // stack\nint* b = new int(5);    // heap",
+    q: "What happens to a when the function returns?",
+    choices: ["It is freed automatically", "It leaks", "It stays forever"], correctIndex: 0,
+    why: "Stack variables are cleaned up automatically. Heap allocations are not, which is the entire reason C++ memory bugs exist." },
+  { type: "predict", chapter: "2 \u00b7 Memory you control", lang: "cpp",
+    title: "Smart pointers",
+    teach: "unique_ptr frees its memory automatically when it goes out of scope. Modern C++ uses these rather than raw new and delete.",
+    example: "auto p = std::make_unique<int>(5);\n// freed automatically at end of scope",
+    q: "When is that memory released?",
+    choices: ["When p goes out of scope", "Never", "At program exit"], correctIndex: 0,
+    why: "The destructor runs at scope exit and frees it. It is the same idea as Zig's defer, built into the type instead." },
+  { type: "read", chapter: "3 \u00b7 References", lang: "cpp",
+    title: "Passing without copying",
+    teach: "Passing a large object by value copies the whole thing. A const reference passes it without copying and promises not to change it.",
+    example: "void show(const std::string& s);",
+    q: "Why use const& rather than passing by value?",
+    choices: ["It avoids copying a potentially large object", "It is shorter to write", "It allows changes"], correctIndex: 0,
+    why: "No copy is made, and const says the function will not modify it. It is the default choice for any non-trivial parameter." },
+{ type: "read", chapter: "4 \u00b7 Classes", lang: "cpp",
+    title: "Constructors and destructors",
+    teach: "A constructor runs when an object is created and a destructor when it goes out of scope. That pairing is how C++ manages resources \u2014 the pattern is called RAII.",
+    example: "class File {\npublic:\n  File() { open(); }\n  ~File() { close(); }\n};",
+    q: "When does the destructor run?",
+    choices: ["When the object leaves scope", "When you call delete only", "At program exit"], correctIndex: 0,
+    why: "Automatically at scope exit, including when an exception unwinds. Tying cleanup to lifetime is why C++ rarely needs a finally block." },
+  { type: "predict", chapter: "4 \u00b7 Classes", lang: "cpp",
+    title: "Copying can be expensive",
+    teach: "Passing an object by value copies it, including everything it owns. std::move transfers ownership instead, leaving the original empty.",
+    example: "std::vector<int> a = {1,2,3};\nauto b = a;        // copies\nauto c = std::move(a);  // transfers",
+    q: "What is a after the move?",
+    choices: ["Valid but empty", "Unchanged", "Deleted"], correctIndex: 0,
+    why: "A moved-from object is in a valid but unspecified state \u2014 safe to destroy or reassign, not safe to read expecting the old contents." },
+{ type: "read", chapter: "5 \u00b7 Templates", lang: "cpp",
+    title: "One definition, many types",
+    teach: "A template is compiled separately for each type it is used with. That gives full speed with no runtime cost, and it is why template errors are so long \u2014 they come from generated code.",
+    example: "template<typename T> T max(T a, T b) { return a > b ? a : b; }",
+    q: "When is the code for max<int> generated?",
+    choices: ["At compile time, when it is first used with int", "At runtime", "Never \u2014 it stays generic at runtime"], correctIndex: 0,
+    why: "Each instantiation is a separate compiled function. It is why templates are fast and why they inflate binary size." },
+{ type: "read", chapter: "6 \u00b7 Smart pointers", lang: "cpp",
+    title: "Ownership without new and delete",
+    teach: "unique_ptr owns one object and frees it automatically; shared_ptr counts references. Modern C++ rarely writes delete at all, because ownership is expressed in the type.",
+    example: "auto p = std::make_unique<Widget>();",
+    q: "When is the Widget destroyed?",
+    choices: ["When p goes out of scope", "At program exit", "When you call delete"], correctIndex: 0,
+    why: "The unique_ptr's destructor does it, including if an exception unwinds. Forgetting delete stops being possible." }
 ];
-const HAND_BUILT = { general: GENERAL_STEPS, js: JS_STEPS, py: PY_STEPS, java: JAVA_STEPS, cpp: CPP_STEPS };
+/* Foundation chapters for Go and Rust.
+
+   Both were listed as classes and had exactly one step \u2014 an auto-generated
+   "draw a square" visual appended to every graphics-capable language. Opening
+   Rust and being asked to fill a rectangle before ever seeing a variable is
+   not a course.
+
+   These are the first chapter each: enough to write, run and understand a
+   small program. Deliberately short and honest about being a start rather
+   than padded out to look complete. */
+const GO_STEPS = [
+  {
+    type: "read", chapter: "1 \u00b7 First steps", lang: "go",
+    title: "Every Go program starts the same way",
+    teach: "A Go file begins by saying which package it belongs to, and a program you can run uses package main with a function called main. That function is where Go starts.",
+    example: "package main\n\nimport \"fmt\"\n\nfunc main() {\n    fmt.Println(\"Hello\")\n}",
+    q: "What is the name of the function Go runs first?",
+    choices: ["start", "main", "run"], correctIndex: 1,
+    why: "Go looks for a function called main inside package main. Nothing runs without it \u2014 which is stricter than Python, where a file just runs top to bottom."
+  },
+  {
+    type: "pick", chapter: "1 \u00b7 First steps", lang: "go",
+    title: "Declaring a variable",
+    teach: "Inside a function, := declares a variable and works out its type from the value. Outside a function you need the longer var form. Go is strict about types but usually infers them.",
+    example: "count := 3\nname := \"Ada\"",
+    q: "What type does Go give count in count := 3?",
+    choices: ["int", "float64", "string"], correctIndex: 0,
+    why: "A whole number literal gives an int. If you wanted a decimal you would write 3.0, which gives float64 \u2014 and Go will not quietly mix the two."
+  },
+  {
+    type: "predict", chapter: "2 \u00b7 Making decisions", lang: "go",
+    title: "if needs no brackets",
+    teach: "Go writes conditions without parentheses but always with braces. There is no one-line if without braces \u2014 the compiler insists.",
+    example: "if count > 2 {\n    fmt.Println(\"big\")\n}",
+    q: "What does this print when count is 3?",
+    choices: ["big", "nothing", "an error"], correctIndex: 0,
+    why: "3 is greater than 2, so the branch runs and prints big. Note there are no brackets around the condition and the brace is required."
+  },
+  {
+    type: "predict", chapter: "2 \u00b7 Making decisions", lang: "go",
+    title: "One loop keyword",
+    teach: "Go has only for. A counting loop, a while loop and an infinite loop are all written with it \u2014 the difference is how many parts you supply.",
+    example: "for i := 0; i < 3; i++ {\n    fmt.Println(i)\n}",
+    q: "How many lines does this print?",
+    choices: ["2", "3", "4"], correctIndex: 1,
+    why: "i takes 0, 1 and 2 \u2014 three values \u2014 and stops before 3. Starting at zero and stopping before the limit is the same pattern as most languages."
+  },
+  {
+    type: "read", chapter: "3 \u00b7 Errors are values", lang: "go",
+    title: "Go returns errors instead of throwing",
+    teach: "Where other languages throw an exception, Go returns an error alongside the result and expects you to check it. It is more typing, and it makes every failure visible at the point it happens.",
+    example: "value, err := strconv.Atoi(\"12\")\nif err != nil {\n    fmt.Println(\"not a number\")\n}",
+    q: "What does err hold when the conversion succeeds?",
+    choices: ["nil", "an empty string", "0"], correctIndex: 0,
+    why: "A successful call returns nil for the error. Checking err != nil is the idiom you will see on almost every line of real Go, and ignoring it is how bugs get hidden."
+  },
+  { type: "read", chapter: "4 \u00b7 Slices and maps", lang: "go",
+    title: "Slices grow, arrays do not",
+    teach: "A Go array has a fixed length baked into its type. A slice is a view onto an array that can grow with append \u2014 nearly all real Go uses slices.",
+    example: "nums := []int{1, 2}\nnums = append(nums, 3)",
+    q: "Why is the result of append assigned back to nums?",
+    choices: ["append may return a new slice", "It is style", "To make a copy"], correctIndex: 0,
+    why: "If the underlying array is full, append allocates a bigger one and returns a new slice. Ignoring the return value is a real bug." },
+  { type: "predict", chapter: "5 \u00b7 Concurrency", lang: "go",
+    title: "Goroutines are cheap",
+    teach: "go before a call runs it concurrently. Goroutines are far lighter than operating-system threads, so thousands are normal.",
+    example: "go doWork()\nfmt.Println(\"carries on\")",
+    q: "Does the program wait for doWork to finish?",
+    choices: ["No, it continues immediately", "Yes", "Only if it is fast"], correctIndex: 0,
+    why: "The go keyword launches it and returns straight away. If main exits first the goroutine is killed, which is why channels or WaitGroups exist." },
+  { type: "read", chapter: "5 \u00b7 Concurrency", lang: "go",
+    title: "Channels pass values safely",
+    teach: "A channel sends values between goroutines. Receiving blocks until something arrives, which is how Go coordinates work without locks.",
+    example: "ch := make(chan int)\ngo func() { ch <- 42 }()\nfmt.Println(<-ch)",
+    q: "What does <-ch do if nothing has been sent yet?",
+    choices: ["Waits", "Returns zero", "Errors"], correctIndex: 0,
+    why: "It blocks until a value arrives. 'Share memory by communicating' is the Go slogan, and this is the mechanism." },
+{ type: "read", chapter: "6 \u00b7 Structs and methods", lang: "go",
+    title: "No classes, just structs",
+    teach: "Go has no classes. A struct groups fields, and a method is a function with a receiver attached to a type. Composition replaces inheritance entirely.",
+    example: "type Dog struct { Name string }\nfunc (d Dog) Bark() string { return d.Name }",
+    q: "What is the (d Dog) part called?",
+    choices: ["The receiver", "A parameter", "A constructor"], correctIndex: 0,
+    why: "It attaches the function to the Dog type. Go deliberately has no inheritance \u2014 you embed one struct in another instead." },
+  { type: "predict", chapter: "6 \u00b7 Structs and methods", lang: "go",
+    title: "Interfaces are satisfied implicitly",
+    teach: "A type satisfies an interface simply by having the right methods. Nothing is declared \u2014 no implements keyword exists.",
+    example: "type Speaker interface { Bark() string }",
+    q: "What must Dog do to satisfy Speaker?",
+    choices: ["Have a Bark method \u2014 nothing else", "Declare that it implements it", "Embed Speaker"], correctIndex: 0,
+    why: "The compiler checks the shape. It means you can satisfy an interface defined in a package you have never heard of." },
+{ type: "read", chapter: "7 \u00b7 Testing", lang: "go",
+    title: "Testing is built in",
+    teach: "A file ending _test.go with functions named TestX is all a Go test needs. No framework, no assertions library \u2014 you fail a test by calling t.Errorf.",
+    example: "func TestAdd(t *testing.T) {\n  if add(2,2) != 4 { t.Errorf(\"wrong\") }\n}",
+    q: "What marks a function as a test?",
+    choices: ["Its name starting with Test and taking *testing.T", "An annotation", "Registration in main"], correctIndex: 0,
+    why: "Convention rather than configuration. Having it in the standard library is why almost every Go project has tests." },
+{ type: "read", chapter: "8 \u00b7 Errors in practice", lang: "go",
+    title: "Wrapping adds context",
+    teach: "fmt.Errorf with %w wraps an error, adding context while keeping the original for errors.Is to find later.",
+    example: "return fmt.Errorf(\"loading config: %w\", err)",
+    q: "Why wrap rather than return err directly?",
+    choices: ["The message says where it failed and the original is preserved", "It runs faster that way", "It hides the error"], correctIndex: 0,
+    why: "A bare \"file not found\" tells you nothing about which file or why it was being opened. Wrapping builds a trail through the call stack." },
+{ type: "read", chapter: "9 \u00b7 Defer", lang: "go",
+    title: "Cleanup next to setup",
+    teach: "defer schedules a call for when the function returns, however it returns. Writing the close immediately after the open means it cannot be forgotten on an early error path.",
+    example: "f, err := os.Open(p)\ndefer f.Close()",
+    q: "When does f.Close() run?",
+    choices: ["When the function returns, by any path", "Immediately", "At program exit"], correctIndex: 0,
+    why: "Including on an early return or a panic. It is the same idea as Zig's defer and C++'s destructors \u2014 tie cleanup to scope, not to remembering." },
+{ type: "read", chapter: "10 \u00b7 Channels", lang: "go",
+    title: "Communicating instead of sharing",
+    teach: "A channel passes values between goroutines. Go's advice is to share memory by communicating rather than communicating by sharing memory \u2014 no locks needed if only one goroutine holds the data.",
+    example: "ch := make(chan int)\ngo func() { ch <- 42 }()\nfmt.Println(<-ch)",
+    q: "What does receiving from an empty channel do?",
+    choices: ["Blocks until something is sent", "Returns zero", "Errors"], correctIndex: 0,
+    why: "The blocking is the synchronisation. It is why channel code often needs no mutex at all." }
+];
+
+const RUST_STEPS = [
+  {
+    type: "read", chapter: "1 \u00b7 First steps", lang: "rust",
+    title: "main, and printing with a macro",
+    teach: "A Rust program starts at fn main(). Printing uses println! \u2014 the exclamation mark means it is a macro rather than an ordinary function, which is why it can check your format string at compile time.",
+    example: "fn main() {\n    println!(\"Hello\");\n}",
+    q: "What does the ! in println! tell you?",
+    choices: ["It is a macro", "It is urgent", "It never fails"], correctIndex: 0,
+    why: "The ! marks a macro. It matters because a macro can inspect its arguments at compile time \u2014 a wrong number of placeholders is caught before the program ever runs."
+  },
+  {
+    type: "pick", chapter: "1 \u00b7 First steps", lang: "rust",
+    title: "Variables are immutable by default",
+    teach: "let makes a binding that cannot be changed. If you want to change it you must say let mut. The default is the opposite of most languages, and it is deliberate.",
+    example: "let x = 5;\nlet mut y = 5;\ny = 6;",
+    q: "What happens if you write x = 6 after let x = 5?",
+    choices: ["x becomes 6", "It will not compile", "It compiles with a warning"], correctIndex: 1,
+    why: "It is a compile error. Rust makes you say mut when you intend to change something, so accidental mutation is caught rather than discovered later."
+  },
+  {
+    type: "predict", chapter: "2 \u00b7 Ownership", lang: "rust",
+    title: "Moving a value",
+    teach: "Assigning a String to another variable MOVES it rather than copying. The original can no longer be used \u2014 this is how Rust guarantees memory safety without a garbage collector.",
+    example: "let a = String::from(\"hi\");\nlet b = a;\nprintln!(\"{}\", a);",
+    q: "What does this do?",
+    choices: ["Prints hi", "Fails to compile", "Prints nothing"], correctIndex: 1,
+    why: "a was moved into b, so using a afterwards is a compile error. It is the single most surprising thing about Rust and the reason it needs no garbage collector."
+  },
+  {
+    type: "read", chapter: "2 \u00b7 Ownership", lang: "rust",
+    title: "Borrowing instead of moving",
+    teach: "Pass a reference with & and the value is borrowed rather than moved \u2014 the original stays usable. You can have many read-only borrows, or exactly one that can write.",
+    example: "let a = String::from(\"hi\");\nlet len = calc(&a);\nprintln!(\"{} {}\", a, len);",
+    q: "Why does a still work after calc(&a)?",
+    choices: ["It was copied", "It was borrowed, not moved", "calc gave it back"], correctIndex: 1,
+    why: "The & borrows it. Ownership stayed with a, so it is still usable afterwards \u2014 which is why almost every Rust function signature you meet takes references."
+  },
+  {
+    type: "predict", chapter: "3 \u00b7 No nulls", lang: "rust",
+    title: "Option instead of null",
+    teach: "Rust has no null. A value that might be missing is an Option, which is either Some(value) or None, and the compiler makes you handle both cases before you can use it.",
+    example: "let found: Option<i32> = None;\nmatch found {\n    Some(n) => println!(\"{}\", n),\n    None => println!(\"nothing\"),\n}",
+    q: "What does this print?",
+    choices: ["nothing", "0", "an error"], correctIndex: 0,
+    why: "found is None, so the second branch runs. You cannot forget the None case \u2014 the compiler refuses to build a match that misses it, which is how a whole class of null crashes disappears."
+  },
+  { type: "read", chapter: "4 \u00b7 Handling errors", lang: "rust",
+    title: "Result, not exceptions",
+    teach: "A function that can fail returns Result: Ok with a value or Err with an error. Rust has no exceptions, so failure is part of the type.",
+    example: "let n: Result<i32, _> = \"42\".parse();\nmatch n {\n    Ok(v) => println!(\"{}\", v),\n    Err(_) => println!(\"bad\"),\n}",
+    q: "What must you do with a Result before using the value?",
+    choices: ["Handle both cases", "Cast it", "Nothing, the value is there already"], correctIndex: 0,
+    why: "The compiler will not let you read the value without dealing with the error case. It is the same idea as Option, applied to failure." },
+  { type: "predict", chapter: "4 \u00b7 Handling errors", lang: "rust",
+    title: "The question mark operator",
+    teach: "? unwraps an Ok or returns the Err from the current function. It replaces a whole match with one character.",
+    example: "fn read() -> Result<String, Error> {\n    let s = load()?;\n    Ok(s)\n}",
+    q: "What happens if load() returns an Err?",
+    choices: ["read returns that Err immediately", "It panics", "s becomes empty"], correctIndex: 0,
+    why: "? passes the error up to the caller. Same job as Zig's try, and it is why Rust error handling is terse in practice despite being explicit." },
+{ type: "read", chapter: "5 \u00b7 Structs and traits", lang: "rust",
+    title: "Traits are shared behaviour",
+    teach: "A trait lists methods a type can implement, and generic code can demand a trait rather than a concrete type. It is Rust's answer to interfaces.",
+    example: "trait Area { fn area(&self) -> f64; }",
+    q: "What does a trait describe?",
+    choices: ["Behaviour a type can implement", "A data layout", "A module"], correctIndex: 0,
+    why: "It is about what a type can DO. Data lives in structs; behaviour lives in traits, and the two are kept separate." },
+  { type: "predict", chapter: "5 \u00b7 Structs and traits", lang: "rust",
+    title: "Lifetimes stop dangling references",
+    teach: "A reference may not outlive the thing it points at, and the compiler proves that at build time. Most of the time it infers this and you never write a lifetime at all.",
+    example: "let r;\n{ let x = 5; r = &x; }\nprintln!(\"{}\", r);",
+    q: "What happens here?",
+    choices: ["It fails to compile \u2014 x is gone", "It prints 5", "It prints garbage"], correctIndex: 0,
+    why: "x is dropped at the closing brace, so r would dangle. C would compile this and print whatever happened to be there." },
+{ type: "read", chapter: "6 \u00b7 Collections", lang: "rust",
+    title: "Vec and iterators",
+    teach: "Vec is a growable array, and iterator methods like map and filter are lazy \u2014 nothing happens until collect or a loop consumes them.",
+    example: "let v: Vec<i32> = (1..5).map(|x| x * 2).collect();",
+    q: "What does collect do?",
+    choices: ["Runs the iterator and builds the collection", "Sorts it", "Copies it"], correctIndex: 0,
+    why: "Without collect, the map never runs. The type annotation on v is what tells collect which collection to build." },
+{ type: "read", chapter: "7 \u00b7 Modules and crates", lang: "rust",
+    title: "Private by default",
+    teach: "Items are private to their module unless marked pub. A crate exposes only what it declares public, so refactoring internals cannot break anyone.",
+    example: "pub fn parse() { }\nfn helper() { }",
+    q: "Who can call helper?",
+    choices: ["Only code in the same module", "Anyone", "Only tests"], correctIndex: 0,
+    why: "Privacy is the default rather than an afterthought, which means the public surface of a crate is exactly what its author chose." },
+{ type: "read", chapter: "8 \u00b7 Error handling", lang: "rust",
+    title: "Result and the question mark",
+    teach: "A fallible function returns Result. The ? operator returns the error early if there is one and unwraps the value if there is not, which keeps the happy path readable.",
+    example: "let text = fs::read_to_string(path)?;",
+    q: "What does ? do on an Err?",
+    choices: ["Returns it from the enclosing function", "Panics", "Ignores it"], correctIndex: 0,
+    why: "It propagates rather than crashing. unwrap() would panic instead, which is why it belongs in examples and tests rather than real code." }
+];
+
+/* Foundation chapters for the three most widely used of the remaining thin
+   classes. Each had a single auto-generated visual step and nothing else. */
+const TS_STEPS = [
+  {
+    type: "read", chapter: "1 \u00b7 Types on top of JavaScript", lang: "ts",
+    title: "TypeScript is JavaScript that checks itself",
+    teach: "Every valid JavaScript program is valid TypeScript. What TypeScript adds is type annotations, checked before the program runs \u2014 the browser never sees them, because they are stripped out during compilation.",
+    example: "let count: number = 3;\nlet name: string = \"Ada\";",
+    q: "What happens to the type annotations when the code runs?",
+    choices: ["They are removed before running", "They are checked at runtime", "They become comments"], correctIndex: 0,
+    why: "TypeScript compiles to plain JavaScript and the annotations vanish. All the checking happens beforehand \u2014 which is why a type error stops you at your desk rather than in production."
+  },
+  {
+    type: "pick", chapter: "1 \u00b7 Types on top of JavaScript", lang: "ts",
+    title: "Inference does most of the work",
+    teach: "You rarely have to write the type. TypeScript works it out from the value, and only needs telling when it genuinely cannot know \u2014 usually function parameters.",
+    example: "let n = 3;        // inferred number\nfunction double(x: number) { return x * 2; }",
+    q: "Why does x need an annotation when n does not?",
+    choices: ["Parameters have no value to infer from", "Functions are special", "Numbers always need one"], correctIndex: 0,
+    why: "n has 3 sitting right there to infer from. A parameter has no value until the function is called, so there is nothing to infer and you have to say."
+  },
+  {
+    type: "predict", chapter: "2 \u00b7 Catching mistakes early", lang: "ts",
+    title: "A type error is not a runtime error",
+    teach: "TypeScript refuses to compile code where the types do not line up. The mistake is caught at your desk rather than by a user.",
+    example: "let count: number = 3;\ncount = \"four\";",
+    q: "What happens here?",
+    choices: ["count becomes the string", "It fails to compile", "It compiles with a warning"], correctIndex: 1,
+    why: "count was declared as a number, so assigning a string is an error before anything runs. In plain JavaScript this would be allowed and would break somewhere else entirely."
+  },
+  {
+    type: "read", chapter: "2 \u00b7 Catching mistakes early", lang: "ts",
+    title: "Optional and possibly-missing values",
+    teach: "A ? marks a property that might be absent, and TypeScript then forces you to handle the missing case before using it \u2014 which is where a whole class of undefined errors goes.",
+    example: "type User = { name: string; email?: string };\nfunction show(u: User) {\n  if (u.email) console.log(u.email.length);\n}",
+    q: "Why is the if needed before reading u.email.length?",
+    choices: ["email might be undefined", "Strings need checking", "It is just style"], correctIndex: 0,
+    why: "The ? says email may be missing, so TypeScript will not let you read .length until you have proved it is there. Without the check it refuses to compile."
+  },
+  { type: "read", chapter: "3 \u00b7 Shaping data", lang: "ts",
+    title: "Interfaces describe objects",
+    teach: "An interface names the shape an object must have. Anything with those properties satisfies it \u2014 TypeScript checks the shape rather than the declared class.",
+    example: "interface User { name: string; age: number }\nconst u: User = { name: \"Ada\", age: 36 };",
+    q: "What makes an object satisfy User?",
+    choices: ["Having the right properties", "Extending a class", "A decorator"], correctIndex: 0,
+    why: "Structural typing: the shape is what counts. It is why TypeScript fits over existing JavaScript so easily." },
+  { type: "predict", chapter: "3 \u00b7 Shaping data", lang: "ts",
+    title: "Union types",
+    teach: "A union says a value is one of several types. TypeScript then narrows it as you check, and will not let you use it until it knows which.",
+    example: "function f(x: string | number) {\n  return x.length;\n}",
+    q: "What does the compiler say here?",
+    choices: ["number has no length", "Nothing, it is fine", "x is undefined"], correctIndex: 0,
+    why: "x might be a number, and numbers have no length. Checking typeof x === 'string' first narrows it and makes the access legal." },
+{ type: "read", chapter: "4 \u00b7 Generics", lang: "ts",
+    title: "A type that is filled in later",
+    teach: "A generic lets a function work with any type while keeping the connection between input and output. Array<T> holds T, and a function taking T[] and returning T is guaranteed to give you the same type back.",
+    example: "function first<T>(items: T[]): T { return items[0]; }",
+    q: "What does first([1, 2, 3]) return, as far as TypeScript knows?",
+    choices: ["A number", "Any type", "An array"], correctIndex: 0,
+    why: "T is inferred as number from the argument, so the return type is number. Using any instead would lose that connection entirely." },
+  { type: "predict", chapter: "4 \u00b7 Generics", lang: "ts",
+    title: "unknown is safer than any",
+    teach: "any switches type checking off. unknown says the type is not yet known and forces you to narrow it before doing anything \u2014 the checking stays on.",
+    example: "let a: any = getData();\nlet u: unknown = getData();\nu.length;",
+    q: "What happens on the last line?",
+    choices: ["A compile error until u is narrowed", "It works", "It returns undefined"], correctIndex: 0,
+    why: "unknown refuses every operation until you check what it is. any would have allowed it and failed at runtime instead." },
+{ type: "read", chapter: "5 \u00b7 Narrowing", lang: "ts",
+    title: "The compiler follows your checks",
+    teach: "After typeof x === 'string', TypeScript knows x is a string inside that branch. Narrowing is why unions are usable rather than merely safe.",
+    example: "function f(x: string | number) {\n  if (typeof x === 'string') return x.length;\n  return x;\n}",
+    q: "Why is x.length allowed there?",
+    choices: ["The check narrowed x to string in that branch", "length works on numbers too", "It is not allowed"], correctIndex: 0,
+    why: "The compiler tracks what your check proved. Writing the check for the compiler's benefit rather than the runtime's is the shift in thinking." },
+{ type: "read", chapter: "6 \u00b7 Configuration", lang: "ts",
+    title: "strict is worth turning on",
+    teach: "strict mode enables null checking, implicit-any errors and more. It is more work at the start and it is where most of TypeScript's value comes from.",
+    example: "// tsconfig.json\n{ \"compilerOptions\": { \"strict\": true } }",
+    q: "What does strict null checking give you?",
+    choices: ["Errors where a value might be null or undefined", "Faster builds", "Smaller output"], correctIndex: 0,
+    why: "Without it, every type silently includes null and the compiler cannot warn you. Most of the safety people expect from TypeScript only exists in strict mode." },
+{ type: "read", chapter: "7 \u00b7 Structural typing", lang: "ts",
+    title: "Shape, not name",
+    teach: "TypeScript compares types by their structure. An object with the right properties satisfies an interface even if it never mentions it \u2014 there is no implements needed.",
+    example: "interface P { x: number }\nconst v = { x: 1, y: 2 };  // satisfies P",
+    q: "Does v have to declare it implements P?",
+    choices: ["No \u2014 having the properties is enough", "Yes", "Only with a class"], correctIndex: 0,
+    why: "It is the same idea as Go's interfaces. Java and C# check the name instead, which is why they need an explicit declaration." }
+];
+
+const C_STEPS = [
+  {
+    type: "read", chapter: "1 \u00b7 First steps", lang: "c",
+    title: "Every C program has main",
+    teach: "C starts at main, and anything you use must be declared first \u2014 which is what the #include lines at the top are for. printf comes from stdio.h.",
+    example: "#include <stdio.h>\n\nint main(void) {\n    printf(\"Hello\\n\");\n    return 0;\n}",
+    q: "What does return 0 at the end of main mean?",
+    choices: ["The program succeeded", "Nothing was printed", "It ran zero times"], correctIndex: 0,
+    why: "main returns a status to whatever launched it, and 0 conventionally means success. A non-zero value signals an error, which is how scripts know a program failed."
+  },
+  {
+    type: "pick", chapter: "1 \u00b7 First steps", lang: "c",
+    title: "You declare the type",
+    teach: "C has no inference. Every variable states its type, and that type fixes how much memory it uses and what fits in it.",
+    example: "int count = 3;\ndouble price = 2.5;\nchar letter = 'A';",
+    q: "What happens if you store 2.5 in an int?",
+    choices: ["It becomes 2", "It rounds to 3", "It refuses to compile"], correctIndex: 0,
+    why: "The fractional part is discarded, not rounded \u2014 2.5 becomes 2 and 2.9 becomes 2. It compiles happily, which is exactly why it catches people out."
+  },
+  {
+    type: "predict", chapter: "2 \u00b7 Memory is yours to manage", lang: "c",
+    title: "An array does not know its own size",
+    teach: "In C an array is just a block of memory. It carries no length, so nothing stops you reading past the end \u2014 you get whatever happens to be there.",
+    example: "int nums[3] = {1, 2, 3};\nprintf(\"%d\", nums[5]);",
+    q: "What does reading nums[5] do?",
+    choices: ["Prints garbage or crashes", "Prints 0", "It raises an error at that point"], correctIndex: 0,
+    why: "There is no bounds check. You read whatever memory sits there, which might be anything \u2014 and this single fact is behind a large share of real security bugs."
+  },
+  {
+    type: "read", chapter: "2 \u00b7 Memory is yours to manage", lang: "c",
+    title: "What a pointer holds",
+    teach: "A pointer stores an address rather than a value. & gives the address of something, and * goes to the address and reads what is there.",
+    example: "int x = 5;\nint *p = &x;\nprintf(\"%d\", *p);",
+    q: "What does *p print?",
+    choices: ["5", "The address of x", "Nothing"], correctIndex: 0,
+    why: "p holds x's address; *p follows it and finds 5. Pointers are how C passes things around without copying them, and they are why C is both fast and dangerous."
+  },
+{ type: "read", chapter: "3 \u00b7 Strings are arrays", lang: "c",
+    title: "A string ends with a zero byte",
+    teach: "C has no string type. A string is a char array ending in a \\0, and every string function looks for that byte to know where to stop.",
+    example: "char s[] = \"hi\";   // 3 bytes: h, i, \\0",
+    q: "Why does \"hi\" take 3 bytes?",
+    choices: ["The terminating zero", "Alignment", "A length prefix"], correctIndex: 0,
+    why: "The \\0 marks the end. Forgetting to leave room for it is one of the oldest bugs in the language." },
+  { type: "predict", chapter: "3 \u00b7 Strings are arrays", lang: "c",
+    title: "malloc and free",
+    teach: "malloc reserves memory that lasts until you free it. Forget the free and the program leaks; free twice and it corrupts.",
+    example: "int* p = malloc(sizeof(int) * 10);\nfree(p);",
+    q: "What happens if you never call free?",
+    choices: ["The memory leaks", "It is freed at once", "A compile error"], correctIndex: 0,
+    why: "Nothing reclaims it while the program runs. Long-running programs that leak eventually exhaust memory, which is why C++ and Rust built automatic answers." },
+{ type: "read", chapter: "4 \u00b7 Structs and headers", lang: "c",
+    title: "Grouping data",
+    teach: "A struct groups related fields under one name. C has no methods, so functions take a pointer to the struct as their first argument \u2014 the pattern every object system is built on top of.",
+    example: "struct Point { int x, y; };\nvoid move(struct Point *p, int dx);",
+    q: "Why pass a pointer rather than the struct?",
+    choices: ["So the function can modify the original", "It is required", "Structs cannot be copied"], correctIndex: 0,
+    why: "Passing by value copies it, so changes would be lost. It also avoids copying a large struct on every call." },
+  { type: "predict", chapter: "4 \u00b7 Structs and headers", lang: "c",
+    title: "Headers declare, source defines",
+    teach: "A .h file says what exists; a .c file says what it does. Other files include the header so the compiler knows the shape without seeing the implementation.",
+    example: "// point.h\nvoid move(struct Point *p, int dx);",
+    q: "What goes in the header?",
+    choices: ["Declarations other files need", "The function bodies", "Everything"], correctIndex: 0,
+    why: "Putting bodies in a header means every file that includes it gets its own copy, and the linker complains about duplicates." },
+{ type: "read", chapter: "5 \u00b7 The preprocessor", lang: "c",
+    title: "It runs before compiling",
+    teach: "#define, #include and #ifdef are handled before the compiler sees the code. That is why a macro has no types and no scope \u2014 it is text substitution.",
+    example: "#define SQUARE(x) ((x)*(x))",
+    q: "Why are the inner brackets needed?",
+    choices: ["Without them SQUARE(a+b) expands wrongly", "Purely for readability", "They are optional"], correctIndex: 0,
+    why: "SQUARE(a+b) would become a+b*a+b without them. It is pure text substitution, so precedence is your responsibility." }
+];
+
+const CSHARP_STEPS = [
+  {
+    type: "read", chapter: "1 \u00b7 First steps", lang: "csharp",
+    title: "Everything lives in a class",
+    teach: "C# organises code into classes, and a program starts at a method called Main. Modern C# lets you skip the ceremony in small files, but the structure is still there underneath.",
+    example: "class Program {\n    static void Main() {\n        System.Console.WriteLine(\"Hello\");\n    }\n}",
+    q: "What does static mean on Main?",
+    choices: ["It belongs to the class, not an object", "It cannot be changed", "It runs first"], correctIndex: 0,
+    why: "static means you do not need an instance of Program to call it \u2014 which matters because nothing has been created yet when the program starts."
+  },
+  {
+    type: "pick", chapter: "1 \u00b7 First steps", lang: "csharp",
+    title: "var infers, but the type is fixed",
+    teach: "var lets the compiler work out the type from the value. It is still strongly typed \u2014 var is not a dynamic type, and the variable cannot later hold something else.",
+    example: "var count = 3;\ncount = \"four\";",
+    q: "What happens on the second line?",
+    choices: ["count becomes a string", "It fails to compile", "count becomes 0"], correctIndex: 1,
+    why: "var inferred int from 3, and that is permanent. C# looks like a dynamic language here and is not \u2014 which is the point worth taking away."
+  },
+  {
+    type: "predict", chapter: "2 \u00b7 Values and references", lang: "csharp",
+    title: "Structs copy, classes do not",
+    teach: "A class is a reference type: assigning it copies the reference, so both names point at the same object. A struct is a value type and is copied outright.",
+    example: "var a = new List<int> { 1 };\nvar b = a;\nb.Add(2);\n// a.Count is now 2",
+    q: "Why did adding to b change a?",
+    choices: ["They are the same list", "Lists always sync", "b was a copy"], correctIndex: 0,
+    why: "List is a class, so b holds the same reference as a \u2014 there is only one list. Expecting a copy here is one of the most common C# surprises."
+  },
+  {
+    type: "read", chapter: "2 \u00b7 Values and references", lang: "csharp",
+    title: "Nullable reference types",
+    teach: "Modern C# distinguishes string from string? \u2014 the second may be null, and the compiler warns if you use it without checking. It is the same idea as Rust's Option, added to a language that already had null.",
+    example: "string? maybe = GetName();\nif (maybe != null) {\n    Console.WriteLine(maybe.Length);\n}",
+    q: "Why is the null check needed?",
+    choices: ["The ? says it might be null", "Strings are always null", "Length needs it"], correctIndex: 0,
+    why: "The ? marks it as possibly null, so reading .Length without checking is what the compiler warns about \u2014 turning a runtime crash into a build-time nudge."
+  },
+  { type: "read", chapter: "3 \u00b7 LINQ", lang: "csharp",
+    title: "Querying collections",
+    teach: "LINQ adds query operations to any collection. Where filters, Select transforms, and they chain together without writing loops.",
+    example: "var adults = people.Where(p => p.Age >= 18)\n                   .Select(p => p.Name);",
+    q: "What does Where do?",
+    choices: ["Keeps items matching a condition", "Sorts them", "Counts them"], correctIndex: 0,
+    why: "It filters. The same pair of ideas as JavaScript's filter and map, built into the standard library." },
+  { type: "predict", chapter: "3 \u00b7 LINQ", lang: "csharp",
+    title: "Deferred execution",
+    teach: "A LINQ query does not run when you write it. It runs when you enumerate the result, which means changing the source first changes the answer.",
+    example: "var q = nums.Where(n => n > 2);\nnums.Add(5);\n// q now includes 5",
+    q: "When does the Where actually run?",
+    choices: ["When the result is enumerated", "Immediately", "At compile time"], correctIndex: 0,
+    why: "The query is a description until something asks for the items. Surprising the first time, and it is why ToList() is used to force it." },
+{ type: "read", chapter: "4 \u00b7 Properties", lang: "csharp",
+    title: "Properties look like fields",
+    teach: "A property is a pair of accessor methods that reads like a field. It lets you add validation later without changing any calling code.",
+    example: "public int Age { get; set; }",
+    q: "Why use a property rather than a public field?",
+    choices: ["You can add logic later without changing callers", "It runs faster that way", "Fields cannot be public"], correctIndex: 0,
+    why: "Callers write obj.Age either way, so changing a field to a property later would break binaries \u2014 starting with a property avoids that." },
+  { type: "predict", chapter: "4 \u00b7 Properties", lang: "csharp",
+    title: "async does not mean parallel",
+    teach: "await frees the thread while waiting for something slow. It does not start a second thread \u2014 the work continues on the same one when the result arrives.",
+    example: "var data = await httpClient.GetStringAsync(url);",
+    q: "What happens to the thread while awaiting?",
+    choices: ["It is released to do other work", "It blocks", "A new thread starts"], correctIndex: 0,
+    why: "The thread is returned to the pool and picks the method back up later. Confusing async with parallelism is the usual misunderstanding." },
+{ type: "read", chapter: "5 \u00b7 Interfaces", lang: "csharp",
+    title: "A contract without implementation",
+    teach: "An interface lists members a type must provide. A class can implement many interfaces but inherit from only one base class, which is why interfaces carry most of the design.",
+    example: "interface ILogger { void Log(string m); }",
+    q: "How many interfaces can a class implement?",
+    choices: ["Any number", "One", "None"], correctIndex: 0,
+    why: "Single inheritance applies to classes only. Interfaces are how C# gets the flexibility multiple inheritance would give, without the ambiguity." },
+{ type: "read", chapter: "6 \u00b7 Disposal", lang: "csharp",
+    title: "using releases resources",
+    teach: "A using statement calls Dispose when the block ends, even if an exception is thrown. Files, connections and streams all rely on it.",
+    example: "using var f = File.OpenRead(path);",
+    q: "When is the file closed?",
+    choices: ["When the enclosing scope ends, exception or not", "At garbage collection", "Only if you call Close"], correctIndex: 0,
+    why: "The garbage collector runs whenever it likes, which is far too late for a file handle. using makes release deterministic." }
+];
+
+const RUBY_STEPS = [
+  {
+    type: "read", chapter: "1 \u00b7 First steps", lang: "ruby",
+    title: "Almost everything is an object",
+    teach: "In Ruby even a number is an object with methods. 3.times runs a block three times \u2014 the number itself knows how to do that.",
+    example: "3.times { puts \"hi\" }\n\"hello\".upcase",
+    q: "Why can you write 3.times?",
+    choices: ["3 is an object with methods", "times is a keyword", "Ruby converts it first"], correctIndex: 0,
+    why: "Integers are objects, so they carry methods like any other value. It is why Ruby code often reads as a sentence rather than a set of function calls."
+  },
+  {
+    type: "pick", chapter: "1 \u00b7 First steps", lang: "ruby",
+    title: "The last expression is the return value",
+    teach: "A Ruby method returns whatever its last expression evaluated to. Writing return is allowed and usually left out.",
+    example: "def double(n)\n  n * 2\nend",
+    q: "What does double(4) give?",
+    choices: ["8", "nil", "an error"], correctIndex: 0,
+    why: "n * 2 is the last expression, so its value is returned without needing return. Forgetting this is why Ruby methods sometimes return something unexpected \u2014 whatever happened to be last."
+  },
+  {
+    type: "predict", chapter: "2 \u00b7 Truthiness", lang: "ruby",
+    title: "Only nil and false are falsy",
+    teach: "In Ruby, 0 and an empty string are both TRUE. Only nil and false are falsy \u2014 which is different from most languages and catches people out.",
+    example: "if 0\n  puts \"zero is truthy\"\nend",
+    q: "Does this print?",
+    choices: ["Yes", "No", "It errors"], correctIndex: 0,
+    why: "0 is truthy in Ruby, so the branch runs. In JavaScript or Python it would not, which is exactly the sort of assumption that travels badly between languages."
+  },
+  {
+    type: "read", chapter: "2 \u00b7 Truthiness", lang: "ruby",
+    title: "Blocks are passed to methods",
+    teach: "A block is a chunk of code handed to a method. each takes one and runs it for every element \u2014 it is Ruby's loop, and it is a method call rather than syntax.",
+    example: "[1, 2, 3].each do |n|\n  puts n * 2\nend",
+    q: "What is |n| doing?",
+    choices: ["Naming the block's parameter", "Declaring a variable", "Marking a comment"], correctIndex: 0,
+    why: "The bars name what each element is called inside the block. It is the same idea as a function parameter, written differently."
+  },
+{ type: "read", chapter: "3 \u00b7 Collections", lang: "ruby",
+    title: "Blocks do the looping",
+    teach: "map, select and each all take a block. select keeps items where the block is true, map transforms every item \u2014 the same pair as JavaScript's filter and map.",
+    example: "[1,2,3,4].select { |n| n.even? }   # [2, 4]",
+    q: "What does select return?",
+    choices: ["Items where the block was true", "The first match", "true or false"], correctIndex: 0,
+    why: "It builds a new array from the items that passed. Ruby names it select where most languages call it filter." },
+  { type: "predict", chapter: "3 \u00b7 Collections", lang: "ruby",
+    title: "Symbols are not strings",
+    teach: "A symbol like :name is an immutable identifier, cheaper than a string and used for hash keys and method names.",
+    example: "h = { name: \"Ada\" }\nh[:name]",
+    q: "Why use :name rather than \"name\" as a key?",
+    choices: ["Symbols are reused, not recreated", "It is shorter to write", "Strings cannot be keys"], correctIndex: 0,
+    why: "The same symbol is a single object however often it appears, where each string literal creates a new one. It matters in a loop." },
+{ type: "read", chapter: "4 \u00b7 Classes", lang: "ruby",
+    title: "attr_accessor writes the methods",
+    teach: "attr_accessor generates a getter and setter for an instance variable. Ruby has no public fields \u2014 everything goes through methods, and this saves writing them.",
+    example: "class Dog\n  attr_accessor :name\nend",
+    q: "What does attr_accessor :name create?",
+    choices: ["name and name= methods", "A public variable", "A constant"], correctIndex: 0,
+    why: "It writes both methods for you. Because access always goes through a method, you can replace it with real logic later without changing callers." },
+  { type: "predict", chapter: "5 \u00b7 Blocks and yield", lang: "ruby",
+    title: "yield calls the block",
+    teach: "A method can take a block without declaring it and run it with yield. It is how each, map and open all work.",
+    example: "def twice\n  yield\n  yield\nend\ntwice { puts 'hi' }",
+    q: "How many times does hi print?",
+    choices: ["2", "1", "0"], correctIndex: 0,
+    why: "Each yield runs the block once. It is also how File.open guarantees the file is closed afterwards \u2014 the block runs in the middle." },
+{ type: "read", chapter: "6 \u00b7 Modules", lang: "ruby",
+    title: "Mixins share behaviour",
+    teach: "A module holds methods that any class can include. It is how Ruby shares behaviour across unrelated classes without multiple inheritance.",
+    example: "module Walkable\n  def walk; \"walking\"; end\nend\nclass Dog; include Walkable; end",
+    q: "What does include do?",
+    choices: ["Adds the module's methods to the class", "Copies the file", "Creates a subclass"], correctIndex: 0,
+    why: "The methods become available on instances as if defined there. Comparable and Enumerable in the standard library work exactly this way." }
+];
+
+const SWIFT_STEPS = [
+  {
+    type: "read", chapter: "1 \u00b7 First steps", lang: "swift",
+    title: "let and var",
+    teach: "let makes a constant and var makes a variable. Swift encourages let by default \u2014 the compiler will even suggest it when something never changes.",
+    example: "let name = \"Ada\"\nvar count = 0\ncount += 1",
+    q: "What happens if you write name = \"Bob\" after let name = \"Ada\"?",
+    choices: ["It fails to compile", "name changes", "It warns but works"], correctIndex: 0,
+    why: "let is a constant, so reassigning is an error. Like Rust, Swift makes the immutable case the default and the mutable one explicit."
+  },
+  {
+    type: "pick", chapter: "2 \u00b7 Optionals", lang: "swift",
+    title: "A value that might be missing",
+    teach: "String? means a String or nothing. Swift will not let you use it directly \u2014 you must unwrap it first, which is how it removes null crashes.",
+    example: "let maybe: String? = nil\nprint(maybe.count)",
+    q: "What does the last line do?",
+    choices: ["Prints 0", "Fails to compile", "Crashes at runtime"], correctIndex: 1,
+    why: "You cannot read a property off an optional without unwrapping it, so this is caught at compile time rather than crashing later."
+  },
+  {
+    type: "predict", chapter: "2 \u00b7 Optionals", lang: "swift",
+    title: "Unwrapping safely",
+    teach: "if let unwraps an optional and gives you a plain value inside the branch. If it was nil the branch simply does not run.",
+    example: "let maybe: String? = \"hi\"\nif let real = maybe {\n    print(real.count)\n}",
+    q: "What does this print?",
+    choices: ["2", "nothing", "nil"], correctIndex: 0,
+    why: "maybe holds \"hi\", so real is \"hi\" inside the branch and its count is 2. Had it been nil, nothing would print and nothing would crash."
+  },
+  {
+    type: "read", chapter: "3 \u00b7 Structs first", lang: "swift",
+    title: "Structs are copied",
+    teach: "Swift's structs are value types \u2014 assigning one makes a copy, so changing the copy leaves the original alone. Classes are references and behave the other way.",
+    example: "struct P { var x = 0 }\nvar a = P()\nvar b = a\nb.x = 5   // a.x is still 0",
+    q: "Why is a.x still 0?",
+    choices: ["b is a copy", "structs are read-only", "x was not saved"], correctIndex: 0,
+    why: "A struct is copied on assignment, so a and b are separate. Swift prefers structs for exactly this reason \u2014 accidental shared mutation is a whole class of bug that simply does not arise."
+  },
+{ type: "read", chapter: "4 \u00b7 Collections", lang: "swift",
+    title: "Arrays and dictionaries are typed",
+    teach: "Swift infers the element type and then holds you to it. [String] can only hold strings, which is checked at compile time.",
+    example: "var names = [\"Ada\"]\nnames.append(42)",
+    q: "What happens on the second line?",
+    choices: ["A compile error", "It converts", "It appends"], correctIndex: 0,
+    why: "names is [String], so an Int does not fit. Use [Any] if you genuinely need mixed types, and you rarely do." },
+  { type: "predict", chapter: "4 \u00b7 Collections", lang: "swift",
+    title: "guard exits early",
+    teach: "guard unwraps or checks and must exit the scope if it fails. It keeps the happy path unindented rather than nesting ifs.",
+    example: "guard let real = maybe else { return }\nprint(real)",
+    q: "What must the else block do?",
+    choices: ["Leave the current scope", "Assign a default", "Nothing"], correctIndex: 0,
+    why: "The compiler requires a return, break or throw. That guarantee is what lets the unwrapped value stay in scope afterwards." },
+{ type: "read", chapter: "5 \u00b7 Protocols", lang: "swift",
+    title: "Protocols describe capability",
+    teach: "A protocol lists what a type must provide. Swift leans on them heavily \u2014 protocol-oriented programming is the language's preferred alternative to deep inheritance.",
+    example: "protocol Drawable { func draw() }",
+    q: "What does conforming to Drawable require?",
+    choices: ["Providing a draw method", "Inheriting from a class", "Importing UIKit"], correctIndex: 0,
+    why: "Only the method. A struct, class or enum can conform, which is why protocols work where inheritance cannot." },
+  { type: "predict", chapter: "5 \u00b7 Protocols", lang: "swift",
+    title: "Enums carry values",
+    teach: "A Swift enum case can hold associated data, so it models a state and its details together. Optionals are built exactly this way.",
+    example: "enum Result { case ok(Int), failed(String) }",
+    q: "What can .failed carry?",
+    choices: ["A String describing what went wrong", "Nothing beyond the case name", "Only a number"], correctIndex: 0,
+    why: "The associated value travels with the case, so the error message cannot be separated from the failure it describes." },
+{ type: "read", chapter: "6 \u00b7 Closures", lang: "swift",
+    title: "Trailing closure syntax",
+    teach: "A closure passed as the last argument can be written after the brackets. It is why SwiftUI and most Swift APIs read the way they do.",
+    example: "items.map { $0 * 2 }",
+    q: "What is $0?",
+    choices: ["The first argument, unnamed", "A string format", "The result"], correctIndex: 0,
+    why: "Swift names the arguments for you when you do not. For a one-line closure that is shorter and just as clear." },
+{ type: "read", chapter: "7 \u00b7 Value semantics", lang: "swift",
+    title: "Structs copy, classes reference",
+    teach: "A struct is copied when assigned; a class is shared. Swift's standard library uses structs heavily, so passing an array cannot let someone else change yours.",
+    example: "var a = [1,2]; var b = a; b.append(3)",
+    q: "What is a afterwards?",
+    choices: ["[1, 2]", "[1, 2, 3]", "empty"], correctIndex: 0,
+    why: "Array is a struct, so b is a copy. In a language where arrays are references, a would have changed too \u2014 a frequent source of bugs Swift removes." }
+];
+
+const KOTLIN_STEPS = [
+  {
+    type: "read", chapter: "1 \u00b7 First steps", lang: "kotlin",
+    title: "val and var",
+    teach: "val is a read-only reference and var can be reassigned. Types are usually inferred, and the annotation goes after the name rather than before it.",
+    example: "val name = \"Ada\"\nvar count: Int = 0\ncount++",
+    q: "Where does the type go in Kotlin?",
+    choices: ["After the name, with a colon", "Before the name", "It is never written"], correctIndex: 0,
+    why: "Kotlin writes count: Int rather than int count. It reads oddly coming from Java and matches Swift, TypeScript and Rust."
+  },
+  {
+    type: "pick", chapter: "2 \u00b7 Null safety", lang: "kotlin",
+    title: "Nullable types are marked",
+    teach: "String cannot hold null; String? can. The compiler tracks the difference and refuses to let you use a nullable value without checking.",
+    example: "var a: String = \"hi\"\nvar b: String? = null",
+    q: "What happens if you write a = null?",
+    choices: ["It fails to compile", "a becomes null", "It throws at runtime"], correctIndex: 0,
+    why: "a is a non-nullable String, so assigning null is a compile error. Kotlin was designed around removing the null pointer exception, and this is how."
+  },
+  {
+    type: "predict", chapter: "2 \u00b7 Null safety", lang: "kotlin",
+    title: "The safe call operator",
+    teach: "?. calls a method only if the value is not null, and gives null otherwise. It replaces a whole if-statement with one character.",
+    example: "val b: String? = null\nprintln(b?.length)",
+    q: "What does this print?",
+    choices: ["null", "0", "It crashes"], correctIndex: 0,
+    why: "b is null, so ?. skips the call and the whole expression is null. Without the ?. it would not compile at all."
+  },
+  {
+    type: "read", chapter: "3 \u00b7 Less ceremony", lang: "kotlin",
+    title: "Data classes",
+    teach: "A data class generates equals, hashCode, toString and copy for you. One line replaces the fifty a Java equivalent would need.",
+    example: "data class User(val name: String, val age: Int)",
+    q: "What does data give you that class alone does not?",
+    choices: ["equals, toString and copy", "A database table", "Faster code"], correctIndex: 0,
+    why: "The compiler writes the boilerplate methods. It matters because hand-written equals methods are a classic source of subtle bugs."
+  },
+{ type: "read", chapter: "4 \u00b7 Functions", lang: "kotlin",
+    title: "Expression bodies",
+    teach: "A function whose body is a single expression can be written with = and no braces or return.",
+    example: "fun double(n: Int) = n * 2",
+    q: "What does this function return?",
+    choices: ["n * 2", "Unit", "nothing"], correctIndex: 0,
+    why: "The expression after = is the return value and its type is inferred. It removes a line of ceremony from every small function." },
+  { type: "predict", chapter: "4 \u00b7 Functions", lang: "kotlin",
+    title: "Named and default arguments",
+    teach: "Parameters can have defaults, and callers can name arguments in any order \u2014 which removes the need for a pile of overloads.",
+    example: "fun greet(name: String, greeting: String = \"Hello\") = \"$greeting, $name\"\ngreet(\"Ada\")",
+    q: "What does greet(\"Ada\") return?",
+    choices: ["Hello, Ada", "an error", "Ada"], correctIndex: 0,
+    why: "The default fills in the second parameter. Java needs several overloaded methods to achieve the same thing." },
+{ type: "read", chapter: "5 \u00b7 Collections", lang: "kotlin",
+    title: "Read-only by default",
+    teach: "listOf gives a read-only list; mutableListOf gives one you can add to. The default is immutable, matching val and var.",
+    example: "val a = listOf(1, 2)\nval b = mutableListOf(1, 2)\nb.add(3)",
+    q: "What happens if you call a.add(3)?",
+    choices: ["It does not compile \u2014 List has no add", "The list grows", "A runtime error"], correctIndex: 0,
+    why: "The read-only interface has no add method at all, so it is caught at compile time rather than thrown at runtime." },
+  { type: "predict", chapter: "5 \u00b7 Collections", lang: "kotlin",
+    title: "Extension functions",
+    teach: "You can add a method to a type you do not own, including types from the standard library, without subclassing it.",
+    example: "fun String.shout() = uppercase() + \"!\"\n\"hi\".shout()",
+    q: "What does this add to String?",
+    choices: ["A shout method, callable on any String", "A subclass", "Nothing at runtime"], correctIndex: 0,
+    why: "It compiles to a static function taking the string as its first argument, so nothing about String actually changes \u2014 the syntax just reads better." },
+{ type: "read", chapter: "6 \u00b7 Coroutines", lang: "kotlin",
+    title: "Suspending instead of blocking",
+    teach: "A suspend function can pause without holding a thread. Thousands of coroutines can run on a handful of threads, which is why Android networking uses them.",
+    example: "suspend fun load(): String = client.get(url)",
+    q: "What does suspend allow?",
+    choices: ["Pausing without occupying a thread", "Running in parallel always", "Faster code"], correctIndex: 0,
+    why: "The thread is freed while waiting and resumes the function later. It is the same idea as async/await, built into the language rather than the library." },
+{ type: "read", chapter: "7 \u00b7 Data classes", lang: "kotlin",
+    title: "Generated equality and copying",
+    teach: "A data class gets equals, hashCode, toString and copy from its constructor properties. It is the same idea as a Scala case class or a Java record.",
+    example: "data class Point(val x: Int, val y: Int)",
+    q: "What does copy() give you?",
+    choices: ["A new instance with some fields changed", "A reference to the same object", "A deep clone of everything"], correctIndex: 0,
+    why: "It copies the rest and takes overrides for what you name. With immutable properties that is how you change anything at all." }
+];
+
+const PHP_STEPS = [
+  {
+    type: "read", chapter: "1 \u00b7 First steps", lang: "php",
+    title: "PHP starts and stops",
+    teach: "A PHP file is HTML until you open a <?php tag. Everything inside is code; everything outside is sent to the browser as-is. That mixing is why PHP took over the early web.",
+    example: "<p>Hello</p>\n<?php\n  echo \"from PHP\";\n?>",
+    q: "What happens to text outside the PHP tags?",
+    choices: ["Sent to the browser unchanged", "Ignored", "Treated as a comment"], correctIndex: 0,
+    why: "It goes straight out as HTML. A PHP file is a template with holes in it, which is a genuinely different model from a program with a main function."
+  },
+  {
+    type: "pick", chapter: "1 \u00b7 First steps", lang: "php",
+    title: "Variables start with $",
+    teach: "Every variable begins with a dollar sign, and PHP works out the type from the value. The dollar is required every time it is used, not just when declared.",
+    example: "$count = 3;\n$name = \"Ada\";\necho $name;",
+    q: "Why is the $ needed on the echo line too?",
+    choices: ["It is part of the variable's name", "It prints the value", "It is optional there"], correctIndex: 0,
+    why: "The $ is part of how PHP recognises a variable at all, so it appears every single time. Leaving it off makes PHP look for a constant instead."
+  },
+  {
+    type: "predict", chapter: "2 \u00b7 Comparing carefully", lang: "php",
+    title: "Two kinds of equals",
+    teach: "== converts types before comparing and === does not. \"5\" == 5 is true; \"5\" === 5 is false. Modern PHP code uses === almost everywhere.",
+    example: "var_dump(\"5\" == 5);\nvar_dump(\"5\" === 5);",
+    q: "What does the second line output?",
+    choices: ["false", "true", "an error"], correctIndex: 0,
+    why: "=== compares type as well as value, and a string is not an integer. The loose == is where a lot of old PHP bugs come from."
+  },
+  {
+    type: "read", chapter: "2 \u00b7 Comparing carefully", lang: "php",
+    title: "Arrays are also maps",
+    teach: "A PHP array is a single structure that works as both a list and a key-value map. There is no separate dictionary type \u2014 the same array does both jobs.",
+    example: "$list = [1, 2, 3];\n$map = [\"name\" => \"Ada\", \"age\" => 36];\necho $map[\"name\"];",
+    q: "What is the difference between the two arrays?",
+    choices: ["Only the keys used", "Different types", "One is faster"], correctIndex: 0,
+    why: "Both are arrays; the first happens to use numeric keys. It is why PHP has one array function set instead of two, and why array order matters more than you might expect."
+  },
+{ type: "read", chapter: "3 \u00b7 Functions and arrays", lang: "php",
+    title: "Array functions take the array first",
+    teach: "PHP's built-in array functions are inconsistent about argument order, which is a known wart. array_map takes the callback first; array_filter takes the array first.",
+    example: "array_map(fn($n) => $n * 2, [1,2,3]);\narray_filter([1,2,3], fn($n) => $n > 1);",
+    q: "Which comes first in array_filter?",
+    choices: ["The array", "The callback", "Either"], correctIndex: 0,
+    why: "array_filter takes the array first and array_map the callback first. It is genuinely inconsistent, and knowing that saves guessing." },
+  { type: "predict", chapter: "3 \u00b7 Functions and arrays", lang: "php",
+    title: "Type declarations",
+    teach: "Modern PHP lets you declare parameter and return types, and with strict_types on it enforces them rather than coercing.",
+    example: "declare(strict_types=1);\nfunction double(int $n): int { return $n * 2; }\ndouble(\"3\");",
+    q: "What happens with strict_types on?",
+    choices: ["A TypeError", "It converts to 3", "It returns 6"], correctIndex: 0,
+    why: "Strict mode refuses the string rather than coercing it. Without that line PHP would quietly convert, which is where old bugs come from." },
+{ type: "read", chapter: "4 \u00b7 Working with the web", lang: "php",
+    title: "Superglobals",
+    teach: "$_GET, $_POST and $_SESSION are available everywhere and hold data from the request. They are also the main way untrusted input enters a program.",
+    example: "$name = $_POST['name'] ?? '';",
+    q: "Why should $_POST data never go straight into a query?",
+    choices: ["It comes from the user and can be crafted to attack you", "It is slower than the alternative", "It is always empty"], correctIndex: 0,
+    why: "Concatenating user input into SQL is how injection happens. Prepared statements exist precisely because this data cannot be trusted." },
+  { type: "predict", chapter: "4 \u00b7 Working with the web", lang: "php",
+    title: "Prepared statements",
+    teach: "A prepared statement sends the query and the values separately, so the data can never be read as SQL commands.",
+    example: "$stmt = $pdo->prepare('SELECT * FROM u WHERE id = ?');\n$stmt->execute([$id]);",
+    q: "Why is that safe when concatenation is not?",
+    choices: ["The value is never parsed as SQL", "It escapes quotes", "It is encrypted"], correctIndex: 0,
+    why: "The query structure is fixed before the value arrives, so no input can change what the statement does. Escaping is a weaker fix that people get wrong." },
+{ type: "read", chapter: "5 \u00b7 Classes", lang: "php",
+    title: "Namespaces and autoloading",
+    teach: "A namespace stops class names colliding between libraries, and Composer's autoloader finds the file for a class the first time it is used, so you rarely write require.",
+    example: "namespace App\\Models;\nuse App\\Services\\Mailer;",
+    q: "What problem do namespaces solve?",
+    choices: ["Two libraries both defining a User class", "Slow loading", "Missing files"], correctIndex: 0,
+    why: "Before namespaces, PHP libraries prefixed every class name by hand. The namespace does the same job structurally." },
+{ type: "read", chapter: "6 \u00b7 Errors", lang: "php",
+    title: "Exceptions replaced error codes",
+    teach: "Modern PHP throws exceptions rather than returning false and setting a global. try/catch handles them, and finally runs whether or not one was thrown.",
+    example: "try { $db->query($sql); }\ncatch (PDOException $e) { log($e->getMessage()); }",
+    q: "Why is an exception better than returning false?",
+    choices: ["It cannot be ignored by accident", "It runs faster that way", "It uses less memory"], correctIndex: 0,
+    why: "An unchecked return value silently continues with bad data. An uncaught exception stops the program, which is louder and safer." }
+];
+
+const LUA_STEPS = [
+  {
+    type: "read", chapter: "1 \u00b7 First steps", lang: "lua",
+    title: "Small on purpose",
+    teach: "Lua is deliberately tiny \u2014 it is designed to be embedded inside other programs, which is why it turns up in games and in Redis and nginx configuration.",
+    example: "local name = \"Ada\"\nprint(name)",
+    q: "What does local do?",
+    choices: ["Keeps the variable to this scope", "Makes it constant", "Loads a module"], correctIndex: 0,
+    why: "Without local a variable is global, which in a shared embedded environment is a real problem. Writing local is the habit, not the exception."
+  },
+  {
+    type: "pick", chapter: "1 \u00b7 First steps", lang: "lua",
+    title: "Indexing starts at one",
+    teach: "Lua tables are indexed from 1, not 0. It is almost alone in this among modern languages, and it is the single most common source of off-by-one errors when moving to Lua.",
+    example: "local t = {\"a\", \"b\", \"c\"}\nprint(t[1])",
+    q: "What does t[1] give?",
+    choices: ["a", "b", "nil"], correctIndex: 0,
+    why: "The first element is at index 1. Reaching for t[0] gives nil rather than an error, which makes the mistake quiet."
+  },
+  {
+    type: "predict", chapter: "2 \u00b7 One data structure", lang: "lua",
+    title: "Tables are everything",
+    teach: "Lua has one compound type: the table. Lists, dictionaries, objects and modules are all tables used differently.",
+    example: "local person = { name = \"Ada\", age = 36 }\nprint(person.name)",
+    q: "What type is person?",
+    choices: ["A table", "An object", "A record"], correctIndex: 0,
+    why: "It is a table with string keys. Having exactly one structure is what keeps the language small enough to embed anywhere."
+  },
+  {
+    type: "read", chapter: "2 \u00b7 One data structure", lang: "lua",
+    title: "nil removes things",
+    teach: "Setting a table key to nil deletes it. There is no separate remove \u2014 assigning nil IS the removal, and reading a missing key gives nil rather than erroring.",
+    example: "local t = { a = 1, b = 2 }\nt.b = nil   -- b is gone",
+    q: "What does reading t.b give afterwards?",
+    choices: ["nil", "an error", "0"], correctIndex: 0,
+    why: "Missing and nil are the same thing in Lua, so reading it is safe and returns nil. Convenient, and it means typos fail silently rather than loudly."
+  },
+{ type: "read", chapter: "3 \u00b7 Functions", lang: "lua",
+    title: "Functions are values",
+    teach: "A function can be stored in a variable, passed as an argument or put in a table. That is what makes Lua so easy to embed \u2014 the host program can hand you callbacks freely.",
+    example: "local f = function(x) return x * 2 end\nprint(f(4))",
+    q: "What can you do with a Lua function?",
+    choices: ["Store it in a variable or table like any value", "Only call it by name", "Only define it at the top level"], correctIndex: 0,
+    why: "Functions are ordinary values. Putting them in a table is how Lua does both modules and objects." },
+  { type: "predict", chapter: "3 \u00b7 Functions", lang: "lua",
+    title: "Multiple return values",
+    teach: "A Lua function can return several values at once, and the caller takes as many as it names. Extra values are simply discarded.",
+    example: "local function pair() return 1, 2 end\nlocal a = pair()",
+    q: "What is a?",
+    choices: ["1", "A table of both", "2"], correctIndex: 0,
+    why: "Only the first is taken; the second is dropped. Writing local a, b = pair() captures both." },
+{ type: "read", chapter: "4 \u00b7 Tables", lang: "lua",
+    title: "One structure for everything",
+    teach: "A table is Lua's only data structure \u2014 array, dictionary, object and module are all tables. Integer keys make it array-like; string keys make it a record.",
+    example: "local t = { 1, 2, x = 'a' }\nprint(#t, t.x)",
+    q: "What does # give on a table with both kinds of key?",
+    choices: ["The count of consecutive integer keys", "Every key", "The string keys"], correctIndex: 0,
+    why: "It counts the array part only. Mixing both in one table works and makes # ambiguous, which is a common source of surprise." }
+];
+
+const PERL_STEPS = [
+  {
+    type: "read", chapter: "1 \u00b7 First steps", lang: "perl",
+    title: "Sigils say what kind of thing it is",
+    teach: "$ marks a single value, @ marks a list and % marks a hash. The symbol is part of the name and tells you the shape at a glance.",
+    example: "my $name = \"Ada\";\nmy @list = (1, 2, 3);\nmy %ages = (Ada => 36);",
+    q: "What does @ mean in front of a name?",
+    choices: ["It is a list", "It is an email", "It is a reference"], correctIndex: 0,
+    why: "The sigil is the type marker. Reading Perl gets much easier once you stop skipping over them."
+  },
+  {
+    type: "pick", chapter: "1 \u00b7 First steps", lang: "perl",
+    title: "Always use strict",
+    teach: "use strict and use warnings turn on checks that catch typos and undeclared variables. Without them a misspelled variable name silently becomes a new one.",
+    example: "use strict;\nuse warnings;\nmy $count = 0;",
+    q: "What does use strict prevent?",
+    choices: ["Accidentally creating variables by typo", "Slow code", "Using modules"], correctIndex: 0,
+    why: "It forces declaration with my, so a typo becomes an error rather than a silently-empty new variable. It is the first line of essentially every serious Perl file."
+  },
+  {
+    type: "predict", chapter: "2 \u00b7 Text is the point", lang: "perl",
+    title: "Regular expressions are built in",
+    teach: "Perl has pattern matching in the language rather than in a library. =~ applies a pattern, and this is what Perl was built for.",
+    example: "my $s = \"order 42\";\nif ($s =~ /(\\d+)/) {\n    print $1;\n}",
+    q: "What does $1 hold?",
+    choices: ["42", "The whole string", "1"], correctIndex: 0,
+    why: "The brackets captured the digits, and $1 is the first capture. Having this in the language rather than a library is why Perl dominated text processing for years."
+  },
+{ type: "read", chapter: "3 \u00b7 Hashes", lang: "perl",
+    title: "Key-value storage",
+    teach: "A hash maps keys to values and is written with %. Accessing one element gives a scalar, so the sigil changes to $ at that point.",
+    example: "my %age = (Ada => 36);\nprint $age{Ada};",
+    q: "Why is it $age{Ada} rather than %age{Ada}?",
+    choices: ["One element is a scalar, so it takes the scalar sigil", "It is a typo", "% is only for declaration"], correctIndex: 0,
+    why: "The sigil describes what you are getting, not what it came from. Raku changed this precisely because it confuses people." },
+  { type: "predict", chapter: "3 \u00b7 Hashes", lang: "perl",
+    title: "Context changes the answer",
+    teach: "Perl evaluates differently in list and scalar context. An array in scalar context gives its length rather than its contents.",
+    example: "my @a = (1, 2, 3);\nmy $n = @a;",
+    q: "What is $n?",
+    choices: ["3", "1", "(1,2,3)"], correctIndex: 0,
+    why: "Assigning to a scalar imposes scalar context, and an array there yields its count. It is powerful and the single most confusing thing about Perl." }
+];
+
+const R_STEPS = [
+  {
+    type: "read", chapter: "1 \u00b7 Built for data", lang: "r",
+    title: "The vector is the basic unit",
+    teach: "In R a single number is already a vector of length one. Operations apply to whole vectors at once, so you rarely write a loop to work through data.",
+    example: "x <- c(1, 2, 3)\nx * 2   # 2 4 6",
+    q: "What does x * 2 give?",
+    choices: ["2 4 6", "an error", "6"], correctIndex: 0,
+    why: "The multiplication applies to every element. Thinking in whole vectors rather than one item at a time is the shift that makes R feel natural."
+  },
+  {
+    type: "pick", chapter: "1 \u00b7 Built for data", lang: "r",
+    title: "Assignment uses an arrow",
+    teach: "R traditionally assigns with <- rather than =. Both work in most places, but <- is the convention and reads as pointing the value into the name.",
+    example: "count <- 3\nname <- \"Ada\"",
+    q: "Which is the conventional assignment in R?",
+    choices: ["<-", "==", ":="], correctIndex: 0,
+    why: "<- is what you will see in nearly all R code and documentation. Using = works but marks the code as written by someone from another language."
+  },
+  {
+    type: "predict", chapter: "2 \u00b7 Missing data is first class", lang: "r",
+    title: "NA spreads",
+    teach: "R has NA for missing data, and most operations involving it give NA rather than an error. That is deliberate \u2014 real datasets have holes.",
+    example: "x <- c(1, NA, 3)\nmean(x)",
+    q: "What does mean(x) give?",
+    choices: ["NA", "2", "an error"], correctIndex: 0,
+    why: "The missing value propagates, so the mean is NA. You have to say mean(x, na.rm = TRUE) to skip it \u2014 R makes you decide rather than guessing for you."
+  },
+{ type: "read", chapter: "3 \u00b7 Data frames", lang: "r",
+    title: "The data frame is the workhorse",
+    teach: "A data frame is a table: columns of equal length, each with its own type. Nearly all R analysis is done on one.",
+    example: "df <- data.frame(name = c(\"Ada\"), age = c(36))\ndf$age",
+    q: "What does df$age give?",
+    choices: ["The age column", "The first row", "A single value"], correctIndex: 0,
+    why: "$ selects a column by name, returning it as a vector. It is the most common operation in R." },
+{ type: "read", chapter: "4 \u00b7 Summarising", lang: "r",
+    title: "apply instead of loops",
+    teach: "sapply and lapply run a function over every element and collect the results. R code that loops explicitly is usually a sign the vectorised version was missed.",
+    example: "sapply(1:5, function(x) x^2)",
+    q: "What does that return?",
+    choices: ["A vector of squares", "A single number", "A list of lists"], correctIndex: 0,
+    why: "sapply simplifies the result to a vector where it can; lapply always gives a list. Choosing between them is about what shape you want back." },
+  { type: "predict", chapter: "4 \u00b7 Summarising", lang: "r",
+    title: "Factors are not strings",
+    teach: "A factor stores categories as integers with labels attached. It looks like text and behaves like a number, which is a frequent source of surprise.",
+    example: "f <- factor(c('low','high'))\nas.numeric(f)",
+    q: "What does as.numeric give?",
+    choices: ["The internal codes, not the labels", "It raises an error instead", "The original text"], correctIndex: 0,
+    why: "You get 2 and 1, the internal levels. Converting via as.character first is the fix, and forgetting it silently corrupts data." },
+{ type: "read", chapter: "5 \u00b7 Data frames", lang: "r",
+    title: "The table at the centre of R",
+    teach: "A data frame is a table where each column has its own type. Almost every R function expects one, which is why reshaping data into a tidy frame is most of the work.",
+    example: "df <- data.frame(name = c('a','b'), n = c(1, 2))",
+    q: "What can differ between columns of a data frame?",
+    choices: ["Their type", "Their length", "Their order"], correctIndex: 0,
+    why: "Columns must be the same length but can hold different types \u2014 that is exactly what a matrix cannot do, and why data frames exist." }
+];
+
+const DART_STEPS = [
+  {
+    type: "read", chapter: "1 \u00b7 First steps", lang: "dart",
+    title: "main, and everything is an object",
+    teach: "Dart starts at main and every value is an object \u2014 even numbers and null. It is the language behind Flutter, which is why most Dart code you meet builds interfaces.",
+    example: "void main() {\n  print('Hello');\n}",
+    q: "What is the entry point of a Dart program?",
+    choices: ["main", "start", "run"], correctIndex: 0,
+    why: "Like C, Java and Go, Dart looks for main. The pattern repeats across compiled languages often enough to be worth recognising."
+  },
+  {
+    type: "pick", chapter: "2 \u00b7 Null safety", lang: "dart",
+    title: "Nullable types are marked",
+    teach: "String cannot be null; String? can. Dart added this to an existing language, so it works much like Kotlin's and Swift's.",
+    example: "String a = 'hi';\nString? b = null;",
+    q: "What happens if you write a = null?",
+    choices: ["It fails to compile", "a becomes null", "It warns only"], correctIndex: 0,
+    why: "a is non-nullable, so assigning null is an error. That is the fifth language in this app with the same idea \u2014 it is worth recognising rather than relearning."
+  },
+  {
+    type: "predict", chapter: "2 \u00b7 Null safety", lang: "dart",
+    title: "Late and required",
+    teach: "late says a value will be set before it is used, letting you skip an initial value without making it nullable. If you lie, it throws at the moment of use.",
+    example: "late String name;\nprint(name);",
+    q: "What does this do?",
+    choices: ["Throws at runtime", "Prints null", "Fails to compile"], correctIndex: 0,
+    why: "late defers the check to first use rather than removing it. It compiles, and then throws \u2014 which is why late is a promise rather than a fix."
+  },
+{ type: "read", chapter: "3 \u00b7 Async", lang: "dart",
+    title: "Futures and await",
+    teach: "A Future is a value that will arrive later. await pauses the async function until it does, exactly like JavaScript's promises.",
+    example: "Future<String> load() async {\n  return await fetchData();\n}",
+    q: "What is a Future?",
+    choices: ["A value that arrives later", "A background thread", "A timer"], correctIndex: 0,
+    why: "It represents work in progress. Dart is single-threaded like JavaScript, so awaiting frees the thread rather than blocking it." },
+{ type: "read", chapter: "4 \u00b7 Widgets", lang: "dart",
+    title: "Everything in Flutter is a widget",
+    teach: "Layout, padding, text and even the app itself are widgets. You compose them by nesting rather than by setting properties on a canvas.",
+    example: "Center(child: Padding(padding: EdgeInsets.all(8), child: Text('Hi')))",
+    q: "How do you add padding around text?",
+    choices: ["Wrap it in a Padding widget", "Set a padding property on Text", "Use CSS"], correctIndex: 0,
+    why: "Composition rather than configuration. It makes the tree deep, and it means each widget does exactly one thing." },
+  { type: "predict", chapter: "4 \u00b7 Widgets", lang: "dart",
+    title: "Stateless and stateful",
+    teach: "A StatelessWidget is rebuilt from its inputs alone. A StatefulWidget keeps state between rebuilds, and calling setState is what triggers one.",
+    example: "setState(() { count++; });",
+    q: "What does setState do?",
+    choices: ["Marks the widget for rebuild", "Redraws the whole app", "Saves to disk"], correctIndex: 0,
+    why: "It tells Flutter this widget's state changed so it should rebuild. Changing the variable without setState updates nothing on screen." }
+];
+
+const SCALA_STEPS = [
+  {
+    type: "read", chapter: "1 \u00b7 First steps", lang: "scala",
+    title: "val and var, on the JVM",
+    teach: "Scala runs on the JVM alongside Java, but defaults to immutability: val cannot be reassigned, var can. Types come after the name and are usually inferred.",
+    example: "val name = \"Ada\"\nvar count = 0\ncount += 1",
+    q: "Which of these can be reassigned?",
+    choices: ["count", "name", "both"], correctIndex: 0,
+    why: "val is fixed and var is not. The same distinction appears in Kotlin and Swift \u2014 immutable by default is the modern consensus."
+  },
+  {
+    type: "pick", chapter: "2 \u00b7 Expressions, not statements", lang: "scala",
+    title: "if returns a value",
+    teach: "In Scala, if is an expression \u2014 it evaluates to something. That means you can assign its result directly rather than assigning inside each branch.",
+    example: "val max = if (a > b) a else b",
+    q: "Why is there no assignment inside the branches?",
+    choices: ["The if itself produces the value", "It is a shorthand", "Scala forbids it"], correctIndex: 0,
+    why: "The whole if evaluates to a or b, and that is what gets assigned. It is the same idea as a ternary, applied to the ordinary if."
+  },
+  {
+    type: "predict", chapter: "2 \u00b7 Expressions, not statements", lang: "scala",
+    title: "Pattern matching",
+    teach: "match compares a value against patterns and returns a result. It is closer to a switch that can destructure than to a chain of ifs.",
+    example: "val d = x match {\n  case 0 => \"none\"\n  case 1 => \"one\"\n  case _ => \"many\"\n}",
+    q: "What does case _ do?",
+    choices: ["Matches anything else", "Matches nothing", "Marks an error"], correctIndex: 0,
+    why: "The underscore is the catch-all. Without it a value matching nothing throws at runtime, so it is the branch you leave out at your peril."
+  },
+{ type: "read", chapter: "3 \u00b7 Collections", lang: "scala",
+    title: "Immutable by default",
+    teach: "Scala's default List is immutable \u2014 map and filter return new collections. Mutable versions exist but must be asked for by name.",
+    example: "val a = List(1,2,3)\nval b = a.map(_ * 2)",
+    q: "What is a afterwards?",
+    choices: ["List(1,2,3)", "List(2,4,6)", "empty"], correctIndex: 0,
+    why: "map built a new list. The underscore is shorthand for the parameter, which keeps short functions very short." },
+{ type: "read", chapter: "4 \u00b7 Case classes", lang: "scala",
+    title: "Data with equality built in",
+    teach: "A case class gets equals, hashCode, toString, a copy method and pattern-matching support automatically. It is the standard way to model data.",
+    example: "case class Point(x: Int, y: Int)",
+    q: "Are Point(1,2) and Point(1,2) equal?",
+    choices: ["Yes \u2014 case classes compare by value", "No, different objects", "Only with =="], correctIndex: 0,
+    why: "Value equality is generated for you. An ordinary class would compare by reference and report them as different." },
+  { type: "predict", chapter: "4 \u00b7 Case classes", lang: "scala",
+    title: "Option instead of null",
+    teach: "Option is Some(value) or None, and map or getOrElse handle it without a null check. Scala has null for Java compatibility and idiomatic code avoids it.",
+    example: "val name: Option[String] = None\nname.getOrElse(\"unknown\")",
+    q: "What does that return?",
+    choices: ["\"unknown\"", "null", "an error"], correctIndex: 0,
+    why: "getOrElse supplies the fallback when there is nothing there. The absence is handled at the type level rather than by remembering to check." },
+{ type: "read", chapter: "5 \u00b7 Pattern matching", lang: "scala",
+    title: "match on structure",
+    teach: "Scala's match destructures a value and binds its parts, which is why it pairs so well with case classes. It replaces long chains of type checks.",
+    example: "p match {\n  case Point(0, y) => s\"on the axis at $y\"\n  case Point(x, y) => s\"$x, $y\"\n}",
+    q: "What does Point(0, y) match?",
+    choices: ["Any Point whose x is 0, binding y", "Only Point(0, 0)", "Any Point"], correctIndex: 0,
+    why: "Literals must match and names bind. Mixing the two in one pattern is what makes it far shorter than an if chain." }
+];
+
+const HASKELL_STEPS = [
+  {
+    type: "read", chapter: "1 \u00b7 Functions are the whole language", lang: "haskell",
+    title: "No statements, only expressions",
+    teach: "A Haskell program is a set of definitions, not a sequence of steps. There is no assignment that changes anything \u2014 a name means one thing for good.",
+    example: "double :: Int -> Int\ndouble n = n * 2",
+    q: "What does the first line say?",
+    choices: ["double takes an Int and gives an Int", "double is a variable", "double is imported"], correctIndex: 0,
+    why: "It is the type signature: input on the left of the arrow, result on the right. Writing it first is the normal habit, and it often catches the mistake before the code does."
+  },
+  {
+    type: "pick", chapter: "1 \u00b7 Functions are the whole language", lang: "haskell",
+    title: "Nothing changes",
+    teach: "Haskell has no mutable variables. A function given the same arguments always returns the same result, which is what makes the code so easy to reason about and so unlike most languages.",
+    example: "let x = 5\n-- x is 5, permanently",
+    q: "What can you do to change x afterwards?",
+    choices: ["Nothing", "Reassign it", "Use a mutator"], correctIndex: 0,
+    why: "There is no way to change it. That constraint is the point \u2014 it rules out a whole category of bug in exchange for a different way of thinking."
+  },
+  {
+    type: "predict", chapter: "2 \u00b7 Laziness", lang: "haskell",
+    title: "Infinite lists are fine",
+    teach: "Haskell only evaluates what it needs. That means you can define an infinite list and take five items from it without anything hanging.",
+    example: "take 5 [1..]",
+    q: "What does this give?",
+    choices: ["[1,2,3,4,5]", "It hangs", "an error"], correctIndex: 0,
+    why: "[1..] is infinite, but take only demands five, so only five are ever computed. Laziness makes a definition that would loop forever elsewhere perfectly ordinary here."
+  },
+{ type: "read", chapter: "3 \u00b7 Types tell the story", lang: "haskell",
+    title: "Reading a signature",
+    teach: "map :: (a -> b) -> [a] -> [b] says: give me a function from a to b and a list of a, and I return a list of b. The lowercase letters are any type at all.",
+    example: "map :: (a -> b) -> [a] -> [b]",
+    q: "What do the lowercase a and b mean?",
+    choices: ["Any type", "Specific types", "Arguments"], correctIndex: 0,
+    why: "They are type variables, so map works on any list. A signature this precise often tells you what a function does without reading its code." },
+  { type: "predict", chapter: "3 \u00b7 Types tell the story", lang: "haskell",
+    title: "Maybe instead of null",
+    teach: "A lookup that might fail returns Maybe: Just a value, or Nothing. There is no null, so the possibility is visible in the type.",
+    example: "lookup 2 [(1,\"a\")]   -- Nothing",
+    q: "What does this return?",
+    choices: ["Nothing", "an error", "\"\""], correctIndex: 0,
+    why: "The key is absent so it is Nothing. Same idea as Rust's Option and Swift's optionals \u2014 Haskell got there first." },
+{ type: "read", chapter: "4 \u00b7 Functions on functions", lang: "haskell",
+    title: "Partial application",
+    teach: "Every Haskell function takes one argument and returns a function. Supplying fewer arguments than it needs gives you a new function waiting for the rest.",
+    example: "add x y = x + y\nadd5 = add 5",
+    q: "What is add5?",
+    choices: ["A function waiting for one more argument", "It raises an error instead", "The number 5"], correctIndex: 0,
+    why: "add 5 returns a function expecting y. It is why Haskell composes so freely \u2014 every function is already partially applicable." },
+  { type: "predict", chapter: "4 \u00b7 Functions on functions", lang: "haskell",
+    title: "Purity and IO",
+    teach: "A pure function cannot read a file or print. Anything touching the outside world has IO in its type, so the compiler can see exactly which parts of your program have effects.",
+    example: "main :: IO ()\nlength :: [a] -> Int",
+    q: "What does IO in a type signature tell you?",
+    choices: ["This function interacts with the outside world", "It is slower than the alternative", "It may fail"], correctIndex: 0,
+    why: "The type makes side effects visible. In most languages any function might print or write a file, and nothing in its signature says so." },
+{ type: "read", chapter: "5 \u00b7 Laziness", lang: "haskell",
+    title: "Nothing is computed until needed",
+    teach: "Haskell evaluates only what a result depends on, so an infinite list is a perfectly ordinary value as long as you take a finite part of it.",
+    example: "take 5 [1..]",
+    q: "Why does that terminate?",
+    choices: ["Only five elements are ever demanded", "The list is finite", "take limits the memory"], correctIndex: 0,
+    why: "[1..] is never built \u2014 take asks for five and the rest is never produced. It is the same lazy idea as Clojure sequences, applied to the whole language." }
+];
+
+const ELIXIR_STEPS = [
+  {
+    type: "read", chapter: "1 \u00b7 First steps", lang: "elixir",
+    title: "Pattern matching, not assignment",
+    teach: "= in Elixir is a match, not an assignment. It succeeds by binding names so both sides agree, which is why it can pull values out of a structure.",
+    example: "{a, b} = {1, 2}\n# a is 1, b is 2",
+    q: "What is = actually doing here?",
+    choices: ["Matching both sides", "Copying the tuple", "Creating a list"], correctIndex: 0,
+    why: "It matches the shape and binds the names inside. Reading = as assignment gets you a long way and then confuses you completely."
+  },
+  {
+    type: "pick", chapter: "2 \u00b7 Piping", lang: "elixir",
+    title: "The pipe operator",
+    teach: "|> passes the result on the left as the first argument on the right. It turns nested calls inside-out into a readable sequence.",
+    example: "[1, 2, 3]\n|> Enum.map(&(&1 * 2))\n|> Enum.sum()",
+    q: "What does |> do with the value on its left?",
+    choices: ["Passes it as the first argument", "Prints it", "Stores it"], correctIndex: 0,
+    why: "It becomes the first argument of the next call. Reading top to bottom instead of inside out is why Elixir code looks the way it does."
+  },
+  {
+    type: "predict", chapter: "3 \u00b7 Let it crash", lang: "elixir",
+    title: "Processes are cheap and isolated",
+    teach: "Elixir runs work in tiny isolated processes. One crashing does not take the others down \u2014 a supervisor restarts it, which is why the philosophy is 'let it crash' rather than defend against everything.",
+    example: "spawn(fn -> raise \"oops\" end)\n# the caller keeps running",
+    q: "What happens to the calling process?",
+    choices: ["It carries on", "It crashes too", "It waits"], correctIndex: 0,
+    why: "Processes share nothing, so a failure is contained. Building on that is what makes Elixir systems stay up rather than being carefully prevented from falling over."
+  },
+{ type: "read", chapter: "4 \u00b7 Immutable data", lang: "elixir",
+    title: "Nothing is modified in place",
+    teach: "Elixir data cannot be changed. Functions return new versions, which is what makes thousands of concurrent processes safe.",
+    example: "list = [1, 2]\nnew = [0 | list]   # [0, 1, 2]",
+    q: "What is list afterwards?",
+    choices: ["[1, 2]", "[0, 1, 2]", "empty"], correctIndex: 0,
+    why: "The original is untouched. With no shared mutable state, concurrency needs no locks at all." },
+{ type: "read", chapter: "5 \u00b7 Pattern matching functions", lang: "elixir",
+    title: "Multiple clauses",
+    teach: "A function can be defined several times with different patterns, and Elixir picks the matching one. It replaces most if statements with something the compiler can check.",
+    example: "def greet(:morning), do: \"Good morning\"\ndef greet(_), do: \"Hello\"",
+    q: "What does the underscore clause do?",
+    choices: ["Matches anything not matched above", "Matches nothing", "It raises an error at that point"], correctIndex: 0,
+    why: "It is the catch-all, and it must come last \u2014 clauses are tried in order, so a catch-all placed first would swallow everything." },
+  { type: "predict", chapter: "5 \u00b7 Pattern matching functions", lang: "elixir",
+    title: "Guards",
+    teach: "A when clause adds a condition to a pattern. The clause only matches if both the shape and the guard hold.",
+    example: "def sign(n) when n > 0, do: :pos\ndef sign(_), do: :other",
+    q: "What does sign(-1) return?",
+    choices: [":other", ":pos", "an error"], correctIndex: 0,
+    why: "The guard fails, so the first clause does not match and the second catches it. Without a catch-all it would raise a FunctionClauseError." },
+{ type: "read", chapter: "6 \u00b7 Processes", lang: "elixir",
+    title: "Concurrency inherited from Erlang",
+    teach: "spawn creates a lightweight process sharing nothing with any other. Millions can run at once, and one crashing cannot corrupt another.",
+    example: "pid = spawn(fn -> IO.puts(\"hi\") end)",
+    q: "What does one Elixir process share with another?",
+    choices: ["Nothing \u2014 they send messages", "Memory", "Variables"], correctIndex: 0,
+    why: "The isolation is what makes supervision work. Elixir runs on the Erlang VM and inherits the whole model." }
+];
+
+const CLOJURE_STEPS = [
+  {
+    type: "read", chapter: "1 \u00b7 First steps", lang: "clojure",
+    title: "Code is a list",
+    teach: "Clojure is written as nested lists, and the first item is the thing being called. (+ 1 2) is a list whose first element is the addition function.",
+    example: "(+ 1 2)\n(println \"hello\")",
+    q: "In (+ 1 2), what is +?",
+    choices: ["The function being called", "An operator", "A symbol only"], correctIndex: 0,
+    why: "It is an ordinary function in the first position. There are no special operators \u2014 which is why the syntax has so few rules to learn."
+  },
+  {
+    type: "pick", chapter: "2 \u00b7 Immutable data", lang: "clojure",
+    title: "Collections do not change",
+    teach: "conj returns a NEW collection with the item added. The original is untouched, which is what makes concurrent code safe by default.",
+    example: "(def v [1 2])\n(conj v 3)  ; [1 2 3]\nv           ; still [1 2]",
+    q: "What is v after the conj?",
+    choices: ["[1 2]", "[1 2 3]", "empty"], correctIndex: 0,
+    why: "conj built a new vector and left v alone. Expecting the original to change is the habit that has to go."
+  },
+  {
+    type: "predict", chapter: "2 \u00b7 Immutable data", lang: "clojure",
+    title: "Everything is an expression",
+    teach: "if returns a value, like every other form. There are no statements, so you assign the result of an if rather than assigning inside it.",
+    example: "(def m (if (> a b) a b))",
+    q: "What gets stored in m?",
+    choices: ["Whichever of a or b is larger", "true or false", "nothing"], correctIndex: 0,
+    why: "The if evaluates to a or b and that value is bound to m. Same idea as Scala and Rust \u2014 an if that produces a result rather than choosing a path."
+  },
+{ type: "read", chapter: "3 \u00b7 Threading", lang: "clojure",
+    title: "The threading macro",
+    teach: "-> passes a value through a series of forms as the first argument, turning deeply nested calls into a readable sequence.",
+    example: "(-> 5 (+ 3) (* 2))   ; 16",
+    q: "What does this evaluate to?",
+    choices: ["16", "13", "10"], correctIndex: 0,
+    why: "5 plus 3 is 8, times 2 is 16. Same idea as Elixir's |> and a Unix pipe." },
+{ type: "read", chapter: "4 \u00b7 Sequences", lang: "clojure",
+    title: "One sequence abstraction",
+    teach: "map, filter and reduce work on vectors, lists, sets, maps and strings alike. Learning them once covers every collection in the language.",
+    example: "(map inc [1 2 3])   ; (2 3 4)",
+    q: "What does map return here?",
+    choices: ["A lazy sequence", "A vector", "A set"], correctIndex: 0,
+    why: "It returns a sequence rather than the input type. Lazy means nothing is computed until something asks for the elements." },
+  { type: "predict", chapter: "4 \u00b7 Sequences", lang: "clojure",
+    title: "Laziness has a cost",
+    teach: "A lazy sequence does no work until consumed. That allows infinite sequences, and it also means side effects inside a map may never happen if nothing realises the result.",
+    example: "(map println [1 2 3])   ; may print nothing",
+    q: "Why might that print nothing at the REPL?",
+    choices: ["The sequence was never realised", "println is broken", "The vector is empty"], correctIndex: 0,
+    why: "Nothing consumed the result, so nothing ran. doseq or run! exist for exactly this \u2014 when you want the effects, not the values." },
+{ type: "read", chapter: "5 \u00b7 Immutability", lang: "clojure",
+    title: "Data does not change",
+    teach: "Clojure collections are immutable. conj returns a new collection sharing structure with the old, so copying is cheap rather than wasteful.",
+    example: "(def a [1 2])\n(def b (conj a 3))",
+    q: "What is a after conj?",
+    choices: ["[1 2] \u2014 unchanged", "[1 2 3]", "empty"], correctIndex: 0,
+    why: "b is a new value sharing most of its structure with a. Nothing is copied wholesale, which is what makes immutability practical." }
+];
+
+const FORTRAN_STEPS = [
+  {
+    type: "read", chapter: "1 \u00b7 Built for numbers", lang: "fortran",
+    title: "Still the fastest at arrays",
+    teach: "Fortran was the first high-level language and is still used for heavy numerical work, because its array handling compiles to extremely fast code. A program has a name and ends with end program.",
+    example: "program hello\n  print *, \"Hello\"\nend program hello",
+    q: "What does the * in print * mean?",
+    choices: ["Use default formatting", "Print everything", "A wildcard"], correctIndex: 0,
+    why: "It says work out the format yourself. Fortran can specify exact column layouts, and * is the shorthand for not bothering."
+  },
+  {
+    type: "pick", chapter: "1 \u00b7 Built for numbers", lang: "fortran",
+    title: "Declare types up front",
+    teach: "Variables are declared at the top with their type. implicit none turns off an old rule where undeclared names got a type from their first letter \u2014 always write it.",
+    example: "program calc\n  implicit none\n  integer :: n\n  n = 5\nend program calc",
+    q: "What does implicit none prevent?",
+    choices: ["Undeclared variables getting a type by accident", "Slow code", "Using integers"], correctIndex: 0,
+    why: "Without it, a typo becomes a new variable with a type guessed from its first letter. It is the same class of bug Perl's use strict exists to stop."
+  },
+  {
+    type: "predict", chapter: "2 \u00b7 Arrays are first class", lang: "fortran",
+    title: "Whole-array operations",
+    teach: "You can operate on an entire array at once without a loop, and the compiler turns that into very fast machine code.",
+    example: "real :: a(3) = [1.0, 2.0, 3.0]\na = a * 2.0",
+    q: "What does a hold afterwards?",
+    choices: ["2.0 4.0 6.0", "an error", "6.0"], correctIndex: 0,
+    why: "The multiplication applies to every element, exactly like R's vectors. Being designed around this from 1957 is why Fortran is still in weather models today."
+  },
+{ type: "read", chapter: "3 \u00b7 Subroutines", lang: "fortran",
+    title: "Arguments can be changed",
+    teach: "Fortran passes arguments by reference by default, so a subroutine can modify what the caller passed. intent(in) marks one as read-only.",
+    example: "subroutine addone(n)\n  integer, intent(inout) :: n\n  n = n + 1\nend subroutine",
+    q: "What does intent(inout) mean?",
+    choices: ["The subroutine may read and change it", "It is a copy", "It is optional"], correctIndex: 0,
+    why: "Declaring intent lets the compiler check and optimise. Without it, accidental modification of a caller's variable is easy." }
+];
+
+const PASCAL_STEPS = [
+  {
+    type: "read", chapter: "1 \u00b7 Built for teaching", lang: "pascal",
+    title: "Clear structure by design",
+    teach: "Pascal was written to teach good habits: every program declares its variables in a var block, and code sits between begin and end.",
+    example: "program Hello;\nvar\n  count: Integer;\nbegin\n  count := 3;\n  WriteLn(count);\nend.",
+    q: "What is := used for?",
+    choices: ["Assignment", "Comparison", "Declaration"], correctIndex: 0,
+    why: "Pascal uses := to assign and = to compare, keeping them visibly separate. C used = for assignment and == for comparison, and has been generating bugs from the confusion ever since."
+  },
+  {
+    type: "pick", chapter: "1 \u00b7 Built for teaching", lang: "pascal",
+    title: "begin and end instead of braces",
+    teach: "A block of statements is wrapped in begin and end. It is wordier than braces and unmistakable when you are learning.",
+    example: "if count > 2 then\nbegin\n  WriteLn('big');\nend;",
+    q: "What do begin and end mark?",
+    choices: ["A block of statements", "The whole program", "A comment"], correctIndex: 0,
+    why: "They group statements, exactly as braces do elsewhere. The final end of the program is followed by a full stop rather than a semicolon."
+  },
+  {
+    type: "predict", chapter: "2 \u00b7 Strong typing", lang: "pascal",
+    title: "Types do not mix",
+    teach: "Pascal will not quietly convert between types. Assigning a real to an integer is an error rather than a silent truncation.",
+    example: "var n: Integer;\nbegin\n  n := 2.5;\nend.",
+    q: "What happens here?",
+    choices: ["It fails to compile", "n becomes 2", "n becomes 3"], correctIndex: 0,
+    why: "Pascal refuses. C would silently make it 2, which is exactly the difference in philosophy \u2014 catch it now, or find out later."
+  }
+];
+
+const ASSEMBLY_STEPS = [
+  {
+    type: "read", chapter: "1 \u00b7 What the processor sees", lang: "assembly",
+    title: "One instruction at a time",
+    teach: "Assembly is a readable name for each machine instruction. There are no loops or functions as such \u2014 only moving values, doing arithmetic, comparing, and jumping.",
+    example: "mov eax, 5\nadd eax, 3",
+    q: "What does eax hold afterwards?",
+    choices: ["8", "5", "3"], correctIndex: 0,
+    why: "mov puts 5 in the register, add makes it 8. A register is a tiny piece of storage inside the processor itself, which is why this is so fast."
+  },
+  {
+    type: "pick", chapter: "1 \u00b7 What the processor sees", lang: "assembly",
+    title: "Registers, not variables",
+    teach: "There are only a handful of registers, and you manage them yourself. A named variable in a high-level language is really a place in memory the compiler chose for you.",
+    example: "mov eax, 10\nmov ebx, eax",
+    q: "Why are there so few registers?",
+    choices: ["They are physically inside the processor", "To keep code short", "For safety"], correctIndex: 0,
+    why: "They are actual hardware, so there is a fixed small number. Everything else lives in memory, which is much slower to reach."
+  },
+  {
+    type: "predict", chapter: "2 \u00b7 Control flow by jumping", lang: "assembly",
+    title: "There is no if",
+    teach: "A comparison sets flags, and a conditional jump reads them. Every if, loop and function call in every language becomes compare-and-jump underneath.",
+    example: "cmp eax, 3\njg  bigger",
+    q: "When does the jump happen?",
+    choices: ["If eax is greater than 3", "Always", "Never, jumps are unconditional"], correctIndex: 0,
+    why: "cmp sets the flags and jg jumps if greater. Seeing that an if is really two instructions is the point of learning any assembly at all."
+  },
+{ type: "read", chapter: "3 \u00b7 The stack", lang: "assembly",
+    title: "push and pop",
+    teach: "The stack is a region of memory the processor manages with a pointer. push writes a value and moves the pointer; pop reads and moves it back. Function calls use it to remember where to return.",
+    example: "push eax\ncall doThing\npop eax",
+    q: "What does call put on the stack?",
+    choices: ["The address to return to", "The function name", "Nothing"], correctIndex: 0,
+    why: "ret reads that address back. Overwriting it is exactly what a stack-smashing attack does, which is why buffer overflows matter." }
+];
+
+const SQL_STEPS = [
+  {
+    type: "read", chapter: "1 \u00b7 Asking questions of data", lang: "sql",
+    title: "SELECT says what you want",
+    teach: "SQL describes the result you want rather than the steps to get it. SELECT names the columns, FROM names the table, and the database works out how to fetch it.",
+    example: "SELECT name, age FROM people;",
+    q: "What does FROM do?",
+    choices: ["Names the table to read", "Filters rows", "Sorts the result"], correctIndex: 0,
+    why: "FROM says where the data lives. Describing the result instead of the procedure is what makes SQL different from every other language in this app."
+  },
+  {
+    type: "pick", chapter: "1 \u00b7 Asking questions of data", lang: "sql",
+    title: "WHERE filters rows",
+    teach: "WHERE keeps only the rows matching a condition. It runs before anything is returned, so the database never has to hand back what you did not ask for.",
+    example: "SELECT name FROM people WHERE age > 30;",
+    q: "How many columns does this return?",
+    choices: ["One", "Two", "All of them"], correctIndex: 0,
+    why: "Only name is selected. WHERE narrows the ROWS and SELECT narrows the COLUMNS \u2014 two different jobs that are easy to conflate."
+  },
+  {
+    type: "predict", chapter: "2 \u00b7 Grouping", lang: "sql",
+    title: "COUNT and GROUP BY",
+    teach: "GROUP BY collapses rows that share a value into one, and aggregate functions like COUNT then describe each group.",
+    example: "SELECT city, COUNT(*) FROM people GROUP BY city;",
+    q: "How many rows come back?",
+    choices: ["One per city", "One per person", "Just one"], correctIndex: 0,
+    why: "Each group becomes a single row. Forgetting the GROUP BY and asking for a count alongside a column is one of the first errors everyone hits."
+  },
+  {
+    type: "read", chapter: "2 \u00b7 Grouping", lang: "sql",
+    title: "NULL is not a value",
+    teach: "NULL means unknown, so comparing to it always gives unknown \u2014 even NULL = NULL. You must write IS NULL rather than = NULL.",
+    example: "SELECT name FROM people WHERE email IS NULL;",
+    q: "Why does WHERE email = NULL return nothing?",
+    choices: ["Comparing to unknown is never true", "NULL is zero", "It is a syntax error"], correctIndex: 0,
+    why: "Any comparison with NULL yields unknown, which is not true, so no rows match. It is the same trap in every database, and it is why IS NULL exists."
+  },
+{ type: "read", chapter: "3 \u00b7 Joining tables", lang: "sql",
+    title: "JOIN combines rows",
+    teach: "A join matches rows in one table with rows in another using a shared value \u2014 usually an id. It is what makes splitting data across tables workable.",
+    example: "SELECT p.name, c.city\nFROM people p\nJOIN cities c ON p.city_id = c.id;",
+    q: "What does ON specify?",
+    choices: ["How rows are matched", "Which columns to show", "The sort order"], correctIndex: 0,
+    why: "It says which values must match. Without it you get every combination of both tables, which is rarely what anyone wants." },
+  { type: "predict", chapter: "3 \u00b7 Joining tables", lang: "sql",
+    title: "LEFT JOIN keeps unmatched rows",
+    teach: "A plain JOIN drops rows with no match. A LEFT JOIN keeps everything from the left table and fills the missing side with NULL.",
+    example: "SELECT p.name, o.total\nFROM people p\nLEFT JOIN orders o ON o.person_id = p.id;",
+    q: "What appears for a person with no orders?",
+    choices: ["Their name with NULL total", "Nothing \u2014 the row is left out", "Zero"], correctIndex: 0,
+    why: "The row survives and the missing columns are NULL. Using a plain JOIN here would silently hide every customer who has not ordered." },
+{ type: "read", chapter: "4 \u00b7 Changing data", lang: "sql",
+    title: "INSERT, UPDATE, DELETE",
+    teach: "SELECT reads; these three write. UPDATE and DELETE without a WHERE clause affect every row in the table, which is the most expensive mistake in SQL.",
+    example: "UPDATE people SET city = 'Leeds' WHERE id = 3;",
+    q: "What does UPDATE people SET city = 'Leeds' do with no WHERE?",
+    choices: ["Changes every row in the table", "Nothing", "It raises an error at that point"], correctIndex: 0,
+    why: "It runs happily and rewrites the whole table. Writing the WHERE first, before the SET, is a habit worth forming." },
+  { type: "predict", chapter: "4 \u00b7 Changing data", lang: "sql",
+    title: "Transactions are all or nothing",
+    teach: "A transaction groups statements so they either all succeed or none do. Moving money between accounts is the standard example \u2014 a crash between the two updates must not lose it.",
+    example: "BEGIN;\n  UPDATE a SET bal = bal - 100;\n  UPDATE b SET bal = bal + 100;\nCOMMIT;",
+    q: "What happens if the second update fails?",
+    choices: ["The first is rolled back too", "Only the first applies", "Both apply"], correctIndex: 0,
+    why: "Nothing is committed until the whole transaction succeeds. Without it the money would vanish from one account and never arrive at the other." },
+  { type: "read", chapter: "5 \u00b7 Making it fast", lang: "sql",
+    title: "Indexes",
+    teach: "An index is a sorted structure the database can search quickly instead of reading every row. It speeds up reads and slows down writes, because the index must be maintained too.",
+    example: "CREATE INDEX idx_city ON people(city);",
+    q: "What is the cost of adding an index?",
+    choices: ["Writes get slower and it uses disk space", "Nothing, indexes are free", "Reads get slower"], correctIndex: 0,
+    why: "Every insert must update the index as well. Indexing everything is as much a mistake as indexing nothing." },
+{ type: "read", chapter: "6 \u00b7 Subqueries", lang: "sql",
+    title: "A query inside a query",
+    teach: "A subquery computes a value used by the outer query. It is often clearer than a join when you only need a single figure to compare against.",
+    example: "SELECT name FROM people\nWHERE age > (SELECT AVG(age) FROM people);",
+    q: "How many times does the inner query run here?",
+    choices: ["Once \u2014 it does not depend on the outer row", "Once per row", "Never \u2014 it is optimised away"], correctIndex: 0,
+    why: "It is independent of the outer query, so the database evaluates it once. A correlated subquery, which references the outer row, does run per row and can be very slow." },
+{ type: "read", chapter: "7 \u00b7 Grouping carefully", lang: "sql",
+    title: "WHERE before grouping, HAVING after",
+    teach: "WHERE filters individual rows before they are grouped. HAVING filters the groups once formed, which is why an aggregate can only appear in HAVING.",
+    example: "SELECT city, COUNT(*) FROM people\nGROUP BY city HAVING COUNT(*) > 5;",
+    q: "Why not use WHERE COUNT(*) > 5?",
+    choices: ["The count does not exist until after grouping", "WHERE is slower", "Both work"], correctIndex: 0,
+    why: "WHERE runs first, when there are no groups and so no counts. HAVING exists precisely because the filter has to come after." }
+];
+
+const BASH_STEPS = [
+  {
+    type: "read", chapter: "1 \u00b7 The shell runs programs", lang: "bash",
+    title: "A script is a list of commands",
+    teach: "Bash is a way of running other programs. A script is what you would have typed, saved in a file \u2014 there is no separate language for the logic.",
+    example: "echo \"Hello\"\nls -l",
+    q: "What is echo?",
+    choices: ["A program that prints its arguments", "A reserved keyword in the language", "A variable"], correctIndex: 0,
+    why: "It is a real program, and so is almost everything else you use. Understanding that scripting is gluing programs together is the whole shift."
+  },
+  {
+    type: "pick", chapter: "1 \u00b7 The shell runs programs", lang: "bash",
+    title: "Variables and quoting",
+    teach: "Assignment has no spaces around the = and reading uses $. Always quote your variables \u2014 an unquoted one containing a space gets split into two arguments.",
+    example: "name=\"Ada Lovelace\"\necho \"$name\"",
+    q: "Why are the quotes around $name needed?",
+    choices: ["Otherwise it splits on the space", "To make it a string", "For readability only"], correctIndex: 0,
+    why: "Unquoted, echo would receive two arguments instead of one. It is the single most common source of scripts that work until a filename has a space in it."
+  },
+  {
+    type: "predict", chapter: "2 \u00b7 Joining commands", lang: "bash",
+    title: "The pipe",
+    teach: "| sends one program's output into the next one's input. Small tools joined this way is the whole Unix idea.",
+    example: "cat names.txt | sort | head -3",
+    q: "What does head -3 receive?",
+    choices: ["The sorted lines", "The original file", "Nothing"], correctIndex: 0,
+    why: "Each stage feeds the next, so head sees sorted output. It is the same idea as Elixir's |> \u2014 written left to right and read the same way."
+  },
+  {
+    type: "read", chapter: "2 \u00b7 Joining commands", lang: "bash",
+    title: "Exit codes decide what happens next",
+    teach: "Every command returns a status: 0 for success. && runs the next command only if the previous succeeded, and || only if it failed.",
+    example: "mkdir out && cd out",
+    q: "When does cd out run?",
+    choices: ["Only if mkdir succeeded", "Always", "Only if mkdir failed"], correctIndex: 0,
+    why: "&& checks the exit code first. It is the same 0-means-success convention as C's return 0 from main, and this is what reads it."
+  },
+{ type: "read", chapter: "3 \u00b7 Loops and tests", lang: "bash",
+    title: "Looping over files",
+    teach: "for walks over a list of words, and a glob like *.txt expands into filenames before the loop starts.",
+    example: "for f in *.txt; do\n  echo \"$f\"\ndone",
+    q: "What expands *.txt into filenames?",
+    choices: ["The shell, before the loop runs", "echo", "The for keyword"], correctIndex: 0,
+    why: "Globbing happens first, so the loop receives real names. If nothing matches, most shells pass the literal *.txt through, which surprises people." },
+  { type: "predict", chapter: "3 \u00b7 Loops and tests", lang: "bash",
+    title: "set -e stops on failure",
+    teach: "By default a script carries on after a command fails. set -euo pipefail makes it stop on an error, on an unset variable, and on a failure inside a pipe.",
+    example: "set -euo pipefail\ncd /nonexistent\nrm -rf ./*",
+    q: "Why does that first line matter here?",
+    choices: ["Without it the rm runs in the wrong directory", "It makes cd faster", "It is decorative"], correctIndex: 0,
+    why: "If cd fails and the script continues, the rm deletes in whatever directory it was already in. That exact bug has wiped real machines." },
+{ type: "read", chapter: "4 \u00b7 Text processing", lang: "bash",
+    title: "grep, sed and awk",
+    teach: "grep finds lines matching a pattern, sed edits them, awk works with columns. Between them they handle most text work without writing a program.",
+    example: "grep ERROR log.txt | awk '{print $1}' | sort | uniq -c",
+    q: "What is awk doing there?",
+    choices: ["Printing the first whitespace-separated field", "Sorting", "Counting lines"], correctIndex: 0,
+    why: "$1 is the first column. Chaining four small tools like this is the Unix approach to a problem that would otherwise need a script." },
+  { type: "predict", chapter: "4 \u00b7 Text processing", lang: "bash",
+    title: "Command substitution",
+    teach: "$(...) runs a command and substitutes its output. It is how you feed one command's result into another as an argument rather than as input.",
+    example: "echo \"Today is $(date +%A)\"",
+    q: "What is the difference between $(cmd) and cmd | other?",
+    choices: ["Substitution puts output in the command line; a pipe feeds it as input", "They are identical", "Substitution is faster"], correctIndex: 0,
+    why: "A pipe sends output to another program's stdin. Substitution puts the text directly into the command as an argument, which is a different thing entirely." },
+{ type: "read", chapter: "5 \u00b7 Functions and arguments", lang: "bash",
+    title: "Positional parameters",
+    teach: "$1, $2 and so on are the arguments, and \"$@\" is all of them with the original word boundaries preserved. The quotes matter enormously.",
+    example: "greet() { echo \"Hello, $1\"; }\ngreet \"Ada Lovelace\"",
+    q: "Why quote \"$@\" rather than writing $@?",
+    choices: ["Unquoted, arguments containing spaces get split", "It runs faster that way", "There is no difference"], correctIndex: 0,
+    why: "Unquoted $@ re-splits on whitespace, so a filename with a space becomes two arguments. It is the same quoting problem as with plain variables." },
+{ type: "read", chapter: "6 \u00b7 Safer scripts", lang: "bash",
+    title: "set -euo pipefail",
+    teach: "By default a failing command is ignored and the script carries on. set -e stops on error, -u on an undefined variable, and -o pipefail catches a failure anywhere in a pipe.",
+    example: "set -euo pipefail",
+    q: "What does bash do by default when a command fails?",
+    choices: ["Carries on to the next line", "Stops", "Retries"], correctIndex: 0,
+    why: "A script that half-ran and reported success is worse than one that stopped. These three options are the first line of most serious scripts." }
+];
+
+const BASIC_STEPS = [
+  {
+    type: "read", chapter: "1 \u00b7 Where beginners started", lang: "basic",
+    title: "Numbered lines",
+    teach: "Classic BASIC numbered every line, and the program ran in numeric order. Numbering in tens left room to insert lines later without renumbering everything.",
+    example: "10 PRINT \"Hello\"\n20 END",
+    q: "Why were lines numbered in tens?",
+    choices: ["To leave room to insert more", "For speed", "It was required"], correctIndex: 0,
+    why: "Adding line 15 later was possible without rewriting the rest. It is a workaround for not having a proper text editor, and it shaped how a generation learned to code."
+  },
+  {
+    type: "pick", chapter: "1 \u00b7 Where beginners started", lang: "basic",
+    title: "LET and PRINT",
+    teach: "LET assigns a value and PRINT displays one. The words were chosen to read as close to English as possible, which was the entire design goal.",
+    example: "10 LET X = 5\n20 PRINT X",
+    q: "What does line 20 show?",
+    choices: ["5", "X", "nothing"], correctIndex: 0,
+    why: "PRINT X shows the value stored in X, not the letter. Naming things in plain words is why BASIC spread to home computers."
+  },
+  {
+    type: "predict", chapter: "2 \u00b7 Jumping around", lang: "basic",
+    title: "GOTO and why it fell out of favour",
+    teach: "GOTO jumps to a line number. It works, and a program built from jumps quickly becomes impossible to follow \u2014 which is why structured loops replaced it.",
+    example: "10 PRINT \"hi\"\n20 GOTO 10",
+    q: "What does this program do?",
+    choices: ["Prints forever", "Prints once", "Stops immediately"], correctIndex: 0,
+    why: "Line 20 sends it back to line 10 with nothing to stop it. Seeing why unrestricted jumping is hard to reason about is the point of meeting BASIC at all."
+  },
+{ type: "read", chapter: "3 \u00b7 Structured BASIC", lang: "basic",
+    title: "Beyond line numbers",
+    teach: "Later BASICs dropped line numbers for named subroutines and proper loops. The language that taught GOTO ended up demonstrating why structured programming replaced it.",
+    example: "FOR i = 1 TO 10\n  PRINT i\nNEXT i",
+    q: "What does a FOR loop give over GOTO?",
+    choices: ["The start, end and step are visible in one place", "It runs faster that way", "It uses less memory"], correctIndex: 0,
+    why: "With GOTO you must trace the whole program to know when a loop ends. A FOR loop states it, which is the entire argument for structured programming." }
+];
+
+const PROLOG_STEPS = [
+  {
+    type: "read", chapter: "1 \u00b7 Facts and rules", lang: "prolog",
+    title: "You state what is true",
+    teach: "Prolog has no instructions. You write facts and rules, then ask a question, and it searches for answers that satisfy them.",
+    example: "parent(tom, bob).\nparent(bob, ann).\ngrandparent(X, Y) :- parent(X, Z), parent(Z, Y).",
+    q: "What does :- mean?",
+    choices: ["if", "assign", "print"], correctIndex: 0,
+    why: "It reads as 'is true if'. The rule says X is a grandparent of Y if X is a parent of some Z who is a parent of Y."
+  },
+  {
+    type: "pick", chapter: "1 \u00b7 Facts and rules", lang: "prolog",
+    title: "Capital letters are variables",
+    teach: "A name starting with a capital is a variable Prolog will try to fill in. Lowercase names are fixed values.",
+    example: "?- parent(tom, X).\nX = bob.",
+    q: "What is X here?",
+    choices: ["Something to be found", "A constant", "A type"], correctIndex: 0,
+    why: "Prolog searches for values of X making the query true. Asking a question and letting the system find the answer is the whole model."
+  },
+  {
+    type: "predict", chapter: "2 \u00b7 Backtracking", lang: "prolog",
+    title: "More than one answer",
+    teach: "If several values satisfy a query, Prolog offers them one at a time, backing up to try alternatives when a path fails.",
+    example: "?- parent(X, Y).",
+    q: "How many answers does this have with the facts above?",
+    choices: ["Two", "One", "None"], correctIndex: 0,
+    why: "Both facts match, so both are answers. Searching and backing up automatically is what you get instead of writing loops."
+  },
+{ type: "read", chapter: "3 \u00b7 Lists", lang: "prolog",
+    title: "Head and tail",
+    teach: "[H|T] splits a list into its first element and the rest. Almost every list predicate is written recursively using that split.",
+    example: "first([H|_], H).",
+    q: "What does the underscore mean?",
+    choices: ["A value we do not care about", "An empty list", "It raises an error instead"], correctIndex: 0,
+    why: "It matches anything without binding a name. Using it says the rest of the list is irrelevant here." },
+{ type: "read", chapter: "4 \u00b7 Cut", lang: "prolog",
+    title: "Stopping the search",
+    teach: "The cut, written !, tells Prolog not to reconsider choices made before it. It makes programs faster and can also change what they mean, so it is used carefully.",
+    example: "max(X,Y,X) :- X >= Y, !.\nmax(_,Y,Y).",
+    q: "What does the cut prevent here?",
+    choices: ["Backtracking into the second clause when the first succeeded", "It raises an error instead", "Recursion"], correctIndex: 0,
+    why: "Without it, asking for another answer would give the second clause too. The cut commits to the first result, which is what max should do." }
+];
+
+const COBOL_STEPS = [
+  {
+    type: "read", chapter: "1 \u00b7 Business at scale", lang: "cobol",
+    title: "Written to be read",
+    teach: "COBOL was designed so managers could read it, which is why it is so verbose. It still runs an enormous share of banking, and that is why it is worth recognising.",
+    example: "DISPLAY \"Hello\".\nMOVE 5 TO COUNTER.",
+    q: "What does MOVE do?",
+    choices: ["Assigns a value", "Relocates a file", "Deletes something"], correctIndex: 0,
+    why: "MOVE 5 TO COUNTER is COBOL for COUNTER = 5. The English wording is deliberate, and it is why COBOL programs are long."
+  },
+  {
+    type: "pick", chapter: "1 \u00b7 Business at scale", lang: "cobol",
+    title: "Divisions organise a program",
+    teach: "Every COBOL program is split into divisions: what it is called, what machine it runs on, what data it uses, and what it does.",
+    example: "IDENTIFICATION DIVISION.\nPROGRAM-ID. HELLO.\nPROCEDURE DIVISION.\n    DISPLAY \"Hi\".",
+    q: "Where does the actual logic go?",
+    choices: ["PROCEDURE DIVISION", "DATA DIVISION", "PROGRAM-ID"], correctIndex: 0,
+    why: "The procedure division holds the steps; the others describe the program and its data. Rigid structure was the point when programs ran for decades."
+  },
+  {
+    type: "predict", chapter: "2 \u00b7 Fixed decimals", lang: "cobol",
+    title: "Money is not a float",
+    teach: "COBOL stores numbers as fixed decimal digits, so money arithmetic is exact. Floating point cannot represent 0.10 precisely, which is why banks avoid it.",
+    example: "01 AMOUNT PIC 9(5)V99.",
+    q: "Why does this matter for money?",
+    choices: ["Decimal arithmetic is exact", "It runs faster that way", "It uses less space"], correctIndex: 0,
+    why: "V99 means exactly two decimal places, stored exactly. In a float, adding 0.10 ten times does not give 1.00 \u2014 which is unacceptable for a bank balance."
+  },
+{ type: "read", chapter: "3 \u00b7 Records and files", lang: "cobol",
+    title: "Data described before use",
+    teach: "The DATA DIVISION describes every record's layout, field by field and character by character. That rigidity is why COBOL programs written in 1975 still read the same files today.",
+    example: "01 CUSTOMER.\n   05 NAME PIC X(30).\n   05 BALANCE PIC 9(7)V99.",
+    q: "What does PIC X(30) declare?",
+    choices: ["A 30-character text field", "Thirty records", "A number"], correctIndex: 0,
+    why: "X means character, 9 means digit, and the count is exact. Fixed layouts are why the files remain readable decades later." }
+];
+
+const SOLIDITY_STEPS = [
+  {
+    type: "read", chapter: "1 \u00b7 Code on a blockchain", lang: "solidity",
+    title: "A contract is a program that cannot be changed",
+    teach: "Solidity contracts run on Ethereum. Once deployed the code is fixed, so a bug cannot simply be patched \u2014 which raises the stakes on every line.",
+    example: "contract Counter {\n    uint public count;\n    function increment() public {\n        count += 1;\n    }\n}",
+    q: "Why does a bug matter more here?",
+    choices: ["The deployed code cannot be edited", "It runs slowly", "Nobody can read it"], correctIndex: 0,
+    why: "Deployed contracts are immutable, so a mistake is permanent and often expensive. It is the reason Solidity code is audited so heavily."
+  },
+  {
+    type: "pick", chapter: "1 \u00b7 Code on a blockchain", lang: "solidity",
+    title: "Storage costs money",
+    teach: "Every write to storage costs gas, paid by whoever calls the function. Efficient code is not a preference here \u2014 it is a bill.",
+    example: "uint public count;   // stored, costs gas to change",
+    q: "Who pays for a state change?",
+    choices: ["The caller", "The author", "Nobody"], correctIndex: 0,
+    why: "The transaction sender pays the gas. It makes wasted computation directly and visibly expensive, which no other language in this app can say."
+  },
+  {
+    type: "predict", chapter: "2 \u00b7 Being careful", lang: "solidity",
+    title: "require checks before acting",
+    teach: "require stops the transaction and undoes everything if a condition fails. Checking before changing state is the standard defensive pattern.",
+    example: "function withdraw(uint amount) public {\n    require(balance >= amount, \"not enough\");\n    balance -= amount;\n}",
+    q: "What happens if the require fails?",
+    choices: ["The whole transaction is reverted", "It logs a warning", "balance goes negative"], correctIndex: 0,
+    why: "Everything rolls back as though it never ran. Without it the subtraction would proceed \u2014 and on a blockchain that is real money gone."
+  },
+{ type: "read", chapter: "3 \u00b7 Common pitfalls", lang: "solidity",
+    title: "Checks, effects, interactions",
+    teach: "Validate first, update your own state second, call other contracts last. Calling out before updating lets the called contract re-enter and spend the same balance twice.",
+    example: "require(bal[msg.sender] >= amt);\nbal[msg.sender] -= amt;\npayable(msg.sender).transfer(amt);",
+    q: "Why subtract the balance BEFORE sending?",
+    choices: ["Otherwise the recipient can call back in and withdraw again", "It runs faster that way", "Order does not matter"], correctIndex: 0,
+    why: "This is the reentrancy attack that drained the DAO in 2016. The ordering is not style \u2014 it is the defence." }
+];
+
+const RACKET_STEPS = [
+  {
+    type: "read", chapter: "1 \u00b7 A language for making languages", lang: "racket",
+    title: "Everything in brackets",
+    teach: "Racket is a Lisp: code is written as parenthesised lists with the function first. Its distinctive feature is that you can extend the language itself.",
+    example: "(define (double n)\n  (* n 2))\n(double 4)",
+    q: "What does (* n 2) do?",
+    choices: ["Multiplies n by 2", "Declares a pointer", "Comments the line"], correctIndex: 0,
+    why: "The multiplication function comes first, then its arguments. Once you read the first item as the verb, Lisp syntax stops looking strange."
+  },
+  {
+    type: "pick", chapter: "1 \u00b7 A language for making languages", lang: "racket",
+    title: "define names things",
+    teach: "define binds a name to a value or a function. There is one form for both, because a function is just a value in Racket.",
+    example: "(define x 5)\n(define (add1 n) (+ n 1))",
+    q: "What is the difference between the two defines?",
+    choices: ["The second takes arguments", "The second is faster", "Nothing"], correctIndex: 0,
+    why: "The bracketed name and parameter make it a function. Same keyword, because functions are values like any other."
+  },
+  {
+    type: "predict", chapter: "2 \u00b7 Recursion first", lang: "racket",
+    title: "Loops by calling yourself",
+    teach: "Racket leans on recursion rather than loops. A function that calls itself with a smaller problem, plus a stopping case, replaces most iteration.",
+    example: "(define (count n)\n  (if (= n 0) 0 (+ 1 (count (- n 1)))))",
+    q: "What stops this recursing forever?",
+    choices: ["The (= n 0) case", "The + operator", "Nothing"], correctIndex: 0,
+    why: "The base case returns without recursing. Every recursive function needs one, and forgetting it is how you get a stack overflow."
+  },
+{ type: "read", chapter: "3 \u00b7 Languages within languages", lang: "racket",
+    title: "#lang chooses the language",
+    teach: "The first line of a Racket file says which language it is written in. Racket ships several and lets you define your own, which is what makes it a language for making languages.",
+    example: "#lang racket\n#lang typed/racket",
+    q: "What does #lang do?",
+    choices: ["Selects the language for that file", "Imports a library", "Sets a compiler flag"], correctIndex: 0,
+    why: "Different files in one project can use different languages. It is a far stronger claim than a library, and it is the point of Racket." }
+];
+
+const TCL_STEPS = [
+  {
+    type: "read", chapter: "1 \u00b7 Everything is a string", lang: "tcl",
+    title: "Commands and words",
+    teach: "A Tcl script is a list of commands, each a word followed by arguments. Every value is fundamentally a string, converted as needed.",
+    example: "set name \"Ada\"\nputs $name",
+    q: "What does set do?",
+    choices: ["Assigns a variable", "Creates a set", "Configures the shell"], correctIndex: 0,
+    why: "set assigns and $ reads back. Tcl has no assignment syntax \u2014 set is an ordinary command, like everything else in the language."
+  },
+  {
+    type: "pick", chapter: "1 \u00b7 Everything is a string", lang: "tcl",
+    title: "Braces delay evaluation",
+    teach: "Square brackets run a command immediately and substitute the result. Braces hold text unevaluated, which is how control structures receive their bodies.",
+    example: "set total [expr 2 + 3]\nputs $total",
+    q: "What do the square brackets do?",
+    choices: ["Run expr and use its result", "Make a list", "Quote the text"], correctIndex: 0,
+    why: "They evaluate and substitute. Arithmetic needs expr because Tcl treats everything as a string until told otherwise."
+  },
+  {
+    type: "predict", chapter: "2 \u00b7 Control is just commands", lang: "tcl",
+    title: "if is a command too",
+    teach: "Tcl's if is not syntax \u2014 it is a command taking a condition and a body in braces. That uniformity is why the language is so small.",
+    example: "if {$x > 2} {\n  puts \"big\"\n}",
+    q: "Why are the braces needed around the body?",
+    choices: ["So it is not evaluated until needed", "Purely for readability", "To make a list"], correctIndex: 0,
+    why: "Braces pass the body as unevaluated text, which if runs only when the condition holds. Without them it would run immediately."
+  },
+{ type: "read", chapter: "3 \u00b7 Lists", lang: "tcl",
+    title: "Lists are strings too",
+    teach: "A Tcl list is a string with elements separated by whitespace, and list commands parse it. Everything really is a string, which keeps the language tiny.",
+    example: "set l [list a b c]\nlindex $l 1",
+    q: "What does lindex $l 1 give?",
+    choices: ["b", "a", "c"], correctIndex: 0,
+    why: "Indexing starts at zero, so 1 is the second element. Tcl is one of the few dynamic languages that did not follow Lua into 1-based indexing." }
+];
+
+const ZIG_STEPS = [
+  {
+    type: "read", chapter: "1 \u00b7 A modern C", lang: "zig",
+    title: "No hidden behaviour",
+    teach: "Zig aims to have no hidden control flow and no hidden allocation. If memory is allocated you passed in the allocator, which makes cost visible at the call site.",
+    example: "const std = @import(\"std\");\npub fn main() void {\n    std.debug.print(\"Hello\\n\", .{});\n}",
+    q: "What does 'no hidden allocation' mean in practice?",
+    choices: ["Functions that allocate take an allocator", "Memory is never used", "It is garbage collected"], correctIndex: 0,
+    why: "You can see from a signature whether a function allocates. It is a direct reaction to C++ and Rust, where allocation can happen out of sight."
+  },
+  {
+    type: "pick", chapter: "2 \u00b7 Errors in the type", lang: "zig",
+    title: "Errors are part of the return type",
+    teach: "A function returning !u32 gives either a u32 or an error, and try passes the error up. There are no exceptions to catch.",
+    example: "fn parse(s: []const u8) !u32 { ... }\nconst n = try parse(\"42\");",
+    q: "What does try do?",
+    choices: ["Returns early if it errored", "Catches and ignores", "Retries"], correctIndex: 0,
+    why: "try unwraps the value or returns the error to the caller. It is the same idea as Go's explicit err check, written in one word."
+  },
+  {
+    type: "predict", chapter: "2 \u00b7 Errors in the type", lang: "zig",
+    title: "defer runs on the way out",
+    teach: "defer schedules cleanup to run when the scope ends, however it ends. Putting the free next to the allocation is what stops leaks.",
+    example: "const buf = try alloc(100);\ndefer free(buf);",
+    q: "When does free run?",
+    choices: ["When the function exits, by any path", "Immediately", "Never \u2014 Zig collects it for you"], correctIndex: 0,
+    why: "It runs at scope exit including on an early error return. Writing cleanup beside the thing it cleans up is why it is hard to forget."
+  },
+{ type: "read", chapter: "3 \u00b7 Comptime", lang: "zig",
+    title: "Generics without a separate language",
+    teach: "comptime runs ordinary Zig at compile time, and types are values there. Generics are just functions taking a type parameter.",
+    example: "fn max(comptime T: type, a: T, b: T) T {\n    return if (a > b) a else b;\n}",
+    q: "What is T here?",
+    choices: ["A type passed at compile time", "A runtime value", "A template"], correctIndex: 0,
+    why: "Types are ordinary values during comptime, so generics need no special syntax. It is a much smaller idea than C++ templates." },
+{ type: "read", chapter: "4 \u00b7 Allocators", lang: "zig",
+    title: "You choose where memory comes from",
+    teach: "Any function that allocates takes an allocator as a parameter. That makes the cost visible at the call site and lets you swap in an arena, a fixed buffer or a testing allocator that detects leaks.",
+    example: "const list = try std.ArrayList(u8).initCapacity(allocator, 16);",
+    q: "What does passing an allocator explicitly buy you?",
+    choices: ["Visible allocation and control over the strategy", "Faster code", "Automatic freeing"], correctIndex: 0,
+    why: "You can see from a signature whether a function allocates, and choose the strategy per call. The testing allocator failing a test on a leak is a direct consequence." }
+];
+
+const RAKU_STEPS = [
+  {
+    type: "read", chapter: "1 \u00b7 Perl, rebuilt", lang: "raku",
+    title: "Sigils that do not change",
+    teach: "Raku kept Perl's sigils but made them consistent: a variable always keeps its sigil, even when you index into it. In Perl the sigil changed depending on what you took out.",
+    example: "my @list = 1, 2, 3;\nsay @list[0];",
+    q: "What sigil does @list keep when indexed?",
+    choices: ["@ stays", "It becomes $", "It drops"], correctIndex: 0,
+    why: "Raku keeps @, where Perl would have written $list[0]. Fixing that inconsistency was one of the reasons for the rewrite."
+  },
+  {
+    type: "pick", chapter: "2 \u00b7 Built-in power", lang: "raku",
+    title: "Grammars and junctions",
+    teach: "Raku has parsing grammars in the language and junctions, which let one value stand for several at once.",
+    example: "if 3 == 1|2|3 { say \"found\" }",
+    q: "What does 1|2|3 mean?",
+    choices: ["Any one of those values", "Bitwise or", "A list"], correctIndex: 0,
+    why: "It is a junction \u2014 the comparison holds if any member matches. It replaces a loop or an any() call with one character."
+  },
+  {
+    type: "predict", chapter: "2 \u00b7 Built-in power", lang: "raku",
+    title: "Lazy lists",
+    teach: "Raku lists can be infinite and are evaluated only as needed, so you can define all the numbers and take the first few.",
+    example: "my @nums = 1 ... Inf;\nsay @nums[^5];",
+    q: "What happens when you define an infinite list?",
+    choices: ["Nothing until you ask for elements", "It hangs", "It raises an error instead"], correctIndex: 0,
+    why: "Laziness means only what you ask for is computed \u2014 the same idea as Haskell's infinite lists, in a very different language."
+  },
+{ type: "read", chapter: "3 \u00b7 Types and signatures", lang: "raku",
+    title: "Optional gradual typing",
+    teach: "Raku lets you annotate parameters and returns, and checks them at runtime. You can write untyped code and tighten it later without rewriting.",
+    example: "sub double(Int $n --> Int) { $n * 2 }",
+    q: "What happens if you pass a string?",
+    choices: ["A runtime type error", "It converts", "Nothing, the annotation is a comment"], correctIndex: 0,
+    why: "The check is real, not documentation. Gradual typing means you choose where the strictness sits rather than the language choosing for you." }
+];
+
+const CRYSTAL_STEPS = [
+  {
+    type: "read", chapter: "1 \u00b7 Ruby syntax, compiled", lang: "crystal",
+    title: "Looks like Ruby, runs like C",
+    teach: "Crystal borrows Ruby's syntax but compiles to native code with static types inferred at compile time. Familiar to read, much faster to run.",
+    example: "def double(n)\n  n * 2\nend\nputs double(4)",
+    q: "When are Crystal's types checked?",
+    choices: ["At compile time", "At runtime", "Never"], correctIndex: 0,
+    why: "The compiler infers and checks them before the program runs, so the Ruby-like code has none of Ruby's runtime type surprises."
+  },
+  {
+    type: "pick", chapter: "2 \u00b7 Nil is a type", lang: "crystal",
+    title: "Nil must be handled",
+    teach: "Crystal treats nil as part of the type, so a value that might be nil has type T | Nil and the compiler makes you deal with it.",
+    example: "x = ENV[\"HOME\"]?   # String | Nil\nputs x.size if x",
+    q: "Why is the if needed?",
+    choices: ["x might be nil", "size is slow", "ENV is unsafe"], correctIndex: 0,
+    why: "The compiler will not let you call size on something that might be nil. Same idea as Kotlin, Swift and Dart, arrived at independently."
+  },
+  {
+    type: "predict", chapter: "2 \u00b7 Nil is a type", lang: "crystal",
+    title: "Union types",
+    teach: "A variable can hold one of several types, written Int32 | String, and the compiler tracks which it currently is as you check.",
+    example: "x = rand < 0.5 ? 1 : \"one\"\n# x is Int32 | String",
+    q: "What does the compiler know about x?",
+    choices: ["It is one of two types", "It is Int32", "It is untyped"], correctIndex: 0,
+    why: "It tracks the union and narrows it as you test. That is how a dynamically-typed-looking language stays statically checked."
+  },
+{ type: "read", chapter: "3 \u00b7 Macros", lang: "crystal",
+    title: "Generating code at compile time",
+    teach: "Crystal macros run during compilation and produce code. Because the compiler knows all the types, a macro can generate methods from them without any runtime reflection.",
+    example: "macro getter(name)\n  def {{name}}; @{{name}}; end\nend",
+    q: "When does the generated method exist?",
+    choices: ["From compile time onward", "At first call", "Never \u2014 it is resolved by reflection"], correctIndex: 0,
+    why: "It is compiled like any hand-written method, so there is no runtime cost. Ruby does the same job with reflection, which is slower." }
+];
+
+const D_STEPS = [
+  {
+    type: "read", chapter: "1 \u00b7 C++ without the pain", lang: "d",
+    title: "Systems programming, more safely",
+    teach: "D compiles to native code like C++, but adds garbage collection by default, real modules, and compile-time execution.",
+    example: "import std.stdio;\nvoid main() {\n    writeln(\"Hello\");\n}",
+    q: "How does D manage memory by default?",
+    choices: ["Garbage collection", "Manual free", "Reference counting only"], correctIndex: 0,
+    why: "The GC is on by default and can be avoided where you need control. That choice is the main thing separating it from C++."
+  },
+  {
+    type: "pick", chapter: "2 \u00b7 Compile-time work", lang: "d",
+    title: "Running code during compilation",
+    teach: "D can execute ordinary functions at compile time, so a lookup table can be computed while building rather than at startup.",
+    example: "enum table = makeTable();  // runs at compile time",
+    q: "When does makeTable() run?",
+    choices: ["While compiling", "At startup", "On first use"], correctIndex: 0,
+    why: "enum forces compile-time evaluation, so the result is baked into the binary and costs nothing when the program runs."
+  },
+  {
+    type: "predict", chapter: "2 \u00b7 Compile-time work", lang: "d",
+    title: "Slices know their length",
+    teach: "A D slice carries a pointer and a length, so it can be bounds-checked \u2014 unlike a bare C array, which knows nothing about its own size.",
+    example: "int[] a = [1, 2, 3];\nwriteln(a.length);",
+    q: "Why can D check the bounds when C cannot?",
+    choices: ["The slice carries its length", "It is interpreted", "It copies the array"], correctIndex: 0,
+    why: "The length travels with the data. That single difference removes the buffer overrun that C's bare arrays make so easy."
+  },
+{ type: "read", chapter: "3 \u00b7 Contracts", lang: "d",
+    title: "Preconditions and invariants",
+    teach: "D lets a function state what must be true on entry and on exit, and a class state what must always hold. The compiler checks them in debug builds and removes them in release.",
+    example: "int f(int x)\nin { assert(x > 0); }\ndo { return x * 2; }",
+    q: "What happens to the check in a release build?",
+    choices: ["It is removed", "It still runs", "It becomes a warning"], correctIndex: 0,
+    why: "You get the checking during development and the speed in production. Writing the assumption down is worthwhile even where it is compiled away." }
+];
+
+const V_STEPS = [
+  {
+    type: "read", chapter: "1 \u00b7 Small and simple", lang: "v",
+    title: "One way to do things",
+    teach: "V aims for a very small language with fast compilation. No null, no global variables, and immutable values by default.",
+    example: "fn main() {\n    println('Hello')\n}",
+    q: "What does V do about null?",
+    choices: ["There is no null", "It warns on null", "Null is the default"], correctIndex: 0,
+    why: "V has no null at all, using option types instead. It joins Rust, Swift, Kotlin and Crystal in deciding that null was a mistake worth designing out."
+  },
+  {
+    type: "pick", chapter: "1 \u00b7 Small and simple", lang: "v",
+    title: "Immutable by default",
+    teach: "Variables cannot be changed unless declared mut. The compiler will tell you when a mut is unnecessary as well as when one is missing.",
+    example: "a := 1\nmut b := 1\nb = 2",
+    q: "What happens if you write a = 2?",
+    choices: ["A compile error", "a becomes 2", "A warning"], correctIndex: 0,
+    why: "a is immutable, so it will not compile. The default matches Rust and Swift \u2014 changeable is the exception you have to ask for."
+  },
+  {
+    type: "predict", chapter: "2 \u00b7 Errors as values", lang: "v",
+    title: "Optionals and or blocks",
+    teach: "A function that can fail returns an optional, and or { } supplies what to do when it does. There are no exceptions.",
+    example: "n := strconv.atoi('x') or { 0 }",
+    q: "What is n when the conversion fails?",
+    choices: ["0", "an error", "nothing"], correctIndex: 0,
+    why: "The or block supplies the fallback. Errors as return values rather than thrown exceptions is the same choice Go and Rust made."
+  },
+{ type: "read", chapter: "3 \u00b7 Compilation", lang: "v",
+    title: "Built for speed of building",
+    teach: "V aims to compile very large programs in about a second, which changes how you work \u2014 a build fast enough stops being a break in concentration.",
+    example: "v run main.v",
+    q: "Why does compile speed matter beyond convenience?",
+    choices: ["A slow build interrupts the thinking, not just the clock", "It saves electricity", "It makes code faster"], correctIndex: 0,
+    why: "A build measured in minutes pushes you to batch changes and lose context. Go was designed around the same observation." }
+];
+
+const OBJC_STEPS = [
+  { type: "read", chapter: "1 \u00b7 C with objects", lang: "objc",
+    title: "Square brackets send messages",
+    teach: "Objective-C is C plus messaging. [obj doThing] sends a message rather than calling a method directly, and sending one to nil is harmless \u2014 it just returns nil.",
+    example: "NSString *s = @\"hi\";\nNSUInteger n = [s length];",
+    q: "What happens if you message a nil object?",
+    choices: ["Nothing, it returns nil", "It crashes", "A compile error"], correctIndex: 0,
+    why: "Messaging nil is silently safe, which removes crashes and hides bugs in equal measure. Swift's optionals were a reaction to exactly this." },
+  { type: "pick", chapter: "1 \u00b7 C with objects", lang: "objc",
+    title: "The @ prefix",
+    teach: "@ marks Objective-C additions to C. @\"text\" is an NSString rather than a C string, and @interface starts a class declaration.",
+    example: "NSString *a = @\"hi\";   // NSString\nchar *b = \"hi\";        // C string",
+    q: "What does the @ change about \"hi\"?",
+    choices: ["It becomes an NSString object", "It escapes it", "Nothing, it is decoration"], correctIndex: 0,
+    why: "Without the @ you get a plain C string, which has none of the object methods. Mixing the two up is the classic beginner error." },
+  { type: "predict", chapter: "2 \u00b7 Memory", lang: "objc",
+    title: "ARC counts references",
+    teach: "Automatic Reference Counting inserts retain and release for you at compile time. An object is freed when nothing refers to it \u2014 unless two objects refer to each other.",
+    example: "// a strong reference cycle never frees",
+    q: "What is a retain cycle?",
+    choices: ["Two objects referring to each other", "Too many objects", "A slow loop"], correctIndex: 0,
+    why: "Neither count ever reaches zero, so neither is freed. Marking one reference weak is the fix." },
+{ type: "read", chapter: "3 \u00b7 Properties", lang: "objc",
+    title: "strong and weak",
+    teach: "A strong reference keeps an object alive; a weak one does not and becomes nil when the object goes. Delegates are weak precisely to break the cycle that would leak both objects.",
+    example: "@property (weak) id<Delegate> delegate;",
+    q: "Why is a delegate usually weak?",
+    choices: ["To avoid a retain cycle between the two objects", "It runs faster that way", "Delegates are optional"], correctIndex: 0,
+    why: "If both held strong references neither count would reach zero and both would leak. Making one side weak breaks the cycle." },
+{ type: "read", chapter: "4 \u00b7 Blocks", lang: "objc",
+    title: "Functions you can pass around",
+    teach: "A block is a chunk of code with captured variables, written with a caret. Objective-C uses them for completion handlers and animations.",
+    example: "void (^greet)(void) = ^{ NSLog(@\"hi\"); };\ngreet();",
+    q: "What does a block capture?",
+    choices: ["The variables in scope where it was written", "Nothing from the enclosing scope", "Only globals"], correctIndex: 0,
+    why: "It is a closure with C syntax. Capturing self strongly inside one is the classic retain cycle in Objective-C code." }
+];
+
+const VB_STEPS = [
+  { type: "read", chapter: "1 \u00b7 Readable by design", lang: "vb",
+    title: "Words instead of symbols",
+    teach: "Visual Basic uses words where other languages use punctuation: And rather than &&, Then and End If rather than braces.",
+    example: "If count > 2 Then\n    Console.WriteLine(\"big\")\nEnd If",
+    q: "What closes an If block?",
+    choices: ["End If", "A brace", "Nothing"], correctIndex: 0,
+    why: "Every block has a matching End. It is wordier and unambiguous, which was the whole design intent." },
+  { type: "pick", chapter: "1 \u00b7 Readable by design", lang: "vb",
+    title: "Dim declares",
+    teach: "Dim introduces a variable with its type after As. Option Strict On forces you to declare types and refuses silent conversions.",
+    example: "Dim count As Integer = 3",
+    q: "What does Option Strict On prevent?",
+    choices: ["Silent type conversions", "Using integers", "Comments"], correctIndex: 0,
+    why: "It stops VB quietly converting between types, which is the source of most surprising VB bugs. Always turn it on." },
+  { type: "predict", chapter: "2 \u00b7 Loops", lang: "vb",
+    title: "For Next counts inclusively",
+    teach: "For i = 1 To 5 includes 5, unlike most languages where the limit is excluded.",
+    example: "For i = 1 To 5\n    Console.WriteLine(i)\nNext",
+    q: "How many numbers print?",
+    choices: ["5", "4", "6"], correctIndex: 0,
+    why: "The range includes both ends. Carrying a habit from C-style loops over to VB gives an off-by-one error every time." },
+{ type: "read", chapter: "3 \u00b7 Collections", lang: "vb",
+    title: "For Each over a collection",
+    teach: "For Each walks a collection without an index, which removes the off-by-one risk entirely. Use For i only when you actually need the position.",
+    example: "For Each item In items\n    Console.WriteLine(item)\nNext",
+    q: "When is a plain For loop still the right choice?",
+    choices: ["When you need the index itself", "Always", "Never, For Each always wins"], correctIndex: 0,
+    why: "If the position matters \u2014 numbering output, or stepping backwards \u2014 you need the counter. Otherwise For Each says what you mean with less to get wrong." }
+];
+
+const MATLAB_STEPS = [
+  { type: "read", chapter: "1 \u00b7 Matrices first", lang: "matlab",
+    title: "Everything is a matrix",
+    teach: "In MATLAB a single number is a 1x1 matrix. Operations work on whole matrices, which is why numerical code needs so few loops.",
+    example: "A = [1 2; 3 4];\nB = A * 2;",
+    q: "What is B?",
+    choices: ["Every element doubled", "The first row doubled", "an error"], correctIndex: 0,
+    why: "Scalar multiplication applies to every element. Thinking in whole arrays rather than element by element is the core skill." },
+  { type: "pick", chapter: "1 \u00b7 Matrices first", lang: "matlab",
+    title: "Indexing starts at one",
+    teach: "MATLAB indexes from 1, like Fortran and Lua, and uses round brackets rather than square ones for indexing.",
+    example: "v = [10 20 30];\nv(1)   % 10",
+    q: "What does v(1) give?",
+    choices: ["10", "20", "an error"], correctIndex: 0,
+    why: "The first element. Reaching for v(0) is an error rather than returning something odd, which at least fails loudly." },
+  { type: "predict", chapter: "2 \u00b7 Element-wise", lang: "matlab",
+    title: "The dot changes everything",
+    teach: "* is matrix multiplication and .* multiplies element by element. Getting them confused gives either a wrong answer or a dimension error.",
+    example: "A .* B   % element-wise\nA * B    % matrix product",
+    q: "Which multiplies corresponding elements?",
+    choices: [".*", "*", "Both"], correctIndex: 0,
+    why: "The dot means element-wise. It is the single most common source of MATLAB mistakes, because both are often valid and give different answers." },
+{ type: "read", chapter: "3 \u00b7 Preallocation", lang: "matlab",
+    title: "Growing an array is expensive",
+    teach: "Adding an element to an array each iteration reallocates and copies the whole thing. Creating it at full size first with zeros turns a quadratic loop into a linear one.",
+    example: "x = zeros(1, 1000);\nfor i = 1:1000\n    x(i) = i^2;\nend",
+    q: "Why preallocate with zeros?",
+    choices: ["Growing an array copies it every time", "zeros is faster than ones", "It is required"], correctIndex: 0,
+    why: "Each growth allocates a new block and copies the old contents. MATLAB's editor warns about it because the difference on large loops is enormous." },
+{ type: "read", chapter: "4 \u00b7 Plotting", lang: "matlab",
+    title: "hold on keeps the axes",
+    teach: "Each plot call clears the axes unless hold on is set. Forgetting it means only the last of several curves appears, which looks like the earlier ones failed.",
+    example: "plot(x, y1); hold on; plot(x, y2);",
+    q: "What happens without hold on?",
+    choices: ["The second plot replaces the first", "Both appear", "It raises an error instead"], correctIndex: 0,
+    why: "The axes are cleared and redrawn. The first curve was computed correctly and then thrown away, which is a confusing way to fail." }
+];
+
+const GROOVY_STEPS = [
+  { type: "read", chapter: "1 \u00b7 Java, relaxed", lang: "groovy",
+    title: "Optional everything",
+    teach: "Groovy runs on the JVM and makes Java's ceremony optional: semicolons, types and return can all be left out.",
+    example: "def double(n) { n * 2 }\nprintln double(4)",
+    q: "What does def mean?",
+    choices: ["An untyped declaration", "An ordinary function", "A constant"], correctIndex: 0,
+    why: "def says work the type out at runtime. You can still write types where you want them checked." },
+  { type: "pick", chapter: "2 \u00b7 Closures", lang: "groovy",
+    title: "it is the default parameter",
+    teach: "A closure with no declared parameter gets one called it. It makes short blocks very short.",
+    example: "[1,2,3].each { println it }",
+    q: "What is it here?",
+    choices: ["Each list element in turn", "The list", "The index"], correctIndex: 0,
+    why: "It is the implicit single parameter. Naming it explicitly is allowed and usually clearer once the block grows." },
+  { type: "predict", chapter: "2 \u00b7 Closures", lang: "groovy",
+    title: "Safe navigation",
+    teach: "?. returns null rather than throwing when the thing on the left is null \u2014 the same operator Kotlin uses.",
+    example: "def name = user?.name",
+    q: "What is name when user is null?",
+    choices: ["null", "an exception", "empty string"], correctIndex: 0,
+    why: "The whole expression short-circuits to null. It is the standard way to avoid a chain of null checks." },
+{ type: "read", chapter: "3 \u00b7 Builders", lang: "groovy",
+    title: "Closures make DSLs",
+    teach: "Because a closure can be passed and executed with a chosen delegate, Groovy code can read like a configuration language. That is how Gradle build files work.",
+    example: "dependencies {\n  implementation 'org.x:y:1.0'\n}",
+    q: "What is that block actually?",
+    choices: ["A closure executed against a delegate object", "A JSON object", "A reserved keyword in the language"], correctIndex: 0,
+    why: "It looks declarative and it is ordinary Groovy. Knowing that is what lets you debug a build file rather than guess at it." },
+{ type: "read", chapter: "4 \u00b7 Collections", lang: "groovy",
+    title: "Collection methods read like English",
+    teach: "findAll, collect, any and every cover most collection work. They are Groovy's names for filter, map, some and all.",
+    example: "[1,2,3,4].findAll { it % 2 == 0 }",
+    q: "What does findAll return?",
+    choices: ["Every matching element", "The first match", "A boolean"], correctIndex: 0,
+    why: "find returns the first and findAll returns them all. Reaching for find when you wanted findAll silently drops everything after the first match." }
+];
+
+const POWERSHELL_STEPS = [
+  { type: "read", chapter: "1 \u00b7 Objects, not text", lang: "powershell",
+    title: "The pipeline carries objects",
+    teach: "Unix shells pipe text between commands. PowerShell pipes real objects, so the next command can use properties directly without parsing anything.",
+    example: "Get-Process | Where-Object { $_.CPU -gt 10 }",
+    q: "What travels through the pipe?",
+    choices: ["Objects with properties", "Lines of text", "File paths"], correctIndex: 0,
+    why: "No text parsing is needed, which removes a whole category of fragile scripting. It is the main thing separating PowerShell from bash." },
+  { type: "pick", chapter: "1 \u00b7 Objects, not text", lang: "powershell",
+    title: "Verb-Noun naming",
+    teach: "Every cmdlet is a verb and a noun: Get-Process, Set-Location, Remove-Item. Once you know the verbs you can guess most commands.",
+    example: "Get-ChildItem\nSet-Content",
+    q: "What would you guess lists services?",
+    choices: ["Get-Service", "List-Services", "Services"], correctIndex: 0,
+    why: "The convention is strict enough to guess from. That predictability is deliberate and is why the names are so long." },
+  { type: "predict", chapter: "2 \u00b7 Variables", lang: "powershell",
+    title: "$_ is the current object",
+    teach: "Inside a pipeline block, $_ refers to whatever object is passing through right now.",
+    example: "1..3 | ForEach-Object { $_ * 2 }",
+    q: "What does this output?",
+    choices: ["2 4 6", "1 2 3", "6"], correctIndex: 0,
+    why: "Each number passes through and is doubled. $_ is the same idea as Groovy's it or a lambda parameter." },
+{ type: "read", chapter: "3 \u00b7 Filtering and selecting", lang: "powershell",
+    title: "Where-Object and Select-Object",
+    teach: "Where-Object keeps objects matching a condition; Select-Object picks which properties to keep. They are the pipeline equivalents of SQL's WHERE and SELECT.",
+    example: "Get-Process | Where-Object CPU -gt 10 | Select-Object Name, CPU",
+    q: "Which one reduces the number of objects?",
+    choices: ["Where-Object", "Select-Object", "Both equally"], correctIndex: 0,
+    why: "Where filters rows; Select narrows columns. Mixing them up gives either too much data or too little of each object." },
+  { type: "pick", chapter: "3 \u00b7 Filtering and selecting", lang: "powershell",
+    title: "Format cmdlets end the pipeline",
+    teach: "Format-Table produces display objects, not the originals. Anything after it in the pipeline receives formatting instructions rather than usable data, so it belongs last.",
+    example: "Get-Service | Format-Table Name, Status",
+    q: "What happens if you pipe Format-Table into Where-Object?",
+    choices: ["The filter sees formatting objects, not services", "It works normally", "It raises an error instead"], correctIndex: 0,
+    why: "The real objects are gone by then. Format cmdlets are for the last step, and putting one in the middle produces confusing empty results." },
+{ type: "read", chapter: "4 \u00b7 Scripts and errors", lang: "powershell",
+    title: "Errors are objects too",
+    teach: "A terminating error can be caught with try/catch, and $_ inside the catch holds the error object with its message, type and stack. Non-terminating errors only go to the error stream unless you ask for more.",
+    example: "try { Get-Item missing.txt -ErrorAction Stop }\ncatch { Write-Host $_.Exception.Message }",
+    q: "Why add -ErrorAction Stop?",
+    choices: ["Otherwise the error is non-terminating and catch never runs", "It makes it faster", "It suppresses the error"], correctIndex: 0,
+    why: "Most cmdlets report an error and carry on by default. Without Stop the catch block is simply never entered, which looks like the error vanished." }
+];
+
+const VBA_STEPS = [
+  { type: "read", chapter: "1 \u00b7 Automating Office", lang: "vba",
+    title: "Code that lives in a document",
+    teach: "VBA runs inside Excel, Word and Access. A macro manipulates the document it lives in, which is why the object model matters more than the language.",
+    example: "Sub SayHi()\n    MsgBox \"Hello\"\nEnd Sub",
+    q: "What is a Sub?",
+    choices: ["A procedure that returns nothing", "A subtraction", "A worksheet"], correctIndex: 0,
+    why: "Sub is a procedure; Function returns a value. It is the same split VB uses, and it is the first thing to get straight." },
+  { type: "pick", chapter: "1 \u00b7 Automating Office", lang: "vba",
+    title: "Cells and ranges",
+    teach: "Range(\"A1\") and Cells(1, 1) refer to the same cell. Cells takes row then column, which is the opposite order to the A1 notation people read.",
+    example: "Range(\"A1\").Value = 5\nCells(1, 1).Value = 5",
+    q: "What order does Cells take?",
+    choices: ["Row, then column", "Column, then row", "Either"], correctIndex: 0,
+    why: "Row first. Since A1 is read column-first, the two conventions are reversed \u2014 a reliable source of confusion." },
+  { type: "predict", chapter: "2 \u00b7 Doing it well", lang: "vba",
+    title: "Avoid Select",
+    teach: "Recorded macros use .Select and .Activate constantly. Acting on a range directly is faster and does not depend on what the user has clicked.",
+    example: "Range(\"A1\").Value = 5   ' good\nRange(\"A1\").Select      ' avoid",
+    q: "Why avoid Select?",
+    choices: ["It is slow and depends on the current selection", "It is deprecated", "It cannot set values"], correctIndex: 0,
+    why: "It moves the actual selection, so the macro breaks if anything else is active. Removing it is the first step in cleaning up a recorded macro." },
+{ type: "read", chapter: "3 \u00b7 Loops over cells", lang: "vba",
+    title: "Reading a range in one go",
+    teach: "Touching a cell at a time is slow because each access crosses between VBA and Excel. Reading a whole range into an array, working on it, then writing it back once is often a hundred times faster.",
+    example: "arr = Range(\"A1:A1000\").Value",
+    q: "Why is looping cell by cell slow?",
+    choices: ["Each access crosses between VBA and Excel", "VBA is interpreted", "Excel caches badly"], correctIndex: 0,
+    why: "The crossing is the cost, not the arithmetic. One read and one write bracket the whole loop instead of two thousand crossings." },
+  { type: "pick", chapter: "3 \u00b7 Loops over cells", lang: "vba",
+    title: "Turning off screen updating",
+    teach: "Application.ScreenUpdating = False stops Excel redrawing during a macro. Remember to turn it back on, including on an error path, or the user is left with a frozen-looking sheet.",
+    example: "Application.ScreenUpdating = False\n' work\nApplication.ScreenUpdating = True",
+    q: "What happens if an error leaves it off?",
+    choices: ["Excel appears frozen to the user", "The macro repeats", "Nothing, Excel resets it itself"], correctIndex: 0,
+    why: "The setting persists after the macro ends. An error handler that restores it is not optional." },
+{ type: "read", chapter: "4 \u00b7 Finding things", lang: "vba",
+    title: "Find beats looping",
+    teach: "Range.Find uses Excel's own search rather than checking cells one at a time. On a large sheet it is orders of magnitude faster and it returns Nothing when there is no match.",
+    example: "Set c = Range(\"A:A\").Find(\"Ada\")\nIf Not c Is Nothing Then MsgBox c.Row",
+    q: "Why test for Nothing?",
+    choices: ["Find returns Nothing when there is no match", "It always returns a cell", "To reset the search"], correctIndex: 0,
+    why: "Using the result without checking raises a runtime error on any sheet where the value is absent, which is exactly the case you did not test." }
+];
+
+const JULIA_STEPS = [
+  { type: "read", chapter: "1 \u00b7 Fast and dynamic", lang: "julia",
+    title: "Written like Python, runs like C",
+    teach: "Julia compiles just in time, specialising each function for the types it is called with. That is how it reads dynamically and still runs fast.",
+    example: "function double(n)\n    n * 2\nend",
+    q: "When is a Julia function compiled?",
+    choices: ["On first call with those types", "Ahead of time", "Never \u2014 it is interpreted"], correctIndex: 0,
+    why: "The first call for a given type combination triggers compilation, and later calls reuse it. It is why the first run of anything feels slow." },
+  { type: "pick", chapter: "2 \u00b7 Multiple dispatch", lang: "julia",
+    title: "The types of ALL arguments choose the method",
+    teach: "Julia picks which method to run based on every argument's type, not just the first. It is the language's central idea.",
+    example: "area(c::Circle) = pi * c.r^2\narea(s::Square) = s.side^2",
+    q: "What decides which area runs?",
+    choices: ["The argument's type", "The order defined", "The return type"], correctIndex: 0,
+    why: "Dispatch on all arguments is more general than object-oriented dispatch on the first one, and it is why Julia libraries compose so well." },
+  { type: "predict", chapter: "2 \u00b7 Multiple dispatch", lang: "julia",
+    title: "Indexing from one",
+    teach: "Julia indexes from 1, following mathematical convention like MATLAB and Fortran rather than C.",
+    example: "v = [10, 20, 30]\nv[1]",
+    q: "What does v[1] give?",
+    choices: ["10", "20", "an error"], correctIndex: 0,
+    why: "The first element. Julia was built for numerical work where 1-based indexing matches how the maths is written." },
+{ type: "read", chapter: "3 \u00b7 Type stability", lang: "julia",
+    title: "Keep a variable one type",
+    teach: "Julia compiles a specialised version for the types it sees. A variable that changes type inside a function forces the compiler to give up and fall back to slow generic code.",
+    example: "function f(n)\n    s = 0.0        # not 0\n    for i in 1:n; s += i; end\n    s\nend",
+    q: "Why start s at 0.0 rather than 0?",
+    choices: ["To keep it Float64 throughout", "It is shorter to write", "0 is invalid"], correctIndex: 0,
+    why: "Starting at integer 0 and adding floats changes the type mid-loop. That single character can cost an order of magnitude." },
+{ type: "read", chapter: "4 \u00b7 Broadcasting", lang: "julia",
+    title: "The dot applies elementwise",
+    teach: "Adding a dot to any function or operator applies it to each element. sqrt.(v) takes the root of every entry, and it works for functions you wrote yourself.",
+    example: "v = [1, 4, 9]\nsqrt.(v)",
+    q: "What does the dot do to a function you defined?",
+    choices: ["Applies it to each element", "Nothing special", "It raises an error instead"], correctIndex: 0,
+    why: "Broadcasting is a language feature rather than a library one, so it works everywhere. MATLAB needs a separate elementwise operator for each case." }
+];
+
+const FSHARP_STEPS = [
+  { type: "read", chapter: "1 \u00b7 Functional on .NET", lang: "fsharp",
+    title: "Immutable by default",
+    teach: "let binds a value that cannot change. F# is functional first but sits on .NET, so it can use any C# library.",
+    example: "let x = 5\nlet double n = n * 2",
+    q: "What happens if you rebind x with x <- 6?",
+    choices: ["An error unless it is mutable", "x becomes 6", "A warning"], correctIndex: 0,
+    why: "You must declare let mutable x for that to work. Immutability is the default rather than an option." },
+  { type: "pick", chapter: "2 \u00b7 Pipelines", lang: "fsharp",
+    title: "The forward pipe",
+    teach: "|> passes the value on the left as the last argument on the right, so data flows left to right through a series of transformations.",
+    example: "[1..5] |> List.map (fun x -> x * 2) |> List.sum",
+    q: "What does |> do?",
+    choices: ["Passes the value into the next function", "Prints it", "Compares"], correctIndex: 0,
+    why: "Same idea as Elixir's pipe and Clojure's threading macro. Reading top to bottom beats reading inside out." },
+  { type: "predict", chapter: "2 \u00b7 Pipelines", lang: "fsharp",
+    title: "Discriminated unions",
+    teach: "A union type lists every possible case, and match must handle them all \u2014 the compiler warns if you miss one.",
+    example: "type Shape = Circle of float | Square of float",
+    q: "What does the compiler do if a match misses a case?",
+    choices: ["Warns about incomplete matching", "Nothing", "Crashes"], correctIndex: 0,
+    why: "It tells you at build time. Adding a new case then shows you every place that needs updating, which is the main practical benefit." },
+{ type: "read", chapter: "3 \u00b7 Records", lang: "fsharp",
+    title: "Immutable records",
+    teach: "A record groups named fields and is immutable by default. Updating one means creating a copy with that field changed, using the with keyword.",
+    example: "type P = { X: int; Y: int }\nlet p2 = { p with X = 5 }",
+    q: "What happens to p?",
+    choices: ["It is unchanged", "X becomes 5", "It is deleted"], correctIndex: 0,
+    why: "with builds a new record and leaves the original alone. Sharing an immutable value between threads needs no locking at all." },
+{ type: "read", chapter: "4 \u00b7 Collections", lang: "fsharp",
+    title: "List, Array and Seq",
+    teach: "List is immutable and linked, Array is mutable and contiguous, Seq is lazy. Choosing between them is choosing between cheap prepending, fast indexing and not computing until asked.",
+    example: "[1..5] |> List.map ((*) 2)",
+    q: "Which is lazy?",
+    choices: ["Seq", "List", "Array"], correctIndex: 0,
+    why: "Seq computes elements as they are demanded, so it can be infinite. List and Array both hold everything at once." },
+{ type: "read", chapter: "5 \u00b7 Options", lang: "fsharp",
+    title: "Some and None",
+    teach: "An Option is Some value or None, and match forces you to handle both. F# has null only for .NET compatibility, and idiomatic code does not use it.",
+    example: "match find k with\n| Some v -> v\n| None -> 0",
+    q: "What does the compiler do if you omit the None case?",
+    choices: ["Warns that the match is incomplete", "Nothing", "Assumes zero"], correctIndex: 0,
+    why: "Incomplete matching is a warning you can turn into an error. The absent case is made visible rather than left to a runtime failure." }
+];
+
+const ERLANG_STEPS = [
+  { type: "read", chapter: "1 \u00b7 Built for uptime", lang: "erlang",
+    title: "Processes, not threads",
+    teach: "Erlang runs work in lightweight processes that share nothing. One failing cannot corrupt another, which is how telephone switches stayed up for years.",
+    example: "Pid = spawn(fun() -> loop() end).",
+    q: "What do two Erlang processes share?",
+    choices: ["Nothing", "Memory", "Variables"], correctIndex: 0,
+    why: "Nothing at all \u2014 they communicate by sending messages. That isolation is what makes supervision and restarting work." },
+  { type: "pick", chapter: "2 \u00b7 Messages", lang: "erlang",
+    title: "Send and receive",
+    teach: "! sends a message to a process and receive waits for one to arrive, matching on its shape.",
+    example: "Pid ! {hello, 42},\nreceive {hello, N} -> N end.",
+    q: "What does ! do?",
+    choices: ["Sends a message", "Negates", "Declares"], correctIndex: 0,
+    why: "It is the send operator. Elixir kept the same model and gave it friendlier syntax." },
+  { type: "predict", chapter: "2 \u00b7 Messages", lang: "erlang",
+    title: "Variables bind once",
+    teach: "An Erlang variable can be assigned exactly once. X = 1 then X = 2 fails, because the second is a pattern match against 1, not a reassignment.",
+    example: "X = 1,\nX = 2.",
+    q: "What does the second line do?",
+    choices: ["Fails to match", "Sets X to 2", "Nothing"], correctIndex: 0,
+    why: "= is a match, and 1 does not match 2. Single assignment is what makes concurrent code safe to reason about." },
+{ type: "read", chapter: "3 \u00b7 Supervision", lang: "erlang",
+    title: "Let it crash",
+    teach: "Rather than defending against every error, an Erlang process is allowed to fail and a supervisor restarts it in a known-good state. Recovery is structural, not defensive.",
+    example: "%% a supervisor restarts a failed child",
+    q: "Why is restarting better than catching every error?",
+    choices: ["A clean restart avoids unpredictable half-broken state", "It runs faster that way", "Errors cannot be caught"], correctIndex: 0,
+    why: "Defensive code has to anticipate the failure; a restart does not. The process comes back in a state you designed rather than one an exception left behind." },
+{ type: "read", chapter: "4 \u00b7 Hot code loading", lang: "erlang",
+    title: "Upgrading without stopping",
+    teach: "Erlang can load a new version of a module while the system runs, with existing processes finishing on the old code and new calls using the new. Telephone switches could not be taken down to patch them.",
+    example: "%% two versions coexist during an upgrade",
+    q: "Why was this built into the language?",
+    choices: ["Telephone systems could not be stopped for updates", "To save memory", "For testing"], correctIndex: 0,
+    why: "The requirement was continuous availability measured in years. Building it into the runtime rather than bolting it on is why it actually works." }
+];
+
+const OCAML_STEPS = [
+  { type: "read", chapter: "1 \u00b7 Types inferred", lang: "ocaml",
+    title: "Strong types you rarely write",
+    teach: "OCaml infers types throughout and checks them strictly. You write almost no annotations and still get complete compile-time checking.",
+    example: "let double n = n * 2",
+    q: "What type does OCaml infer for n?",
+    choices: ["int", "float", "any"], correctIndex: 0,
+    why: "The * operator is integer multiplication, so n must be an int. Floats use *. with a dot \u2014 the operators are separate." },
+  { type: "pick", chapter: "2 \u00b7 Pattern matching", lang: "ocaml",
+    title: "match must be exhaustive",
+    teach: "The compiler checks that a match covers every case and warns when one is missing.",
+    example: "match x with\n| Some v -> v\n| None -> 0",
+    q: "What happens if you omit the None case?",
+    choices: ["A compiler warning", "A runtime crash only", "Nothing"], correctIndex: 0,
+    why: "You are told at build time. Adding a new variant then points you at every match that needs updating." },
+  { type: "predict", chapter: "2 \u00b7 Pattern matching", lang: "ocaml",
+    title: "Lists are linked",
+    teach: "An OCaml list is a linked list, so adding to the front with :: is instant and indexing is slow. Arrays exist for random access.",
+    example: "let l = 1 :: [2; 3]",
+    q: "What is cheap on an OCaml list?",
+    choices: ["Adding to the front", "Indexing", "Appending to the end"], correctIndex: 0,
+    why: "Prepending is one allocation; reaching the nth item means walking n links. Choosing the right structure matters more here than in an array language." },
+{ type: "read", chapter: "3 \u00b7 Variants", lang: "ocaml",
+    title: "Types that list their cases",
+    teach: "A variant type enumerates every possibility, and each case can carry data. The compiler then knows exactly what a value might be.",
+    example: "type shape = Circle of float | Rect of float * float",
+    q: "What does the compiler know about a shape?",
+    choices: ["It is exactly one of those two cases", "It could be anything", "It is a float"], correctIndex: 0,
+    why: "The list is closed, which is why exhaustiveness checking works. Adding a third case makes the compiler point at every match that needs updating." }
+];
+
+const ELM_STEPS = [
+  { type: "read", chapter: "1 \u00b7 No runtime errors", lang: "elm",
+    title: "The compiler catches everything",
+    teach: "Elm has no null, no undefined and no exceptions. If it compiles, it will not crash at runtime \u2014 a guarantee no other language here makes.",
+    example: "double : Int -> Int\ndouble n = n * 2",
+    q: "What does Elm promise if your code compiles?",
+    choices: ["No runtime exceptions", "It is fast", "It is correct"], correctIndex: 0,
+    why: "No crashes \u2014 not that the logic is right. The compiler eliminates a category of failure, not mistakes in your thinking." },
+  { type: "pick", chapter: "2 \u00b7 The architecture", lang: "elm",
+    title: "Model, update, view",
+    teach: "Every Elm app has one model holding all state, an update function producing a new model from a message, and a view rendering it.",
+    example: "update msg model = ...\nview model = ...",
+    q: "How does state change in Elm?",
+    choices: ["update returns a new model", "You mutate it", "The view changes it"], correctIndex: 0,
+    why: "Nothing mutates; update produces a new model. Redux copied this pattern into JavaScript." },
+  { type: "predict", chapter: "2 \u00b7 The architecture", lang: "elm",
+    title: "Maybe for absent values",
+    teach: "Anything that might not exist is a Maybe, and you must handle Nothing before using the value.",
+    example: "case List.head list of\n  Just x -> x\n  Nothing -> 0",
+    q: "Why is the Nothing branch required?",
+    choices: ["The list might be empty", "For style", "It never runs"], correctIndex: 0,
+    why: "head of an empty list has no value to return, so the type says so. That is how a whole class of crash is designed out." },
+{ type: "read", chapter: "3 \u00b7 Messages", lang: "elm",
+    title: "Every change is a message",
+    teach: "Interactions produce messages, and update turns a message and the old model into a new one. Nothing else can change state, which is why an Elm app is so easy to reason about.",
+    example: "type Msg = Increment | Decrement",
+    q: "What can change the model?",
+    choices: ["Only the update function", "Any function", "The view"], correctIndex: 0,
+    why: "One function, one place. Tracking down where state changed is not a question you ever have to ask." }
+];
+
+const SCHEME_STEPS = [
+  { type: "read", chapter: "1 \u00b7 Minimal by design", lang: "scheme",
+    title: "A tiny core",
+    teach: "Scheme is deliberately small \u2014 a handful of special forms and everything else built from them. It is why it is used to teach language design.",
+    example: "(define (double n) (* n 2))\n(double 4)",
+    q: "What does define do here?",
+    choices: ["Names a function", "Declares a type", "Imports"], correctIndex: 0,
+    why: "It binds a name. The bracketed form with a parameter makes it a function, same as Racket, which grew out of Scheme." },
+  { type: "pick", chapter: "2 \u00b7 Recursion", lang: "scheme",
+    title: "Tail calls do not grow the stack",
+    teach: "Scheme guarantees that a call in tail position reuses the stack frame, so a recursive loop can run forever without overflowing.",
+    example: "(define (loop n)\n  (if (= n 0) 'done (loop (- n 1))))",
+    q: "Why can this recurse a million times safely?",
+    choices: ["The call is in tail position", "It is optimised away", "It is not recursive"], correctIndex: 0,
+    why: "Nothing happens after the recursive call, so the frame is reused. It is a language guarantee, not an optimisation you hope for." },
+  { type: "predict", chapter: "2 \u00b7 Recursion", lang: "scheme",
+    title: "Quote stops evaluation",
+    teach: "'(1 2 3) is a list of three numbers rather than a call to the function 1. The quote says treat this as data.",
+    example: "(car '(1 2 3))",
+    q: "What does this return?",
+    choices: ["1", "an error", "(1 2 3)"], correctIndex: 0,
+    why: "car takes the first element. Without the quote, Scheme would try to call 1 as a function." },
+{ type: "read", chapter: "3 \u00b7 Higher-order functions", lang: "scheme",
+    title: "Functions as arguments",
+    teach: "map and fold take a function and apply it across a list. Scheme popularised teaching this before loops, because it separates what to do from how to walk the data.",
+    example: "(map (lambda (x) (* x x)) '(1 2 3))",
+    q: "What does lambda create?",
+    choices: ["A function with no name", "A variable", "A list"], correctIndex: 0,
+    why: "It is a value like any other, which is why it can be passed to map. Naming it with define is optional rather than required." }
+];
+
+const LISP_STEPS = [
+  { type: "read", chapter: "1 \u00b7 The oldest survivor", lang: "lisp",
+    title: "Code and data look the same",
+    teach: "A Lisp program is a list, and lists are also the main data structure. That sameness is what lets macros rewrite code as easily as any other data.",
+    example: "(defun double (n) (* n 2))",
+    q: "Why can Lisp macros be so powerful?",
+    choices: ["Code is data it can manipulate", "It is compiled", "It is old"], correctIndex: 0,
+    why: "A macro receives the program as a list and returns a new one. No language with special syntax can do that as directly." },
+  { type: "pick", chapter: "2 \u00b7 Lists", lang: "lisp",
+    title: "car and cdr",
+    teach: "car gives the first element and cdr the rest. The names come from 1950s hardware registers and stuck for seventy years.",
+    example: "(car '(1 2 3))   ; 1\n(cdr '(1 2 3))   ; (2 3)",
+    q: "What does cdr return?",
+    choices: ["The list without its first item", "The last item", "The length"], correctIndex: 0,
+    why: "Everything after the head, as a list. Recursion over car and cdr is the fundamental Lisp pattern." },
+  { type: "predict", chapter: "2 \u00b7 Lists", lang: "lisp",
+    title: "nil is false and empty",
+    teach: "In Common Lisp nil is both the empty list and the false value, so an empty list is falsy.",
+    example: "(if '() 'yes 'no)",
+    q: "What does this return?",
+    choices: ["no", "yes", "nil"], correctIndex: 0,
+    why: "The empty list is nil, which is false. Ruby and Python treat empty and false differently, so the habit does not transfer." },
+{ type: "read", chapter: "3 \u00b7 Macros", lang: "lisp",
+    title: "Code that writes code",
+    teach: "A macro receives its arguments unevaluated, as lists, and returns new code to run in their place. That is why Lisp can add control structures no other language could express.",
+    example: "(defmacro unless (c body) `(if (not ,c) ,body))",
+    q: "How does a macro differ from a function?",
+    choices: ["Its arguments are not evaluated first", "It runs faster that way", "It cannot return values"], correctIndex: 0,
+    why: "A function receives values; a macro receives the expressions themselves. That is what lets unless avoid evaluating its body when the condition holds." }
+];
+
+const ADA_STEPS = [
+  { type: "read", chapter: "1 \u00b7 Safety first", lang: "ada",
+    title: "Built for systems that must not fail",
+    teach: "Ada was designed for aircraft and railways. It is verbose because it makes you state your intent precisely, and then checks it.",
+    example: "procedure Hello is\nbegin\n   Put_Line (\"Hello\");\nend Hello;",
+    q: "Why is Ada so verbose?",
+    choices: ["Explicitness lets the compiler check more", "It is old", "For readability alone"], correctIndex: 0,
+    why: "Every declaration gives the compiler something else to verify. In avionics that trade is obviously worth it." },
+  { type: "pick", chapter: "2 \u00b7 Types with ranges", lang: "ada",
+    title: "A type can constrain its values",
+    teach: "You can declare a type that only accepts a range, and the compiler and runtime enforce it. An out-of-range assignment raises rather than silently wrapping.",
+    example: "type Percent is range 0 .. 100;",
+    q: "What happens assigning 150 to a Percent?",
+    choices: ["A constraint error", "It wraps to 50", "It is allowed"], correctIndex: 0,
+    why: "The range is part of the type. C would happily store it and the bug would appear much later somewhere else." },
+  { type: "predict", chapter: "2 \u00b7 Types with ranges", lang: "ada",
+    title: "Strong typing between similar types",
+    teach: "Two integer types are not interchangeable even if both hold integers. You must convert explicitly, which stops mixing up metres and feet.",
+    example: "type Metres is new Integer;\ntype Feet is new Integer;",
+    q: "Can you add a Metres to a Feet?",
+    choices: ["Not without an explicit conversion", "Yes", "Only if equal"], correctIndex: 0,
+    why: "They are distinct types. That exact class of mix-up destroyed the Mars Climate Orbiter." }
+];
+
+const NIM_STEPS = [
+  { type: "read", chapter: "1 \u00b7 Python-like, compiled", lang: "nim",
+    title: "Indentation with static types",
+    teach: "Nim reads like Python \u2014 indentation for blocks, no semicolons \u2014 but compiles to C and is statically typed.",
+    example: "proc double(n: int): int =\n  n * 2",
+    q: "What does the last expression in a proc do?",
+    choices: ["Becomes the return value", "Is discarded", "Prints"], correctIndex: 0,
+    why: "Implicit return, like Ruby and Rust. You can still write return where it reads better." },
+  { type: "pick", chapter: "2 \u00b7 Uniform call syntax", lang: "nim",
+    title: "Two ways to call the same thing",
+    teach: "len(x) and x.len are identical in Nim. Any proc whose first parameter matches can be written as a method call.",
+    example: "echo len(s)\necho s.len",
+    q: "What is the difference between them?",
+    choices: ["None, they are the same call", "One is a method", "One is faster"], correctIndex: 0,
+    why: "It is pure syntax. It means library authors need not decide between the two styles for you." },
+  { type: "predict", chapter: "2 \u00b7 Uniform call syntax", lang: "nim",
+    title: "Case and underscore insensitivity",
+    teach: "Nim treats helloWorld, hello_world and helloworld as the same identifier, after the first character.",
+    example: "var myVar = 1\necho my_var   # same variable",
+    q: "Are myVar and my_var the same?",
+    choices: ["Yes", "No", "Only in procs"], correctIndex: 0,
+    why: "Nim ignores underscores and case after the first letter, so libraries in different styles interoperate. It is unusual and it surprises people." },
+{ type: "read", chapter: "3 \u00b7 Compile-time work", lang: "nim",
+    title: "Running code while compiling",
+    teach: "A const is evaluated at compile time, so a lookup table can be computed during the build and cost nothing at runtime. Nim can run most ordinary code this way.",
+    example: "const table = buildTable()",
+    q: "When does buildTable run?",
+    choices: ["During compilation", "At startup", "On first use"], correctIndex: 0,
+    why: "The result is baked into the binary. It is the same idea as D's compile-time evaluation and Zig's comptime." },
+{ type: "read", chapter: "4 \u00b7 Memory", lang: "nim",
+    title: "Deterministic destruction",
+    teach: "Nim's default memory model frees objects when they go out of scope rather than at some later collection. Memory use is predictable and there are no pauses.",
+    example: "proc f() =\n  var s = newSeq[int](1000)\n  # freed at the end of f",
+    q: "When is the sequence freed?",
+    choices: ["When it leaves scope", "At the next collection", "At program exit"], correctIndex: 0,
+    why: "Deterministic destruction is why Nim suits real-time work where a garbage collection pause would be unacceptable." }
+];
+
+const SMALLTALK_STEPS = [
+  { type: "read", chapter: "1 \u00b7 Objects all the way down", lang: "smalltalk",
+    title: "Everything is an object, including classes",
+    teach: "In Smalltalk numbers, blocks, classes and even conditionals are objects receiving messages. There is no syntax for control flow.",
+    example: "3 + 4.\n'hello' size.",
+    q: "What is 3 in Smalltalk?",
+    choices: ["An object receiving the + message", "A primitive", "A literal only"], correctIndex: 0,
+    why: "It is an object, and + is a message sent to it. Ruby took this idea directly." },
+  { type: "pick", chapter: "2 \u00b7 Blocks", lang: "smalltalk",
+    title: "ifTrue: is a message",
+    teach: "There is no if keyword. You send ifTrue: to a boolean with a block, and the boolean decides whether to run it.",
+    example: "x > 2 ifTrue: [ Transcript show: 'big' ].",
+    q: "What receives the ifTrue: message?",
+    choices: ["The boolean", "The block", "The class"], correctIndex: 0,
+    why: "true and false are objects with different implementations of ifTrue:. Control flow falls out of message dispatch rather than being built in." },
+  { type: "predict", chapter: "2 \u00b7 Blocks", lang: "smalltalk",
+    title: "The image holds everything",
+    teach: "A Smalltalk system saves its entire running state \u2014 objects, code, open windows \u2014 into an image file. You do not run a program so much as resume a world.",
+    example: "\" the whole environment is saved and resumed \"",
+    q: "What is saved in a Smalltalk image?",
+    choices: ["The entire running system state", "Source files only", "A screenshot"], correctIndex: 0,
+    why: "Everything, including live objects. It is why Smalltalk debugging is unusually direct and why it fits awkwardly with version control." }
+];
+
+const HTML_STEPS = [
+  { type: "read", chapter: "1 \u00b7 Structure, not appearance", lang: "html",
+    title: "Tags describe what something IS",
+    teach: "HTML says what each piece of content is \u2014 a heading, a paragraph, a list. It does not say how it looks; that is CSS's job. Choosing the right tag is choosing the right meaning.",
+    example: "<h1>Title</h1>\n<p>Some text.</p>",
+    q: "Why use <h1> rather than making text big with CSS?",
+    choices: ["It tells browsers and screen readers this is the heading", "It runs faster that way", "It is shorter to type"], correctIndex: 0,
+    why: "The tag carries meaning. A screen reader can list the headings on a page, and a search engine uses them \u2014 neither can do anything with text that is merely large." },
+  { type: "pick", chapter: "1 \u00b7 Structure, not appearance", lang: "html",
+    title: "Attributes carry extra information",
+    teach: "An attribute sits inside the opening tag and adds detail: where a link goes, what an image shows, which element a label belongs to.",
+    example: "<a href=\"/about\">About</a>\n<img src=\"cat.jpg\" alt=\"A tabby cat\">",
+    q: "What is alt for?",
+    choices: ["Text read aloud if the image cannot be seen", "The image caption", "A backup filename"], correctIndex: 0,
+    why: "It describes the image for anyone who cannot see it, and shows if the file fails to load. Leaving it off makes the image invisible to a screen reader entirely." },
+  { type: "predict", chapter: "2 \u00b7 Nesting", lang: "html",
+    title: "Elements contain other elements",
+    teach: "Tags nest inside each other and must close in the reverse order they opened. Crossing them over is invalid, even though browsers will often guess what you meant.",
+    example: "<ul>\n  <li>One</li>\n  <li>Two</li>\n</ul>",
+    q: "What is wrong with <b><i>text</b></i>?",
+    choices: ["The tags close in the wrong order", "Nothing, it is perfectly valid", "b cannot contain i"], correctIndex: 0,
+    why: "Inner tags must close before outer ones. Browsers usually recover, which is exactly why the mistake survives long enough to cause trouble later." },
+  { type: "read", chapter: "2 \u00b7 Nesting", lang: "html",
+    title: "Semantic elements",
+    teach: "<header>, <nav>, <main>, <article> and <footer> say what a region of the page is for. A <div> says nothing at all \u2014 it is the tag you use when no meaningful one fits.",
+    example: "<main>\n  <article>\u2026</article>\n</main>",
+    q: "When should you use a <div>?",
+    choices: ["When no semantic element describes the content", "Always, it is simpler", "Never, it is always the wrong choice"], correctIndex: 0,
+    why: "div is the fallback, not the default. Reaching for it first produces a page that is invisible to assistive technology and harder for you to read six months later." },
+{ type: "read", chapter: "3 \u00b7 Forms", lang: "html",
+    title: "Inputs need labels",
+    teach: "A label tied to an input by for and id makes the text clickable and tells a screen reader what the field is. Placeholder text is not a substitute \u2014 it disappears as soon as you type.",
+    example: "<label for=\"em\">Email</label>\n<input id=\"em\" type=\"email\">",
+    q: "Why is a placeholder not enough on its own?",
+    choices: ["It vanishes once the user types", "It is too small", "It cannot be styled"], correctIndex: 0,
+    why: "Once the field has content the hint is gone, and a screen reader may never announce it at all. The label stays." },
+  { type: "predict", chapter: "3 \u00b7 Forms", lang: "html",
+    title: "Input types do work for you",
+    teach: "type=\"email\", \"number\", \"date\" and the rest give validation and the right on-screen keyboard on mobile, with no JavaScript.",
+    example: "<input type=\"email\" required>",
+    q: "What does type=\"email\" give you free?",
+    choices: ["Basic validation and a suitable mobile keyboard", "Encryption", "A dropdown"], correctIndex: 0,
+    why: "The browser checks the format and shows the @ key on a phone. It is not a substitute for server-side validation, which can never be skipped." },
+{ type: "read", chapter: "4 \u00b7 Accessibility", lang: "html",
+    title: "Use the right element",
+    teach: "A button is focusable, works with Enter and Space, and is announced as a button. A div with a click handler is none of those things unless you add every one back by hand.",
+    example: "<button onclick=\"save()\">Save</button>",
+    q: "What do you lose using a div instead?",
+    choices: ["Keyboard access and screen-reader meaning", "Some styling options", "Nothing of any importance"], correctIndex: 0,
+    why: "You can add tabindex, a key handler and role=\"button\" to get it back \u2014 three things a button gives free and that people routinely forget." }
+];
+
+const CSS_STEPS = [
+  { type: "read", chapter: "1 \u00b7 Selecting and styling", lang: "css",
+    title: "A rule is a selector and declarations",
+    teach: "A CSS rule picks elements with a selector, then sets properties on them. Everything in CSS is that pattern repeated.",
+    example: "p { color: navy; font-size: 16px; }",
+    q: "What does the part before the braces do?",
+    choices: ["Chooses which elements the rule applies to", "Names the rule", "Sets a default"], correctIndex: 0,
+    why: "The selector decides what is affected. Everything inside the braces is what happens to it." },
+  { type: "pick", chapter: "1 \u00b7 Selecting and styling", lang: "css",
+    title: "Specificity decides conflicts",
+    teach: "When two rules target the same element, the more specific one wins \u2014 an id beats a class, which beats a tag. Order only breaks ties between equals.",
+    example: "p { color: blue; }\n.warning { color: red; }",
+    q: "A <p class=\"warning\"> gets which colour?",
+    choices: ["Red", "Blue", "Whichever came last"], correctIndex: 0,
+    why: "A class is more specific than a tag, so it wins regardless of order. Fighting this with !important is the usual mistake." },
+  { type: "predict", chapter: "2 \u00b7 The box model", lang: "css",
+    title: "Padding, border, margin",
+    teach: "Padding is inside the border, margin is outside it. Padding grows the element's background; margin pushes other things away.",
+    example: "div { padding: 10px; border: 1px solid; margin: 20px; }",
+    q: "Which one is coloured by the element's background?",
+    choices: ["Padding", "Margin", "Both"], correctIndex: 0,
+    why: "Padding is part of the element, so the background extends through it. Margin is empty space outside and shows whatever is behind." },
+  { type: "read", chapter: "2 \u00b7 The box model", lang: "css",
+    title: "Flexbox lays things out in a line",
+    teach: "display: flex makes a container arrange its children along one axis. justify-content spaces them along it, align-items across it.",
+    example: "nav { display: flex; gap: 16px; justify-content: space-between; }",
+    q: "What does justify-content control?",
+    choices: ["Spacing along the main axis", "Vertical alignment always", "Font spacing"], correctIndex: 0,
+    why: "It works along whichever axis is the main one \u2014 horizontal by default, vertical if flex-direction is column. Assuming it always means horizontal is where flexbox gets confusing." },
+{ type: "read", chapter: "3 \u00b7 Layout", lang: "css",
+    title: "Grid for two dimensions",
+    teach: "Flexbox lays out along one axis; Grid handles rows and columns together. Reaching for Grid when the layout is two-dimensional saves a great deal of nesting.",
+    example: "main { display: grid; grid-template-columns: 200px 1fr; }",
+    q: "What does 1fr mean?",
+    choices: ["One share of the remaining space", "One pixel", "One percent"], correctIndex: 0,
+    why: "fr is a fraction of what is left after fixed sizes are taken. It is why 200px 1fr gives a fixed sidebar and a flexible main area." },
+  { type: "predict", chapter: "3 \u00b7 Layout", lang: "css",
+    title: "Media queries",
+    teach: "A media query applies rules only at certain screen sizes. Writing the mobile layout first and adding rules for larger screens usually produces less CSS.",
+    example: "@media (min-width: 600px) { nav { display: flex; } }",
+    q: "When do those rules apply?",
+    choices: ["Only at 600px wide and above", "Always", "Only below 600px"], correctIndex: 0,
+    why: "min-width means from that size upward. Using max-width instead inverts the logic, and mixing the two is how conflicting rules appear." },
+{ type: "read", chapter: "4 \u00b7 Variables", lang: "css",
+    title: "Custom properties",
+    teach: "A custom property is a value you define once and reference everywhere. Unlike a preprocessor variable it lives at runtime, so it can be changed by a media query or by JavaScript.",
+    example: ":root { --brand: navy; }\na { color: var(--brand); }",
+    q: "What can a custom property do that a Sass variable cannot?",
+    choices: ["Change at runtime", "Hold a colour", "Be reused"], correctIndex: 0,
+    why: "Sass variables are substituted at build time and then gone. Custom properties are still there in the browser, which is how dark mode is usually implemented." }
+];
+
+const JSX_STEPS = [
+  { type: "read", chapter: "1 \u00b7 Markup inside JavaScript", lang: "jsx",
+    title: "JSX is not HTML",
+    teach: "JSX looks like HTML but compiles to JavaScript function calls. That is why attributes use JavaScript names \u2014 className rather than class, because class is a reserved word.",
+    example: "const el = <div className=\"box\">Hi</div>;",
+    q: "Why className instead of class?",
+    choices: ["class is a reserved word in JavaScript", "React prefers it", "They are interchangeable"], correctIndex: 0,
+    why: "JSX becomes JavaScript, so it cannot use JavaScript keywords as property names. The same is true of htmlFor instead of for." },
+  { type: "pick", chapter: "1 \u00b7 Markup inside JavaScript", lang: "jsx",
+    title: "Braces embed an expression",
+    teach: "Curly braces drop a JavaScript expression into the markup. An expression, not a statement \u2014 you cannot put an if or a for inside them.",
+    example: "<p>Hello, {name}. You have {n + 1} messages.</p>",
+    q: "Can you write {if (x) ...} inside JSX?",
+    choices: ["No \u2014 if is a statement, not an expression", "Yes", "Only at the top level"], correctIndex: 0,
+    why: "Braces take a value. A ternary or && works because those produce a value; an if does not." },
+  { type: "predict", chapter: "2 \u00b7 Lists and keys", lang: "jsx",
+    title: "Rendering a list",
+    teach: "map turns an array into an array of elements. Each needs a key so React can tell which item is which when the list changes.",
+    example: "{items.map(i => <li key={i.id}>{i.name}</li>)}",
+    q: "Why does each item need a key?",
+    choices: ["So React can track which item changed", "For CSS", "To sort the list"], correctIndex: 0,
+    why: "Without stable keys React cannot tell an insertion from a change, and state attaches to the wrong row. Using the array index as a key reintroduces exactly that bug." },
+  { type: "read", chapter: "2 \u00b7 Lists and keys", lang: "jsx",
+    title: "Returning one root",
+    teach: "A component must return a single element. A fragment, written <>\u2026</>, groups children without adding a wrapper div to the page.",
+    example: "return (<>\n  <h1>Title</h1>\n  <p>Text</p>\n</>);",
+    q: "What does a fragment add to the rendered page?",
+    choices: ["Nothing \u2014 it groups without an element", "A div", "A span"], correctIndex: 0,
+    why: "It exists only in the JSX. Wrapping in a real div would change your CSS layout for no reason, which is why fragments were added." },
+{ type: "read", chapter: "3 \u00b7 State and props", lang: "jsx",
+    title: "Props go down, events go up",
+    teach: "A parent passes data to a child through props, and the child tells the parent about changes by calling a function the parent passed in. Data flows one way.",
+    example: "<Child value={v} onChange={setV} />",
+    q: "How does a child change the parent's state?",
+    choices: ["By calling a function the parent passed down", "By setting the prop", "It cannot"], correctIndex: 0,
+    why: "Props are read-only in the child. The callback is the only route back up, and that one-way flow is what makes the data path traceable." },
+  { type: "predict", chapter: "3 \u00b7 State and props", lang: "jsx",
+    title: "State updates are not immediate",
+    teach: "Calling a state setter schedules a re-render; it does not change the variable you are holding. Reading it on the next line gives the old value.",
+    example: "setCount(count + 1);\nconsole.log(count);",
+    q: "What does the log show?",
+    choices: ["The old value", "The new value", "undefined"], correctIndex: 0,
+    why: "count is a const from this render and does not change. Using the updater form, setCount(c => c + 1), is how you build on the latest value." }
+];
+
+const VUE_STEPS = [
+  { type: "read", chapter: "1 \u00b7 Templates and data", lang: "vue",
+    title: "The template reacts to the data",
+    teach: "Vue keeps a data object and re-renders the template whenever it changes. You change the data; you never touch the DOM.",
+    example: "<template><p>{{ count }}</p></template>",
+    q: "How do you update what is shown?",
+    choices: ["Change the data \u2014 the template follows", "Edit the DOM directly", "Call render()"], correctIndex: 0,
+    why: "The template is a description of what the page should look like for the current data. Changing the DOM by hand fights the framework." },
+  { type: "pick", chapter: "1 \u00b7 Templates and data", lang: "vue",
+    title: "Directives",
+    teach: "v-if adds or removes an element, v-for repeats one, v-bind sets an attribute from data and v-on attaches an event.",
+    example: "<li v-for=\"i in items\" :key=\"i.id\">{{ i.name }}</li>",
+    q: "What does the colon in :key mean?",
+    choices: ["It is shorthand for v-bind", "It is a CSS selector", "It marks a comment"], correctIndex: 0,
+    why: "A plain attribute is a literal string; :attr binds it to an expression. Forgetting the colon passes the text \"i.id\" rather than its value." },
+  { type: "predict", chapter: "2 \u00b7 Two-way binding", lang: "vue",
+    title: "v-model on a form input",
+    teach: "v-model keeps an input and a data property in step in both directions \u2014 typing updates the data, and changing the data updates the field.",
+    example: "<input v-model=\"name\">",
+    q: "What happens when the user types?",
+    choices: ["The data property updates immediately", "Nothing until submit", "The DOM changes only"], correctIndex: 0,
+    why: "It is genuinely two-way, which saves the event handler React would need. It is also why Vue forms are so much shorter." },
+{ type: "read", chapter: "3 \u00b7 Components", lang: "vue",
+    title: "Props in, events out",
+    teach: "A component receives data through props and reports changes by emitting an event. Props are read-only in the child, exactly as in React.",
+    example: "props: ['value'],\nthis.$emit('update', newValue)",
+    q: "Why not just change the prop directly?",
+    choices: ["The parent owns it \u2014 the child would be overwritten on the next render", "It runs more slowly that way", "Props do not exist"], correctIndex: 0,
+    why: "The parent re-supplies the prop each render, so any local change is lost. Emitting lets the parent decide, which keeps one source of truth." },
+  { type: "predict", chapter: "3 \u00b7 Components", lang: "vue",
+    title: "Computed properties cache",
+    teach: "A computed property recalculates only when something it depends on changes. A method runs every time it is called, even if nothing changed.",
+    example: "computed: { total() { return this.items.length; } }",
+    q: "What does computed give over a method?",
+    choices: ["It caches until a dependency changes", "It is written differently only", "It runs sooner"], correctIndex: 0,
+    why: "In a template rendered many times, a method recomputes on each render and a computed does not. For anything expensive that is the whole difference." }
+];
+
+const SVELTE_STEPS = [
+  { type: "read", chapter: "1 \u00b7 Compiled, not shipped", lang: "svelte",
+    title: "The framework disappears",
+    teach: "Svelte compiles your components into plain JavaScript that updates the DOM directly. There is no framework runtime in the browser at all.",
+    example: "<script>let count = 0;</script>\n<p>{count}</p>",
+    q: "What ships to the browser?",
+    choices: ["Plain JavaScript with no framework", "Svelte plus your code", "A virtual DOM"], correctIndex: 0,
+    why: "The work happens at build time, so bundles are small and there is no diffing at runtime. That is the whole design bet." },
+  { type: "pick", chapter: "1 \u00b7 Compiled, not shipped", lang: "svelte",
+    title: "Assignment is reactivity",
+    teach: "Assigning to a variable is what triggers an update. No setState and no hooks \u2014 the compiler watches the assignments.",
+    example: "count += 1;   // the page updates",
+    q: "What makes the page re-render?",
+    choices: ["The assignment itself", "A special update call", "A timer"], correctIndex: 0,
+    why: "The compiler inserts the update where you assign. It also means mutating an array in place does NOT trigger one \u2014 you must reassign it." },
+  { type: "predict", chapter: "2 \u00b7 Derived values", lang: "svelte",
+    title: "The reactive declaration",
+    teach: "$: marks a statement that re-runs whenever anything it reads changes. It is how derived values stay in step.",
+    example: "$: doubled = count * 2;",
+    q: "When does doubled update?",
+    choices: ["Whenever count changes", "Once at startup", "Only when called"], correctIndex: 0,
+    why: "The compiler works out the dependencies for you. It is the same idea as a spreadsheet cell recalculating when its inputs change." },
+{ type: "read", chapter: "3 \u00b7 Components", lang: "svelte",
+    title: "Props are exported variables",
+    teach: "export let name declares a prop. It reads oddly and it is consistent: the component exports the variables its parent may set.",
+    example: "<script>export let name;</script>\n<p>Hello {name}</p>",
+    q: "What does export let do here?",
+    choices: ["Declares a prop the parent can pass in", "Exports it to other modules", "Makes it global"], correctIndex: 0,
+    why: "It is component-scoped, not a module export. Svelte reuses the keyword rather than inventing a new one." },
+  { type: "predict", chapter: "3 \u00b7 Components", lang: "svelte",
+    title: "Arrays need reassigning",
+    teach: "Reactivity is triggered by assignment, so pushing to an array updates the data and not the page. Reassigning the variable is what tells the compiler something changed.",
+    example: "items.push(x);        // no update\nitems = [...items, x]; // updates",
+    q: "Why does push not update the page?",
+    choices: ["No assignment happened", "push is disallowed", "Arrays are frozen"], correctIndex: 0,
+    why: "The compiler inserts update calls at assignments. A mutation is invisible to it, which is the price of compiling reactivity away." }
+];
+
+const PROCESSING_STEPS = [
+  { type: "read", chapter: "1 \u00b7 Sketches", lang: "processing",
+    title: "setup runs once, draw runs forever",
+    teach: "Processing calls setup once at the start and then draw about sixty times a second. Anything that should happen repeatedly goes in draw; anything that happens once goes in setup.",
+    example: "void setup() { size(400, 400); }\nvoid draw() { ellipse(mouseX, mouseY, 20, 20); }",
+    q: "Where does size() belong?",
+    choices: ["setup, because the window is created once", "draw", "Either"], correctIndex: 0,
+    why: "Resizing the window sixty times a second would be pointless and slow. The split between once and repeatedly is the whole structure of a sketch." },
+  { type: "pick", chapter: "1 \u00b7 Sketches", lang: "processing",
+    title: "The canvas remembers",
+    teach: "Processing does not clear the screen between frames unless you tell it to. Calling background() at the top of draw wipes it; leaving it out lets shapes accumulate into a trail.",
+    example: "void draw() {\n  background(255);\n  ellipse(mouseX, mouseY, 20, 20);\n}",
+    q: "What happens if you leave background() out?",
+    choices: ["Every frame is drawn on top, leaving a trail", "Nothing appears", "It errors"], correctIndex: 0,
+    why: "Both behaviours are useful \u2014 clearing gives animation, not clearing gives a drawing program. It is a choice rather than a mistake." },
+  { type: "predict", chapter: "2 \u00b7 Coordinates", lang: "processing",
+    title: "Y increases downward",
+    teach: "The origin is the top-left corner and y grows downward, which is upside down compared with school graphs. Every screen coordinate system works this way.",
+    example: "ellipse(0, 0, 20, 20);   // top-left corner",
+    q: "Where does ellipse(0, 0, ...) draw?",
+    choices: ["Top-left", "Centre", "Bottom-left"], correctIndex: 0,
+    why: "Screens are drawn from the top down, a convention inherited from how displays scan. Expecting the maths convention is the usual first surprise." }
+];
+
+const P5_STEPS = [
+  { type: "read", chapter: "1 \u00b7 In the browser", lang: "p5",
+    title: "Processing, in JavaScript",
+    teach: "p5.js brings the same setup and draw model to the web. The code runs in a page rather than a desktop window, so it can use anything else the browser offers.",
+    example: "function setup() { createCanvas(400, 400); }\nfunction draw() { circle(mouseX, mouseY, 20); }",
+    q: "What replaces size() from Processing?",
+    choices: ["createCanvas", "canvas()", "setSize"], correctIndex: 0,
+    why: "It creates a canvas element in the page rather than a window. The rest of the model is deliberately the same." },
+  { type: "pick", chapter: "1 \u00b7 In the browser", lang: "p5",
+    title: "Frame rate and animation",
+    teach: "draw runs about sixty times a second, and frameCount tells you which frame you are on. Animating means computing a position from time rather than moving a shape yourself.",
+    example: "let x = frameCount % width;\ncircle(x, 200, 20);",
+    q: "Why compute position from frameCount?",
+    choices: ["Each frame is drawn fresh, so position must be recalculated", "It runs faster that way", "frameCount is required"], correctIndex: 0,
+    why: "Nothing persists between frames unless you store it. Deriving position from time is what makes animation smooth and restartable." },
+  { type: "predict", chapter: "2 \u00b7 Interaction", lang: "p5",
+    title: "Event functions",
+    teach: "mousePressed, keyPressed and similar functions are called by p5 when those things happen. You define them and never call them yourself.",
+    example: "function mousePressed() { background(random(255)); }",
+    q: "Who calls mousePressed?",
+    choices: ["p5, when the mouse is pressed", "draw", "You do"], correctIndex: 0,
+    why: "It is a callback \u2014 you supply it and the library invokes it. Checking for clicks inside draw yourself is the harder way to do the same thing." }
+];
+
+const GDSCRIPT_STEPS = [
+  { type: "read", chapter: "1 \u00b7 Nodes and scenes", lang: "gdscript",
+    title: "A game is a tree of nodes",
+    teach: "Everything in Godot is a node \u2014 a sprite, a sound, a timer \u2014 arranged in a tree. A scene is a saved branch of that tree, and scenes nest inside each other.",
+    example: "extends Sprite2D\n\nfunc _ready():\n    position = Vector2(100, 100)",
+    q: "What does extends Sprite2D mean?",
+    choices: ["This script controls a Sprite2D node", "It imports a sprite", "It creates a class"], correctIndex: 0,
+    why: "The script attaches to a node and extends its behaviour. Godot's whole structure is composition through the node tree rather than deep inheritance." },
+  { type: "pick", chapter: "1 \u00b7 Nodes and scenes", lang: "gdscript",
+    title: "_ready and _process",
+    teach: "_ready runs once when the node enters the tree; _process runs every frame with the time since the last one. It is the same once-and-repeatedly split as Processing.",
+    example: "func _process(delta):\n    position.x += 100 * delta",
+    q: "Why multiply by delta?",
+    choices: ["So movement is the same speed regardless of frame rate", "To slow it down", "It is required syntax"], correctIndex: 0,
+    why: "Without delta, a faster computer moves the sprite faster. Multiplying by elapsed time makes the speed real rather than per-frame." },
+  { type: "predict", chapter: "2 \u00b7 Signals", lang: "gdscript",
+    title: "Nodes announce, they do not call",
+    teach: "A node emits a signal when something happens, and any other node can connect to it. The emitter knows nothing about who is listening.",
+    example: "signal died\nemit_signal(\"died\")",
+    q: "What does the emitting node know about its listeners?",
+    choices: ["Nothing", "Their names", "How many there are"], correctIndex: 0,
+    why: "That ignorance is the point \u2014 it keeps nodes independent, so a scene can be reused somewhere with completely different listeners." }
+];
+
+const HAND_BUILT = { general: GENERAL_STEPS, js: JS_STEPS, py: PY_STEPS, java: JAVA_STEPS, cpp: CPP_STEPS,
+  go: GO_STEPS, rust: RUST_STEPS, ts: TS_STEPS, c: C_STEPS, csharp: CSHARP_STEPS,
+  ruby: RUBY_STEPS, swift: SWIFT_STEPS, kotlin: KOTLIN_STEPS,
+  php: PHP_STEPS, lua: LUA_STEPS, perl: PERL_STEPS,
+  r: R_STEPS, dart: DART_STEPS, scala: SCALA_STEPS,
+  haskell: HASKELL_STEPS, elixir: ELIXIR_STEPS, clojure: CLOJURE_STEPS,
+  fortran: FORTRAN_STEPS, pascal: PASCAL_STEPS, asm: ASSEMBLY_STEPS,
+  sql: SQL_STEPS, bash: BASH_STEPS, basic: BASIC_STEPS,
+  prolog: PROLOG_STEPS, cobol: COBOL_STEPS, solidity: SOLIDITY_STEPS,
+  racket: RACKET_STEPS, tcl: TCL_STEPS, zig: ZIG_STEPS,
+  raku: RAKU_STEPS, crystal: CRYSTAL_STEPS, d: D_STEPS, v: V_STEPS,
+  objc: OBJC_STEPS, vb: VB_STEPS, matlab: MATLAB_STEPS, groovy: GROOVY_STEPS,
+  powershell: POWERSHELL_STEPS, vba: VBA_STEPS, julia: JULIA_STEPS, fsharp: FSHARP_STEPS,
+  erlang: ERLANG_STEPS, ocaml: OCAML_STEPS, elm: ELM_STEPS, scheme: SCHEME_STEPS,
+  lisp: LISP_STEPS, ada: ADA_STEPS, nim: NIM_STEPS, smalltalk: SMALLTALK_STEPS,
+  html: HTML_STEPS, css: CSS_STEPS,
+  processing: PROCESSING_STEPS, p5: P5_STEPS, gdscript: GDSCRIPT_STEPS,
+  jsx: JSX_STEPS, vue: VUE_STEPS, svelte: SVELTE_STEPS };
+
+
 
 // ---------- Per-language visual lessons ----------
 // A real graphics starter for every language that HAS idiomatic graphics.
@@ -5767,7 +9051,15 @@ const CLASSES = [
     // Graphics languages get a visual "draw" lesson. Others just use base steps.
     let steps = baseSteps;
     if (markup.length) steps = [...baseSteps, ...markup];
-    else if (vis) steps = [...baseSteps, vis];
+    else if (vis) {
+      /* Do not append a visual lesson a language already has. Python's
+         hand-built steps include "Draw a square with turtle", and the
+         auto-appended one is the same lesson again under a different chapter
+         — a learner reached the end and was asked to draw the same square
+         twice. Nothing checked, because appending always "worked". */
+      const already = baseSteps.some((st) => st.title === vis.title);
+      steps = already ? baseSteps : [...baseSteps, vis];
+    }
     return { id: l.id, tab: "coding", label: l.label, emoji: l.emoji, mode: l.mode, blurb: l.blurb, steps };
   }),
   // ===== AI tab =====
@@ -5776,53 +9068,233 @@ const CLASSES = [
     { type: "puzzle", chapter: "1 · What AI really is", title: "Why 'intelligence' is a tricky word", intro: "We call it 'artificial intelligence,' but AI doesn't think or understand like you do. When a chatbot answers you, it isn't 'reasoning' about the world — it's predicting what words most likely come next, based on patterns from huge amounts of text. It's incredibly good at that, which can LOOK like understanding. Knowing the difference helps you use AI wisely.", q: "When a chatbot replies, what's it really doing?", why: "Right — it predicts likely words. That's why it can sound confident even when it's wrong; it's pattern-matching, not understanding.", choices: ["Predicting likely next words from patterns", "Thinking and understanding like a human", "Looking up the answer in a fact-book"], correctIndex: 0 },
     { type: "puzzle", chapter: "2 · AI in everyday life", title: "You already use AI", intro: "AI isn't just chatbots. When your phone suggests the next word while texting, when a video app recommends what to watch, when your email filters spam — that's all AI spotting patterns. Recognizing it around you makes it less mysterious: it's a tool doing pattern-work, everywhere.", q: "Which of these uses AI?", why: "Correct. AI is already woven into everyday apps — mostly quiet pattern-spotting you don't even notice.", choices: ["All of them — texting suggestions, recommendations, spam filters", "Only robots that look human", "Only supercomputers in labs"], correctIndex: 0 },
     { type: "puzzle", chapter: "2 · AI in everyday life", title: "Why AI gets things wrong", intro: "Because AI learns from examples, it can only be as good as what it saw — and it can confidently make mistakes. If it never saw something, or saw misleading examples, it guesses based on patterns and can be flat wrong. This is why you should always double-check AI on anything important. It's a helpful assistant, not an all-knowing oracle.", q: "Why should you double-check important AI answers?", why: "Correct — AI predicts from patterns, so it can be confidently mistaken. Trust, but verify.", choices: ["It can sound sure but still be wrong", "It's always wrong", "It only works on weekends"], correctIndex: 0 }
-  ] },
+  ,
+      { type: "puzzle", chapter: "3 \u00b7 What it is not", title: "It does not understand",
+        intro: "A model produces text that fits the patterns of understanding without having any. It has no beliefs, no intentions and no model of the world \u2014 which is why it can describe something perfectly and then contradict itself two sentences later.",
+        q: "An AI writes a flawless explanation, then states the opposite. What does that show?",
+        choices: ["It is matching patterns, not holding a belief", "It changed its mind", "It was lying"], correctIndex: 0,
+        why: "Consistency would require something to be consistent WITH. Pattern-matching has no such anchor, which is why contradictions appear without any change of state." },
+      { type: "puzzle", chapter: "3 \u00b7 What it is not", title: "Training data has a cut-off",
+        intro: "A model learns from text gathered up to a point in time. Anything after that is simply absent \u2014 it will not say so unless asked, because it has no way of noticing the gap.",
+        q: "You ask about an event from last week and get a confident wrong answer. Why?",
+        choices: ["It fell after the training data ended", "The model is broken", "It was censored"], correctIndex: 0,
+        why: "The model has no sense of what it does not know. It fills the gap with whatever pattern fits, which is why the wrong answer sounds as confident as a right one." },
+      { type: "puzzle", chapter: "4 \u00b7 Judging output", title: "Verify anything that matters",
+        intro: "Treat AI output as a first draft. For anything with a cost attached \u2014 medical, legal, financial, or a fact you will repeat \u2014 check it against a real source before relying on it.",
+        q: "Which of these needs checking most urgently?",
+        choices: ["A drug dosage in a health question", "A brainstormed list of story ideas", "A rewritten paragraph"], correctIndex: 0,
+        why: "The cost of being wrong is what decides how hard to check. A bad story idea wastes a minute; a bad dosage does not." }] },
   { id: "ai_ml", tab: "ai", label: "Machine Learning", emoji: "📊", mode: "concept", blurb: "How machines actually 'learn' from data — the engine under most AI.", steps: [
     { type: "puzzle", chapter: "1 · Learning from data", title: "What 'training' means", intro: "Machine learning has two phases. First 'training': the AI studies tons of examples and slowly adjusts itself to get better at a task — like a student doing hundreds of practice problems. Then 'using it': once trained, it makes predictions on new things it hasn't seen. Training is the studying; using it is the test.", q: "What happens during 'training'?", why: "Right — training is the learning phase, like practicing before a test. The AI tunes itself using example after example.", choices: ["The AI studies many examples and adjusts to improve", "The AI is switched on for the first time", "The AI deletes its old data"], correctIndex: 0 },
     { type: "puzzle", chapter: "1 · Learning from data", title: "Why more (good) data helps", intro: "A machine learning model usually gets better with more examples — but ONLY if they're good examples. Show it 10,000 clear cat photos and it learns 'cat' well. Show it messy or wrong labels and it learns the wrong pattern. It's like studying from a good textbook vs a book full of errors: quantity helps, but quality matters more.", q: "What makes training data actually useful?", why: "Exactly — 'garbage in, garbage out.' More data helps, but only if it's accurate and clear.", choices: ["Lots of examples AND good/correct ones", "Just any huge pile of data", "A single perfect example"], correctIndex: 0 },
     { type: "predict", chapter: "2 · How it improves", title: "Learning from mistakes", intro: "Here's the loop that makes learning work. The AI guesses, checks how wrong it was, and nudges itself to be a little better — then repeats thousands of times. Read this simplified loop and predict what happens over many rounds.", q: "After many rounds, the guesses become...", code: "guess the answer\ncheck how wrong it was\nadjust a tiny bit to do better\n(repeat 10,000 times)", why: "Yes — each tiny adjustment compounds, so guesses steadily improve. That repeated 'guess, check, adjust' IS how machines learn.", choices: ["Gradually more accurate", "Randomly worse", "Exactly the same"], correctIndex: 0 }
-  ] },
+  ,
+      { type: "puzzle", chapter: "2 \u00b7 Where it goes wrong", title: "Overfitting",
+        intro: "A model can learn its practice examples TOO well \u2014 memorising them rather than learning the pattern. It then scores brilliantly on data it has seen and badly on anything new. That is overfitting, and it is why results are always measured on data the model was never trained on.",
+        q: "A model gets 99% on its training data and 60% on new data. What is happening?",
+        choices: ["It overfitted the training data", "It needs more training", "The new data is broken"], correctIndex: 0,
+        why: "It memorised rather than generalised. More training would make this worse, not better \u2014 which is why the fix is usually more data or a simpler model." },
+      { type: "puzzle", chapter: "2 \u00b7 Where it goes wrong", title: "Bias in, bias out",
+        intro: "A model learns whatever patterns are in its training data, including the unfair ones. A hiring model trained on past hires will reproduce whoever was hired before \u2014 the maths has no idea that some patterns should not be copied.",
+        q: "A CV-screening model rejects most applicants from one group. What is the most likely cause?",
+        choices: ["The training data reflected past bias", "The model is broken", "That group applied badly"], correctIndex: 0,
+        why: "It learned the pattern in the historical decisions it was shown. Nothing in the training process can tell a fair pattern from an unfair one \u2014 only people can." },
+      { type: "puzzle", chapter: "3 \u00b7 Kinds of learning", title: "Labelled or not",
+        intro: "Supervised learning uses examples with the right answer attached \u2014 photos labelled 'cat' or 'dog'. Unsupervised learning gets no labels and looks for structure on its own, like grouping customers who behave similarly.",
+        q: "You have a million photos with no labels and want to group similar ones. Which is it?",
+        choices: ["Unsupervised", "Supervised", "Neither"], correctIndex: 0,
+        why: "No labels means unsupervised. The distinction matters because labelling data is usually the expensive part of a project." },
+      { type: "puzzle", chapter: "4 \u00b7 Testing honestly", title: "Hold data back",
+        intro: "A model must be judged on data it has never seen. Splitting off a test set before training is the only way to find out whether it learned the pattern or memorised the examples.",
+        q: "Why not test on the training data?",
+        choices: ["It would score well by memorising and tell you nothing", "It runs more slowly that way", "There is not enough of it"], correctIndex: 0,
+        why: "Memorisation scores perfectly on data it has seen. The whole point of a held-out set is that memorising cannot help." },
+      { type: "puzzle", chapter: "4 \u00b7 Testing honestly", title: "Accuracy can mislead",
+        intro: "If 99% of transactions are legitimate, a model that flags nothing scores 99% accuracy and catches no fraud at all. What matters is how it performs on the rare case you care about.",
+        q: "A fraud detector is 99% accurate. Is that good?",
+        choices: ["Impossible to say without knowing how rare fraud is", "Yes, excellent", "No, terrible"], correctIndex: 0,
+        why: "With a rare event, accuracy is dominated by the common case. Precision and recall exist because a single accuracy figure hides exactly this." }] },
   { id: "ai_nn", tab: "ai", label: "Neural Networks", emoji: "🧠", mode: "concept", blurb: "The brain-inspired design behind modern AI — explained simply.", steps: [
     { type: "puzzle", chapter: "1 · The big idea", title: "Loosely inspired by brains", intro: "A neural network is a web of tiny simple units ('neurons') connected in layers, loosely inspired by how brain cells connect. Each unit does something tiny — takes numbers in, passes a number on. Alone, one is almost useless. But connect thousands in layers and the whole thing can recognize faces or write sentences. The power comes from the connections, not any single part.", q: "Where does a neural network's power come from?", why: "Right — each 'neuron' is simple; the intelligence emerges from thousands working together in layers.", choices: ["Many simple units connected together", "One very smart unit", "A giant lookup table"], correctIndex: 0 },
     { type: "puzzle", chapter: "1 · The big idea", title: "What 'layers' do", intro: "Neural networks process information in layers, and each layer builds on the last. For recognizing a photo: the first layer might spot simple edges, the next combines edges into shapes, the next combines shapes into things like 'eye' or 'ear,' and the final layer decides 'cat!' Each layer sees a bigger picture than the one before — like building understanding from tiny pieces up to the whole.", q: "How do layers work together to recognize a cat?", why: "Exactly — early layers find simple parts (edges), later layers combine them into meaningful things. Understanding is built up step by step.", choices: ["Simple features first, building up to the whole", "Every layer does the exact same job", "The last layer does everything alone"], correctIndex: 0 },
     { type: "puzzle", chapter: "2 · Why now", title: "Why neural networks got powerful", intro: "Neural networks are an old idea, but they only got amazing recently — because two things arrived: huge amounts of data (the internet) and powerful computer chips to crunch it. The idea didn't change much; we finally had enough examples to learn from and enough computing muscle to do the learning. Sometimes an old idea just needs the right conditions.", q: "Why did neural networks suddenly get so good recently?", why: "Right — the concept was old, but massive data and strong hardware finally made it work well.", choices: ["Lots of data + powerful chips became available", "The idea was just invented", "People started believing in them"], correctIndex: 0 }
-  ] },
+  ,
+      { type: "puzzle", chapter: "2 \u00b7 How it learns", title: "Weights are what change",
+        intro: "A neural network is a pile of numbers called weights. Training nudges each weight slightly in whatever direction reduces the error, over and over. The structure stays put and only the numbers move.",
+        q: "What is actually adjusted while a network trains?",
+        choices: ["The weights", "The number of layers", "The training data"], correctIndex: 0,
+        why: "Only the weights. The shape of the network is chosen beforehand by a person; training tunes the numbers inside it." },
+      { type: "puzzle", chapter: "2 \u00b7 How it learns", title: "Why layers help",
+        intro: "Each layer builds on the one before. In an image network the first layer might find edges, the next corners, the next shapes, and the last whole objects. Depth lets simple pieces combine into complicated ideas.",
+        q: "What does an early layer of an image network typically detect?",
+        choices: ["Simple edges", "Whole faces", "The final answer"], correctIndex: 0,
+        why: "Early layers find simple features and later ones combine them. That stacking is why it is called deep learning." },
+      { type: "puzzle", chapter: "3 \u00b7 Training in practice", title: "Gradient descent",
+        intro: "Training adjusts each weight in whatever direction reduces the error, by a small step, over and over. It is like walking downhill in fog \u2014 you cannot see the bottom, only which way is down from here.",
+        q: "Why take small steps rather than jumping straight to the answer?",
+        choices: ["The direction is only known locally", "It is more accurate", "Large steps are not allowed"], correctIndex: 0,
+        why: "The gradient tells you which way is down from where you stand, not where the bottom is. Too large a step can overshoot and make things worse." },
+      { type: "puzzle", chapter: "3 \u00b7 Training in practice", title: "Why training needs so much data",
+        intro: "A network has millions of weights, and each example nudges them slightly. With too few examples it can fit them exactly \u2014 memorising rather than generalising.",
+        q: "What goes wrong with a large network and a small dataset?",
+        choices: ["It memorises the examples instead of learning the pattern", "It trains too slowly", "It cannot start"], correctIndex: 0,
+        why: "There are more parameters than constraints, so an exact fit is available and learning the pattern is not required. That is overfitting seen from the other side." }] },
   { id: "ai_llm", tab: "ai", label: "LLMs & Chatbots", emoji: "💬", mode: "concept", blurb: "How ChatGPT-style AI works — what it's doing when it 'talks.'", steps: [
     { type: "puzzle", chapter: "1 · How they work", title: "Predicting the next word", intro: "A Large Language Model (LLM) — the tech behind chatbots — works by predicting the next word, over and over. Given 'The sky is ___,' it knows 'blue' is likely because it saw that pattern countless times in text. It builds a whole answer one word at a time, each based on everything so far. That's it — but done at massive scale, it produces fluent, helpful responses.", q: "What is an LLM fundamentally doing?", why: "Yes — it predicts one word at a time. Simple idea, staggering scale, surprisingly capable results.", choices: ["Predicting the next word, over and over", "Copy-pasting answers from a database", "Understanding meaning like a person"], correctIndex: 0 },
     { type: "puzzle", chapter: "1 · How they work", title: "Why they 'hallucinate'", intro: "Sometimes an LLM states something false with total confidence — people call this 'hallucinating.' It happens because the model predicts plausible-SOUNDING words, not verified facts. If a confident-sounding wrong answer fits the pattern, it'll say it. This isn't lying (it has no intent) — it's the predict-the-next-word machine producing something that looks right but isn't.", q: "Why does a chatbot sometimes confidently say false things?", why: "Correct — it aims for plausible-sounding, not verified-true. That's why checking important answers matters.", choices: ["It predicts plausible words, not checked facts", "It's trying to trick you", "It ran out of data"], correctIndex: 0 },
     { type: "puzzle", chapter: "2 · Using them well", title: "Why clear prompts matter", intro: "Since an LLM responds to patterns in what you give it, clearer input gets better output. 'Write something' is vague — the AI has to guess wildly. 'Write a 3-sentence bedtime story about a shy dragon' gives it a clear pattern to follow. Learning to ask clearly is a real skill: you're steering the prediction toward what you actually want.", q: "Why does a specific prompt work better?", why: "Right — specific prompts steer the AI toward what you want. Clarity in, quality out.", choices: ["It gives the AI a clearer pattern to follow", "Longer is always better", "The AI prefers big words"], correctIndex: 0 }
-  ] },
+  ,
+      { type: "puzzle", chapter: "2 \u00b7 What it cannot do", title: "It predicts, it does not look up",
+        intro: "A language model generates the next likely word from patterns, not by consulting a database of facts. That is why it can produce something fluent and confidently wrong \u2014 fluency and accuracy are different things to it.",
+        q: "Why can a chatbot state a wrong fact so confidently?",
+        choices: ["It predicts likely text, not verified facts", "It is lying", "Its database is out of date"], correctIndex: 0,
+        why: "There is no lookup step to fail. It produces text that PATTERNS like a correct answer, and confidence is part of that pattern." },
+      { type: "puzzle", chapter: "2 \u00b7 What it cannot do", title: "The context window",
+        intro: "A model sees only a limited amount of text at once \u2014 its context window. Anything earlier falls out of view, which is why a chatbot can forget what you said at the start of a long conversation.",
+        q: "Why might a chatbot forget something from earlier in a long chat?",
+        choices: ["It fell outside the context window", "It chose to ignore it", "To save memory"], correctIndex: 0,
+        why: "Only what fits in the window is visible. It is a hard limit on what the model can see, not a decision it made." },
+      { type: "puzzle", chapter: "3 \u00b7 Tokens", title: "Text is split into pieces",
+        intro: "A model does not see letters or words but tokens \u2014 chunks of a few characters. That is why it can miscount letters in a word: it never saw the letters separately.",
+        q: "Why might a model struggle to count the r's in a word?",
+        choices: ["It sees tokens, not individual letters", "It cannot count", "The word is too long"], correctIndex: 0,
+        why: "The word may arrive as one or two tokens with no letter-level detail. The task looks trivial and is genuinely hard from the model's view of the input." },
+      { type: "puzzle", chapter: "3 \u00b7 Tokens", title: "Why the same prompt gives different answers",
+        intro: "The model produces a probability for each possible next token and then samples from it. Unless sampling is turned off, the same prompt can take a different path each time.",
+        q: "Why is the output not identical every time?",
+        choices: ["The next token is sampled from a distribution", "The model keeps learning", "The servers differ"], correctIndex: 0,
+        why: "It is sampling, not memory \u2014 the model does not change between calls. Setting temperature to zero makes it pick the most likely token each time and become repeatable." }] },
   { id: "ai_vision", tab: "ai", label: "Image AI", emoji: "🖼️", mode: "concept", blurb: "How AI sees pictures — and how it makes brand-new ones.", steps: [
     { type: "puzzle", chapter: "1 · Seeing images", title: "How AI 'sees'", intro: "To a computer, an image is just a grid of numbers — each tiny dot (pixel) is a number for its color. AI 'sees' by finding patterns in those numbers: certain number-patterns mean 'edge,' others mean 'round shape,' and so on, building up to 'that's a face.' It doesn't see like your eyes; it does math on a grid of numbers until a pattern means something.", q: "What is an image, to an AI?", why: "Exactly — images are numbers to a computer, and AI spots patterns in those numbers to recognize things.", choices: ["A grid of numbers (pixels) it finds patterns in", "A picture it looks at with eyes", "A single color"], correctIndex: 0 },
     { type: "puzzle", chapter: "2 · Making images", title: "How AI creates new pictures", intro: "Image-generating AI learned from millions of pictures paired with descriptions. So when you ask for 'a purple cat in space,' it hasn't stored that exact image — it uses learned patterns of 'purple,' 'cat,' and 'space' to build a brand-new one from scratch, usually by starting with random noise and refining it step by step until it matches your words. It's painting from patterns, not copying.", q: "How does AI make a picture of something it's never seen exactly?", why: "Right — it blends learned concepts (purple + cat + space) into something new, rather than copying an existing image.", choices: ["It combines learned patterns into a new image", "It finds the exact image online", "It can't — it only copies"], correctIndex: 0 }
-  ] },
+  ,
+      { type: "puzzle", chapter: "2 \u00b7 Making images", title: "Starting from noise",
+        intro: "Diffusion models generate a picture by starting with random static and removing noise step by step, guided by your prompt, until an image emerges. It is closer to sculpting than to drawing.",
+        q: "What does a diffusion model start with?",
+        choices: ["Random noise", "A blank canvas", "A sample photo"], correctIndex: 0,
+        why: "It begins with static and repeatedly cleans it towards something matching the prompt. Nothing is copied from an existing picture." },
+      { type: "puzzle", chapter: "2 \u00b7 Making images", title: "Why hands are hard",
+        intro: "Image models learn what things usually look like, not how they are built. Hands appear in photos at every angle and often partly hidden, so the model has a weak sense of how many fingers there should be.",
+        q: "Why do AI images often get hands wrong?",
+        choices: ["The model learns appearance, not structure", "Hands are too small", "Nobody photographs hands"], correctIndex: 0,
+        why: "There is no underlying model of a hand having five fingers \u2014 only what hands tend to look like, which varies enormously." },
+      { type: "puzzle", chapter: "3 \u00b7 Recognising images", title: "Classification",
+        intro: "A classifier outputs a probability for each possible label. It always produces an answer, even for a picture of nothing it was trained on \u2014 it simply picks the closest match.",
+        q: "You show a cat-or-dog classifier a photo of a car. What happens?",
+        choices: ["It confidently reports cat or dog", "It says it does not know", "It errors"], correctIndex: 0,
+        why: "There is no third option in its output. A model can only answer the question it was built for, however inappropriate the input." },
+      { type: "puzzle", chapter: "3 \u00b7 Recognising images", title: "Training data decides what it sees",
+        intro: "A model trained mostly on one kind of image performs badly on others. Medical models trained at one hospital have failed at another because the scanners differed.",
+        q: "A skin-lesion model works well in testing and poorly in a new clinic. Most likely cause?",
+        choices: ["The new images differ from the training data", "The model degraded", "The staff are worse"], correctIndex: 0,
+        why: "The model learned the patterns in its training set, including incidental ones like lighting and equipment. Nothing warns you when new data falls outside that." }] },
   { id: "ai_using", tab: "ai", label: "Using AI", emoji: "🛠️", mode: "concept", blurb: "Practical skills: prompts, APIs, and how apps build with AI.", steps: [
     { type: "puzzle", chapter: "1 · Talking to AI", title: "A prompt is an instruction", intro: "A 'prompt' is simply what you tell an AI — your question or instruction. The skill is being clear about what you want: the goal, any details, and the format. Think of it like giving directions to a helpful but very literal assistant — the clearer you are, the better the result. Vague ask, vague answer.", q: "What's the key to a good prompt?", why: "Yes — clarity and specifics. Tell the AI the goal, the details, and the format you want.", choices: ["Being clear and specific about what you want", "Using as few words as possible", "Always being polite"], correctIndex: 0 },
     { type: "puzzle", chapter: "2 · Building with AI", title: "What an API is", intro: "An API is how one program talks to another. When an app uses AI, it sends the AI a message through an API — like ordering through a window: you pass a request in, you get a response back. This app does exactly that: it sends your lesson request to an AI's API and gets lessons back. APIs are how you plug AI 'brains' into your own creations.", q: "What does an API let a program do?", why: "Right — an API is the messenger between programs. It's how apps add AI without building it from scratch.", choices: ["Talk to another program (like plugging in AI)", "Make text bigger", "Store photos"], correctIndex: 0 },
     { type: "predict", chapter: "2 · Building with AI", title: "How this app uses AI", intro: "Here's the real flow when you tap 'generate' in CodeQuest: your app sends a prompt to an AI through an API, the AI sends back lessons as data, and — importantly — your app CHECKS those lessons actually work before showing them. Read the steps and pick what comes last.", q: "What's the important last step?", code: "1. You tap generate\n2. App sends a prompt to the AI (via API)\n3. AI sends lessons back\n4. ???", why: "Exactly — good apps verify AI output before trusting it. That's why broken lessons get filtered out here.", choices: ["The app checks they work, then shows them", "The app shows them instantly, unchecked", "The AI takes over the app"], correctIndex: 0 }
-  ] },
+  ,
+      { type: "puzzle", chapter: "2 \u00b7 Using it well", title: "Check what matters",
+        intro: "AI output is a draft, not an answer. Where being wrong has a cost \u2014 medical, legal, financial, or a fact you will repeat \u2014 verify it against a real source before relying on it.",
+        q: "An AI gives you a citation for an essay. What should you do?",
+        choices: ["Check the source exists", "Trust it, it is specific", "Ask again to confirm"], correctIndex: 0,
+        why: "Invented citations look exactly like real ones, and asking again can repeat the invention. Only checking the source settles it." },
+      { type: "puzzle", chapter: "2 \u00b7 Using it well", title: "Being specific helps",
+        intro: "A vague request gives a vague answer. Saying what it is for, who it is for and how long it should be gives the model far more to work with than 'write about dogs'.",
+        q: "Which request gets the more useful answer?",
+        choices: ["A 200-word explanation of dog training for a beginner", "Write about dogs", "Dogs?"], correctIndex: 0,
+        why: "Length, audience and purpose narrow what a good answer looks like. Most disappointing AI output is a vague question answered accurately." }] },
   // ===== Hardware tab =====
   { id: "hw_general", tab: "hardware", label: "Hardware Basics", emoji: "🔌", mode: "concept", blurb: "What 'hardware' even means, and the big pieces that make a computer.", steps: [
     { type: "puzzle", chapter: "1 · What is hardware", title: "Hardware vs software", intro: "Hardware is the STUFF you can touch — the chips, wires, screen, keyboard. Software is the instructions that run on it — the apps and code, which you can't physically hold. A helpful way to think about it: hardware is the body, software is the thoughts. Neither does much alone; a computer needs both — a body to act and thoughts to guide it.", q: "Which is hardware?", why: "Right — hardware is the physical stuff. Software (apps, sites) is the instructions running on that hardware.", choices: ["The physical chips and wires you can touch", "A game app", "A website"], correctIndex: 0 },
     { type: "puzzle", chapter: "1 · What is hardware", title: "Everything is electricity", intro: "At its heart, a computer is just electricity being controlled very cleverly. Every letter you type, every image you see, is electricity switched on and off in patterns, millions of times a second. There's no magic inside — just tiny switches flipping incredibly fast. Once you see a computer as 'controlled electricity,' the rest starts to make sense.", q: "What's really happening inside a working computer?", why: "Exactly — it's all electricity, switched in patterns at incredible speed. That's the foundation everything else builds on.", choices: ["Electricity being switched on/off in patterns", "Tiny gears turning", "Water flowing through pipes"], correctIndex: 0 }
-  ] },
+  ,
+      { type: "puzzle", chapter: "2 \u00b7 Everything is switches", title: "Why binary",
+        intro: "A computer stores everything as ones and zeros because a switch is easy to build and hard to misread \u2014 it is either on or off. Ten distinguishable voltage levels would be far more fragile than two.",
+        q: "Why do computers use two states rather than ten?",
+        choices: ["Two states are hard to confuse", "Two is faster", "Ten was never tried"], correctIndex: 0,
+        why: "Reliability. Telling 'on' from 'off' survives noise and heat; telling one tenth of a volt from another does not." },
+      { type: "puzzle", chapter: "2 \u00b7 Everything is switches", title: "A bit and a byte",
+        intro: "One switch is a bit. Eight of them make a byte, which has 256 possible combinations \u2014 enough for a character of text, which is why a byte became the standard unit.",
+        q: "How many different values can one byte hold?",
+        choices: ["256", "8", "64"], correctIndex: 0,
+        why: "Each of the 8 bits doubles the possibilities, so 2 to the power 8 is 256. Every extra bit doubles it again." },
+      { type: "puzzle", chapter: "3 \u00b7 Speed and storage", title: "Why a CPU has a cache",
+        intro: "Fetching from RAM takes the processor hundreds of idle cycles. A cache is a small, very fast memory holding recently used data, so most fetches never reach RAM at all.",
+        q: "Why is cache small if it is so much faster?",
+        choices: ["Fast memory is expensive and must sit close to the core", "It is a software limit", "Nobody needs more"], correctIndex: 0,
+        why: "Speed comes from being physically close and built differently, and both cost. The hierarchy exists because you cannot have all three of fast, large and cheap." },
+      { type: "puzzle", chapter: "3 \u00b7 Speed and storage", title: "Clock speed is not the whole story",
+        intro: "A 3 GHz chip does three billion cycles a second, but how much work each cycle does varies enormously between designs. Comparing clock speeds across different architectures says very little.",
+        q: "Chip A runs at 3 GHz and chip B at 2.5 GHz. Which is faster?",
+        choices: ["Impossible to say from clock speed alone", "A", "B"], correctIndex: 0,
+        why: "Work per cycle, core count and cache all matter. Clock speed only compares meaningfully between chips of the same design." }] },
   { id: "hw_computer", tab: "hardware", label: "Inside a Computer", emoji: "💻", mode: "concept", blurb: "The main parts inside — CPU, memory, storage — and what each does.", steps: [
     { type: "puzzle", chapter: "1 · The thinking parts", title: "The CPU: the brain", intro: "The CPU (Central Processing Unit) is the part that actually DOES things — it follows instructions, one after another, billions per second. Every calculation, every action, passes through it. Think of it as an incredibly fast worker who can only do simple steps, but does them so quickly it feels instant. When people say a computer is 'fast,' they usually mean the CPU.", q: "What does the CPU do?", why: "Right — the CPU is the worker that carries out instructions. Its speed is why computers feel instant.", choices: ["Follows instructions very fast — the 'doing' part", "Stores your files long-term", "Displays the picture"], correctIndex: 0 },
     { type: "puzzle", chapter: "1 · The thinking parts", title: "RAM: the desk", intro: "RAM is the computer's working memory — where it keeps what it's using RIGHT NOW. Picture a desk: the bigger your desk, the more papers (tasks) you can spread out and work on at once. But clear the desk (turn off the computer) and it's all wiped. That's the key thing about RAM: fast, but temporary.", q: "RAM is like a desk because...", why: "Yes — RAM is fast, temporary workspace. More RAM = more you can do at once, but it empties when powered off.", choices: ["It holds what you're working on now, but clears when off", "It keeps things forever", "It's where the CPU sleeps"], correctIndex: 0 },
     { type: "puzzle", chapter: "2 · The remembering parts", title: "Storage: the filing cabinet", intro: "Storage (a hard drive or SSD) is where files live PERMANENTLY — your photos, apps, documents stay even when the power's off. Back to the office analogy: if RAM is your desk, storage is the filing cabinet. Slower to reach into than the desk, but it keeps everything safely until you need it. That's why you 'save' files — you're moving them from the temporary desk to the permanent cabinet.", q: "Why don't your saved photos disappear when the computer turns off?", why: "Right — storage keeps things permanently. Saving moves work from temporary RAM to lasting storage.", choices: ["They're in permanent storage, not temporary RAM", "The CPU remembers them", "They're printed inside"], correctIndex: 0 },
     { type: "puzzle", chapter: "2 · The remembering parts", title: "Why bits and bytes", intro: "Computers store everything as bits — a bit is a single 1 or 0, like a switch that's on or off. Eight bits make a byte. Why only 1s and 0s? Because electricity is easy to make 'on' or 'off,' and hard to make reliably 'kind of medium.' So computers use the simplest possible signal — on/off — and build EVERYTHING (numbers, words, photos, video) from patterns of it. Simple parts, endless combinations.", q: "Why do computers use only 1s and 0s?", why: "Exactly — on/off is the most reliable electrical signal, and everything is built from patterns of it.", choices: ["On/off electricity is simple and reliable", "They can't count higher", "1 and 0 are lucky numbers"], correctIndex: 0 }
-  ] },
+  ,
+      { type: "puzzle", chapter: "2 \u00b7 Memory and storage", title: "RAM forgets, disk does not",
+        intro: "RAM is fast working memory that empties when the power goes. Storage \u2014 a hard drive or SSD \u2014 is slower but keeps its contents. That is why unsaved work disappears in a power cut.",
+        q: "Why is unsaved work lost when a computer loses power?",
+        choices: ["It was only in RAM", "The disk erases it", "The CPU deletes it"], correctIndex: 0,
+        why: "RAM needs power to hold anything. Saving copies it to storage, which does not \u2014 that is the whole difference between the two." },
+      { type: "puzzle", chapter: "2 \u00b7 Memory and storage", title: "Why more RAM helps",
+        intro: "When RAM fills, the computer moves things it is not using out to disk, which is far slower. That swapping is what makes a machine feel sluggish with many programs open.",
+        q: "Why does a computer slow down when RAM runs out?",
+        choices: ["It starts using the much slower disk", "The CPU overheats", "Programs shrink"], correctIndex: 0,
+        why: "It swaps data out to storage and back. The CPU is fine \u2014 it is waiting on a disk that is thousands of times slower than RAM." }] },
   { id: "hw_circuits", tab: "hardware", label: "How Circuits Work", emoji: "⚡", mode: "concept", blurb: "The path electricity travels — the foundation of all electronics.", steps: [
     { type: "puzzle", chapter: "1 · The loop", title: "A circuit is a loop", intro: "Electricity only flows in a complete loop — out from the power source, through your parts, and back again. Think of it like a train track that must form a full circle: break the track anywhere and the train stops. That's why a cut wire or a gap kills the whole thing — the electricity has nowhere to go. Every electronic device is built around keeping this loop complete.", q: "Why does electricity stop if there's a gap in the circuit?", why: "Right — electricity needs a complete loop. Break the loop anywhere and the flow stops everywhere.", choices: ["The loop is broken, so it can't flow around", "Gaps make it faster", "Electricity leaks out the gap"], correctIndex: 0 },
     { type: "puzzle", chapter: "1 · The loop", title: "What a switch really is", intro: "A switch is just a controllable gap in the loop. Flip it 'on' and the gap closes, completing the circle so electricity flows. Flip it 'off' and it opens the gap, stopping everything. That's all a light switch does — it's not adding or removing electricity, just opening and closing a break in the loop. Simple, but it's the basis of all control in electronics.", q: "What does a switch actually do?", why: "Exactly — a switch opens/closes the loop. Closed = flows, open = stops. Control in its simplest form.", choices: ["Opens or closes a gap in the loop", "Creates electricity", "Speeds up the flow"], correctIndex: 0 },
     { type: "puzzle", chapter: "2 · Flow and pressure", title: "Voltage and current, simply", intro: "Two words you'll hear: voltage and current. Use water: voltage is like water PRESSURE (how hard it's pushed), current is like the AMOUNT of water flowing. More pressure (voltage) pushes more water (current) through. This analogy isn't perfect, but it gives you real intuition: voltage pushes, current is what actually flows.", q: "In the water analogy, voltage is like...", why: "Right — voltage is the 'push' (pressure), current is the 'flow' (amount). More push moves more flow.", choices: ["The pressure pushing the water", "The pipe's color", "The water's temperature"], correctIndex: 0 }
-  ] },
+  ,
+      { type: "puzzle", chapter: "2 \u00b7 Making a circuit work", title: "Why a resistor with an LED",
+        intro: "An LED has almost no resistance of its own, so connecting it straight across a supply lets far too much current through and destroys it. A resistor in series limits that current.",
+        q: "What happens to an LED wired with no resistor?",
+        choices: ["Too much current burns it out", "It stays dim", "Nothing changes"], correctIndex: 0,
+        why: "Nothing limits the current, so it rises until the LED fails \u2014 usually instantly. The resistor is not optional." },
+      { type: "puzzle", chapter: "2 \u00b7 Making a circuit work", title: "Series and parallel",
+        intro: "In series there is one path, so the same current flows through everything and one break stops it all. In parallel there are branches, and each gets the full voltage.",
+        q: "One bulb in a series string fails. What happens to the others?",
+        choices: ["They all go out", "They stay lit", "They get brighter"], correctIndex: 0,
+        why: "A series circuit has one path, so a break anywhere stops the current everywhere. It is why old Christmas lights all died together." },
+      { type: "puzzle", chapter: "3 \u00b7 Reading a diagram", title: "Circuit symbols",
+        intro: "A circuit diagram is a map of connections, not a picture of the layout. Where components sit on the page does not matter \u2014 only what is joined to what.",
+        q: "Two diagrams look completely different but connect the same components the same way. Are they the same circuit?",
+        choices: ["Yes \u2014 only the connections matter", "No", "Only if drawn identically"], correctIndex: 0,
+        why: "The diagram records topology. Redrawing it neatly changes nothing electrically, which is why the same circuit can look unrecognisable in two textbooks." },
+      { type: "puzzle", chapter: "3 \u00b7 Reading a diagram", title: "Why a switch goes in series",
+        intro: "A switch works by creating a break, so it must sit in the path it controls. Wired in parallel it would short out whatever it was meant to switch.",
+        q: "What happens if you wire a switch in parallel with a lamp?",
+        choices: ["Closing it shorts out the lamp and turns it off", "It works normally", "Nothing, the lamp is unaffected"], correctIndex: 0,
+        why: "The current takes the easier route through the closed switch and bypasses the lamp entirely. Closing the switch turns the lamp OFF, which is the opposite of what was wanted." }] },
   { id: "hw_components", tab: "hardware", label: "Components & How to Use Them", emoji: "🧩", mode: "concept", blurb: "LEDs, resistors, transistors — what they do and how to use each.", steps: [
     { type: "puzzle", chapter: "1 · Making light", title: "LEDs: one-way lights", intro: "An LED is a tiny light that glows when electricity flows through it — but only in ONE direction. It has a long leg (goes to +) and a short leg (goes to −); wire it backwards and it simply won't light. Why care about direction? Because it teaches a key electronics idea: some parts only work one way, so HOW you connect them matters, not just THAT you connect them.", q: "Why won't an LED light if wired backwards?", why: "Right — LEDs are one-directional. Long leg to +, short to −. Direction matters with many components.", choices: ["LEDs only let electricity flow one direction", "It's broken", "It needs more power"], correctIndex: 0 },
     { type: "puzzle", chapter: "1 · Making light", title: "Resistors: the flow limiters", intro: "A resistor slows down (limits) how much electricity flows. Why would you want LESS? Because too much current destroys parts — an LED wired straight to a battery gets overwhelmed and burns out instantly. A resistor placed before it holds the flow back to a safe level. Think of it as a narrow section in a pipe: it deliberately restricts flow to protect what's downstream.", q: "Why put a resistor in front of an LED?", why: "Exactly — resistors limit current to safe levels, protecting delicate parts like LEDs from burning out.", choices: ["To limit current so the LED isn't destroyed", "To make it brighter", "To store power for later"], correctIndex: 0 },
     { type: "puzzle", chapter: "2 · The magic part", title: "Transistors: tiny switches", intro: "A transistor is a switch with NO moving parts — a small electrical signal can turn a larger flow on or off. Why is this the most important invention in electronics? Because you can pack BILLIONS of them onto a chip, each flipping on/off, and that's literally how computers think in 1s and 0s. Every CPU is a vast city of transistors. This tiny switch is the building block of the entire digital world.", q: "Why are transistors so important?", why: "Right — transistors are switches, and billions together form every chip. They ARE how computers compute.", choices: ["Billions of tiny switches make up computer chips", "They make the prettiest light", "They store the most photos"], correctIndex: 0 },
     { type: "puzzle", chapter: "2 · The magic part", title: "Putting it together", intro: "Now connect the ideas: a circuit is a loop, a switch opens/closes it, a resistor limits flow to protect parts, and an LED shows you it's working. A basic 'blink an LED' project uses ALL of these — a power source, a resistor to stay safe, an LED to see the result, and a controllable switch (often a tiny computer) to turn it on and off. Real electronics is just combining these simple, understandable pieces.", q: "In a simple LED project, what's the resistor's job?", why: "Exactly — the resistor protects the LED. You've now connected loops, switches, resistors, and LEDs into one working idea.", choices: ["Keep current safe so the LED survives", "Make the loop longer", "Store the light"], correctIndex: 0 }
-  ] },
+  ,
+      { type: "puzzle", chapter: "2 \u00b7 Choosing a part", title: "What a capacitor does",
+        intro: "A capacitor stores a small amount of charge and releases it quickly. Placed across a supply it smooths out dips, which is why they sit near almost every chip on a board.",
+        q: "Why is a capacitor placed next to a chip?",
+        choices: ["To smooth the supply voltage", "To store data", "To slow the chip"], correctIndex: 0,
+        why: "It supplies a burst of charge when the chip suddenly draws current, keeping the voltage steady. Without them chips misbehave unpredictably." },
+      { type: "puzzle", chapter: "2 \u00b7 Choosing a part", title: "A diode only goes one way",
+        intro: "A diode lets current pass in one direction and blocks it in the other, which is how a circuit is protected from a battery inserted backwards.",
+        q: "What does a diode do if the current tries to flow backwards?",
+        choices: ["Blocks it", "Slows it", "Reverses it"], correctIndex: 0,
+        why: "It blocks it. That one-way behaviour is also how alternating current is turned into direct current." },
+      { type: "puzzle", chapter: "3 \u00b7 Choosing values", title: "Reading a resistor",
+        intro: "Colour bands give the value: two digits, then a multiplier, then a tolerance. Brown-black-red is 1, 0, then two zeros \u2014 1000 ohms.",
+        q: "What does the third band represent?",
+        choices: ["How many zeros to add", "The third digit", "The power rating"], correctIndex: 0,
+        why: "It is the multiplier. Reading it as a third digit gives a value out by orders of magnitude, which is the usual beginner mistake." },
+      { type: "puzzle", chapter: "3 \u00b7 Choosing values", title: "Power ratings matter",
+        intro: "A resistor turns electrical energy into heat at a rate of I\u00B2R. Exceed its rating and it burns out, regardless of whether the resistance was correct.",
+        q: "A circuit works on paper but the resistor scorches. What was likely wrong?",
+        choices: ["Its power rating was too low for the current", "The resistance was wrong", "The voltage was too low"], correctIndex: 0,
+        why: "Resistance and power rating are separate specifications. Getting the ohms right and the watts wrong gives a circuit that is correct and still fails." }] },
 ];
 
 // ---------- Progress helpers ----------
@@ -6982,7 +10454,16 @@ function Home({ progress, aiLessons, savedProjects = [], profileDescription = ""
         // ===== Coding tab (default) =====
         const general = CLASSES.find((c) => c.id === "general");
         const generalMulti = CLASSES.find((c) => c.id === "general_multifile");
-        const langs = CLASSES.filter((c) => c.tab === "coding" && c.id !== "general" && c.id !== "general_multifile");
+        /* A class with no steps is not a class. Thirteen of them \u2014 SQL,
+           Bash, Assembly, COBOL and others \u2014 were listed and opened to
+           nothing at all, which is worse than not offering them: the learner
+           spends the click and the trust.
+
+           They are hidden rather than deleted, so the moment someone writes
+           steps for Bash it appears on its own. The count below says how many
+           are waiting, so the gap stays visible instead of looking finished. */
+        const langs = CLASSES.filter((c) => c.tab === "coding" && c.id !== "general" && c.id !== "general_multifile"
+          && (c.steps || []).length > 0);
         const generalShown = matches(general);
         const multiShown = generalMulti && matches(generalMulti);
         const langsShown = langs.filter(matches);
@@ -7020,7 +10501,20 @@ function Home({ progress, aiLessons, savedProjects = [], profileDescription = ""
           );
         }
 
-        const ordered = sortMode === "alpha" ? [...langsShown].sort((a, b) => a.label.localeCompare(b.label)) : langsShown;
+        /* The default order was the order of the CLASSES array, which put AWK
+           second and multi-file exercises ahead of every real language. A
+           beginner opening the list met AWK before Python.
+
+           "Default" now means most-used-first: the languages someone is
+           actually likely to want, then everything else in the order it was
+           written. Alphabetical and by-grading remain as explicit choices, and
+           nothing is hidden \u2014 only reordered. */
+        const POPULAR = ["py", "js", "java", "cpp", "c", "csharp", "ts", "html", "css",
+          "sql", "go", "rust", "swift", "kotlin", "php", "ruby", "r", "bash"];
+        const rank = (c) => { const i = POPULAR.indexOf(c.id); return i < 0 ? 999 : i; };
+        const ordered = sortMode === "alpha"
+          ? [...langsShown].sort((a, b) => a.label.localeCompare(b.label))
+          : [...langsShown].sort((a, b) => rank(a) - rank(b));
         return (
           <>
             {(generalShown || multiShown) && (<><div className="cq-section-label">Start here</div><div className="cq-classlist" style={{ marginBottom: 28 }}>{generalShown && renderCard(general)}{multiShown && renderCard(generalMulti)}</div></>)}
@@ -7882,6 +11376,37 @@ function stepGuard(step, requiredArrays = [], onDone) {
 // lesson (or corrupt saved state) can slip in an object — rendering that
 // directly throws "Objects are not valid as a React child" and blanks the whole
 // lesson. This makes the worst case a harmless string instead of a crash.
+/* Shuffle a step's choices, deterministically.
+
+   The correct answer sat at position 0 in 88% of the 536 questions and was the
+   longest option in 76% of them. Nothing shuffled at render, so "always pick
+   the first, longest one" scored around three quarters without reading
+   anything. That is not a quiz.
+
+   The order is derived from the step's own title, so it is stable: the same
+   step always shuffles the same way, and re-rendering does not move the
+   buttons under someone's finger mid-answer. Fixing the source data would not
+   have worked \u2014 authors naturally write the right answer first, and this
+   would drift straight back. */
+function shuffledChoices(step) {
+  const list = step && step.choices ? step.choices : [];
+  const correct = Number.isInteger(step && step.correctIndex) ? step.correctIndex
+    : Number.isInteger(step && step.answer) ? step.answer : 0;
+  if (list.length < 2) return { choices: list, correct: correct };
+
+  let h = 2166136261;
+  const key = String((step && step.title) || "") + "|" + String((step && step.q) || "");
+  for (let i = 0; i < key.length; i++) { h ^= key.charCodeAt(i); h = Math.imul(h, 16777619); }
+  const rand = () => { h ^= h << 13; h ^= h >>> 17; h ^= h << 5; return Math.abs(h) / 2147483647 % 1; };
+
+  const order = list.map((_, i) => i);
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    const t = order[i]; order[i] = order[j]; order[j] = t;
+  }
+  return { choices: order.map((i) => list[i]), correct: order.indexOf(correct) };
+}
+
 function renderText(v) {
   if (v === null || v === undefined) return "";
   if (typeof v === "string") return v;
@@ -7893,7 +11418,7 @@ function ConceptStep({ step, onDone }) {
   const [tab, setTab] = useState(0); // which language tab
   const [picked, setPicked] = useState(null);
   const stats = useLessonStats();
-  const correct = picked === step.answer;
+  const correct = picked === shuffledChoices(step).correct;
 
   // Some concept steps (e.g. the General Multi-file chapters) teach a general
   // idea with a `teach` body and no per-language code table. Those have no
@@ -7935,18 +11460,18 @@ function ConceptStep({ step, onDone }) {
         <div className="cq-concept-label">Quick check</div>
         <div className="cq-puzzleq small">{step.q}</div>
         <div className="cq-choices">
-          {step.choices.map((c, i) => {
-            const state = picked === null ? "" : i === step.answer ? "right" : i === picked ? "wrong" : "dim";
+          {shuffledChoices(step).choices.map((c, i) => {
+            const state = picked === null ? "" : i === shuffledChoices(step).correct ? "right" : i === picked ? "wrong" : "dim";
             return (
               <button key={i} className={`cq-choice ${state}`} disabled={correct}
                 onClick={() => {
                   setPicked(i);
-                  if (i === step.answer) onDone(stats.buildStats());
+                  if (i === shuffledChoices(step).correct) onDone(stats.buildStats());
                   else stats.recordWrong();
                 }}>
                 <span className="cq-choice-plain">{renderText(c)}</span>
-                {picked !== null && i === step.answer && <span className="cq-choice-mark">✓</span>}
-                {picked === i && i !== step.answer && <span className="cq-choice-mark">try again</span>}
+                {picked !== null && i === shuffledChoices(step).correct && <span className="cq-choice-mark">✓</span>}
+                {picked === i && i !== shuffledChoices(step).correct && <span className="cq-choice-mark">try again</span>}
               </button>
             );
           })}
@@ -7962,7 +11487,7 @@ function ConceptStep({ step, onDone }) {
 function PuzzleStep({ step, onDone }) {
   const [picked, setPicked] = useState(null);
   const stats = useLessonStats();
-  const correct = picked === step.correctIndex;
+  const correct = picked === shuffledChoices(step).correct;
   const bad = stepGuard(step, ["choices"], onDone); if (bad) return bad;
   return (
     <div className="cq-card2">
@@ -7970,18 +11495,18 @@ function PuzzleStep({ step, onDone }) {
       <p className="cq-intro">{step.intro}</p>
       <div className="cq-puzzleq">{step.q}</div>
       <div className="cq-choices">
-        {step.choices.map((c, i) => {
-          const state = picked === null ? "" : i === step.correctIndex ? "right" : i === picked ? "wrong" : "dim";
+        {shuffledChoices(step).choices.map((c, i) => {
+          const state = picked === null ? "" : i === shuffledChoices(step).correct ? "right" : i === picked ? "wrong" : "dim";
           return (
             <button key={i} className={`cq-choice ${state}`} disabled={correct}
               onClick={() => {
                 setPicked(i);
-                if (i === step.correctIndex) onDone(stats.buildStats());
+                if (i === shuffledChoices(step).correct) onDone(stats.buildStats());
                 else stats.recordWrong();
               }}>
               <span className="cq-choice-plain">{renderText(c)}</span>
-              {picked !== null && i === step.correctIndex && <span className="cq-choice-mark">✓</span>}
-              {picked === i && i !== step.correctIndex && <span className="cq-choice-mark">try again</span>}
+              {picked !== null && i === shuffledChoices(step).correct && <span className="cq-choice-mark">✓</span>}
+              {picked === i && i !== shuffledChoices(step).correct && <span className="cq-choice-mark">try again</span>}
             </button>
           );
         })}
@@ -7995,7 +11520,7 @@ function PuzzleStep({ step, onDone }) {
 function PredictStep({ step, onDone }) {
   const [picked, setPicked] = useState(null);
   const stats = useLessonStats();
-  const correct = picked === step.correctIndex;
+  const correct = picked === shuffledChoices(step).correct;
   const bad = stepGuard(step, ["choices"], onDone); if (bad) return bad;
   return (
     <div className="cq-card2">
@@ -8004,18 +11529,18 @@ function PredictStep({ step, onDone }) {
       <div className="cq-neutralcode"><pre>{step.code}</pre></div>
       <div className="cq-puzzleq">{step.q}</div>
       <div className="cq-choices">
-        {step.choices.map((c, i) => {
-          const state = picked === null ? "" : i === step.correctIndex ? "right" : i === picked ? "wrong" : "dim";
+        {shuffledChoices(step).choices.map((c, i) => {
+          const state = picked === null ? "" : i === shuffledChoices(step).correct ? "right" : i === picked ? "wrong" : "dim";
           return (
             <button key={i} className={`cq-choice ${state}`} disabled={correct}
               onClick={() => {
                 setPicked(i);
-                if (i === step.correctIndex) onDone(stats.buildStats());
+                if (i === shuffledChoices(step).correct) onDone(stats.buildStats());
                 else stats.recordWrong();
               }}>
               <code>{renderText(c)}</code>
-              {picked !== null && i === step.correctIndex && <span className="cq-choice-mark">✓</span>}
-              {picked === i && i !== step.correctIndex && <span className="cq-choice-mark">try again</span>}
+              {picked !== null && i === shuffledChoices(step).correct && <span className="cq-choice-mark">✓</span>}
+              {picked === i && i !== shuffledChoices(step).correct && <span className="cq-choice-mark">try again</span>}
             </button>
           );
         })}
@@ -8108,7 +11633,7 @@ function ReadStep({ step, onDone }) {
 function PickStep({ step, onDone }) {
   const [picked, setPicked] = useState(null);
   const stats = useLessonStats();
-  const correct = picked === step.correctIndex;
+  const correct = picked === shuffledChoices(step).correct;
   const bad = stepGuard(step, ["choices"], onDone); if (bad) return bad;
   return (
     <div className="cq-card2">
@@ -8116,18 +11641,18 @@ function PickStep({ step, onDone }) {
       <p className="cq-intro">{step.intro}</p>
       <div className="cq-goal">🎯 {step.goal}</div>
       <div className="cq-choices">
-        {step.choices.map((c, i) => {
-          const state = picked === null ? "" : i === step.correctIndex ? "right" : i === picked ? "wrong" : "dim";
+        {shuffledChoices(step).choices.map((c, i) => {
+          const state = picked === null ? "" : i === shuffledChoices(step).correct ? "right" : i === picked ? "wrong" : "dim";
           return (
             <button key={i} className={`cq-choice ${state}`} disabled={correct}
               onClick={() => {
                 setPicked(i);
-                if (i === step.correctIndex) onDone(stats.buildStats());
+                if (i === shuffledChoices(step).correct) onDone(stats.buildStats());
                 else stats.recordWrong();
               }}>
               <code>{renderText(c)}</code>
-              {picked !== null && i === step.correctIndex && <span className="cq-choice-mark">✓</span>}
-              {picked === i && i !== step.correctIndex && <span className="cq-choice-mark">try again</span>}
+              {picked !== null && i === shuffledChoices(step).correct && <span className="cq-choice-mark">✓</span>}
+              {picked === i && i !== shuffledChoices(step).correct && <span className="cq-choice-mark">try again</span>}
             </button>
           );
         })}
@@ -8189,11 +11714,11 @@ function BuildStep({ step, onDone }) {
 function FillStep({ step, onDone }) {
   const [choice, setChoice] = useState(null);
   const stats = useLessonStats();
-  const correct = choice === step.answer;
+  const correct = choice === shuffledChoices(step).correct;
   const fillBad = stepGuard(step, ["blankChoices"], onDone);
   const pick = (c) => {
     setChoice(c);
-    if (c === step.answer) {
+    if (c === shuffledChoices(step).correct) {
       if (step.runnable) { const v = verifyRuns(step.buildFull(c), step.fnName, step.tests); if (!v.ok) { stats.recordWrong(); return; } }
       onDone(stats.buildStats());
     } else {
@@ -13198,6 +16723,21 @@ body{overflow-x:clip}
 @keyframes cqFadeIn { from { opacity: 0 } to { opacity: 1 } }
 @keyframes cqPopIn { from { opacity: 0; transform: scale(.94) translateY(6px) } to { opacity: 1; transform: scale(1) translateY(0) } }
 .cq-modal-title{font-family:var(--display);font-size:22px;font-weight:600;margin:0 0 8px;letter-spacing:-.4px}
+/* Seven class names were used in the markup with no rule anywhere \u2014
+   .cq-ai-panel in 8 places and .cq-lead in 5. They rendered as unstyled text
+   beside properly styled siblings, which reads as broken rather than plain.
+   Found by comparing every className against the selectors in this sheet. */
+/* var(--text) and var(--muted) were used but never defined \u2014 the palette
+   declares --ink, --ink-soft and --ink-faint. Those declarations were inert, so
+   chapter inputs, drag handles and hint text fell back to inherited colour
+   rather than the colour intended. Repointed at the variables that exist. */
+.cq-lead{font-size:15px;line-height:1.6;color:var(--ink-soft);margin:0 0 14px}
+.cq-classsub{font-size:13px;color:var(--ink-faint);line-height:1.5;margin:2px 0 0}
+.cq-ai-panel{background:var(--bg-2);border:1px solid var(--line);border-radius:10px;padding:16px;margin:14px 0}
+.cq-stuck-revealed{background:var(--bg-2);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin-top:10px;font-size:14px;line-height:1.6}
+.cq-modal-count{font-size:12px;color:var(--ink-faint);font-variant-numeric:tabular-nums}
+.cq-modal-hint{font-size:13px;color:var(--ink-faint);line-height:1.5;margin:6px 0 0}
+.cq-profilechip-lbl{font-size:12px;color:var(--ink-faint);letter-spacing:.02em}
 .cq-feedback{max-width:560px}
 .cq-fb-cats{display:flex;gap:10px;margin:14px 0 12px}
 .cq-fb-cat{background:var(--bg-2);color:var(--ink-soft);border:1px solid var(--line);border-radius:10px;padding:7px 14px;font-size:14px;cursor:pointer;transition:background var(--hover-ease),color var(--hover-ease),border-color var(--hover-ease)}
@@ -13315,9 +16855,9 @@ body{overflow-x:clip}
 .cq-chapter-rename{background:transparent;border:none;cursor:pointer;font-size:13px;opacity:.55;padding:2px 4px;border-radius:6px}
 .cq-chapter-rename:hover{opacity:1;background:rgba(139,92,246,.12)}
 .cq-chapter-edit{display:flex;align-items:center;gap:6px;flex:1}
-.cq-chapter-input{flex:1;max-width:280px;background:var(--bg-2);border:1.5px solid var(--violet);border-radius:8px;padding:6px 10px;color:var(--text);font-size:15px;font-family:var(--display)}
+.cq-chapter-input{flex:1;max-width:280px;background:var(--bg-2);border:1.5px solid var(--violet);border-radius:8px;padding:6px 10px;color:var(--ink);font-size:15px;font-family:var(--display)}
 .cq-chapter-save{background:var(--violet);color:#fff;border:none;border-radius:8px;padding:6px 12px;font-size:13px;font-weight:600;cursor:pointer}
-.cq-chapter-cancel{background:transparent;border:1px solid var(--line);color:var(--muted);border-radius:8px;padding:6px 10px;font-size:13px;cursor:pointer}
+.cq-chapter-cancel{background:transparent;border:1px solid var(--line);color:var(--ink-faint);border-radius:8px;padding:6px 10px;font-size:13px;cursor:pointer}
 .cq-chapter-name{font-family:var(--display);font-size:17px;font-weight:600;margin:0;letter-spacing:-.2px}
 .cq-chapter-count{font-size:11.5px;color:var(--ink-faint);font-family:var(--mono);background:var(--bg-0);padding:3px 9px;border-radius:99px}
 .cq-lessonrows{display:flex;flex-direction:column;gap:11px}
@@ -13327,7 +16867,7 @@ body{overflow-x:clip}
 .cq-lessonrow:hover::before{opacity:.9}
 .cq-lessonrow.dragging{opacity:.5;border-color:var(--violet)}
 .cq-lessonrow.droptarget{border-color:var(--violet);border-style:dashed;background:rgba(139,92,246,.08)}
-.cq-draghandle{color:var(--muted);font-size:18px;cursor:grab;user-select:none;line-height:1;touch-action:none;padding:4px 2px}
+.cq-draghandle{color:var(--ink-faint);font-size:18px;cursor:grab;user-select:none;line-height:1;touch-action:none;padding:4px 2px}
 .cq-draghandle:active{cursor:grabbing}
 .cq-lessonrow:hover{border-color:var(--line);transform:translateX(3px);background:var(--bg-3)}
 .cq-lessonrow.done{border-color:rgba(94,224,192,.32)}
@@ -13361,7 +16901,7 @@ body{overflow-x:clip}
 .cq-set-topicwrap{margin-bottom:6px}
 .cq-set-topiclabel{display:block;font-size:13px;font-weight:600;color:var(--ink);margin-bottom:6px}
 .cq-set-topic:focus{border-color:var(--violet)}
-.cq-set-topichint{font-size:11px;color:var(--muted);margin:-6px 0 10px;line-height:1.4}
+.cq-set-topichint{font-size:11px;color:var(--ink-faint);margin:-6px 0 10px;line-height:1.4}
 .cq-set-count{display:flex;align-items:center;gap:10px}
 .cq-set-diff{margin-top:12px}
 .cq-set-diff label{display:block;font-size:13px;color:var(--ink-soft);margin-bottom:7px}
@@ -13378,7 +16918,7 @@ body{overflow-x:clip}
 .cq-genbtn:disabled{opacity:.55;cursor:default}
 .cq-genlocked{margin:0;color:var(--ink-faint);font-size:14px}
 .cq-generr{margin:0;color:var(--rose);font-size:13px}
-.cq-gennote{margin:10px 0 0;color:var(--muted);font-size:13px;line-height:1.5}
+.cq-gennote{margin:10px 0 0;color:var(--ink-faint);font-size:13px;line-height:1.5}
 .cq-gen-tag{font-size:10px;background:var(--violet);color:#fff;padding:2px 7px;border-radius:6px;margin-left:8px;font-weight:700}
 
 /* ============ STEP CHROME ============ */
@@ -13806,10 +17346,10 @@ a.cq-studyit:hover{border-color:var(--magenta);color:var(--ink);background:var(-
 .cq-proj-dot.done{background:var(--teal);border-color:var(--teal);color:var(--bg-0)}
 .cq-teacher{background:linear-gradient(180deg,var(--bg-1),var(--bg-1));border:1px solid var(--line);border-radius:var(--radius-lg);padding:24px;margin-top:26px;box-shadow:var(--shadow)}
 .cq-lessonhelp{margin-top:16px;border:1px solid var(--violet);border-radius:12px;overflow:hidden;background:rgba(139,92,246,.05)}
-.cq-lessonhelp-toggle{width:100%;text-align:left;background:transparent;border:none;color:var(--text);font-size:14px;font-weight:600;padding:12px 14px;cursor:pointer}
+.cq-lessonhelp-toggle{width:100%;text-align:left;background:transparent;border:none;color:var(--ink);font-size:14px;font-weight:600;padding:12px 14px;cursor:pointer}
 .cq-lessonhelp-toggle:hover{background:rgba(139,92,246,.08)}
 .cq-lessonhelp-body{padding:0 14px 14px}
-.cq-lessonhelp-note{font-size:11px;color:var(--muted);margin:8px 2px 0;line-height:1.4}
+.cq-lessonhelp-note{font-size:11px;color:var(--ink-faint);margin:8px 2px 0;line-height:1.4}
 .cq-teacher-head{font-family:var(--display);font-size:16px;font-weight:600;margin-bottom:14px}
 .cq-teacher-log{display:flex;flex-direction:column;gap:10px;margin-bottom:14px;max-height:340px;overflow-y:auto}
 .cq-bubble{padding:12px 15px;border-radius:14px;font-size:14px;line-height:1.6;max-width:85%;white-space:pre-wrap}
