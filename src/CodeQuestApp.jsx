@@ -9384,13 +9384,37 @@ const SANDBOX_SNIPPETS = {
   idxKey: "cq_sandbox_snippets",
   itemKey: (id) => `cq_sandbox_snippet_${id}`,
   list() { try { return JSON.parse(CQ_STORE.get(this.idxKey) || "[]"); } catch { return []; } },
-  save(name, lang, code) {
+  /* save() always minted a new id, so loading a snippet, changing it and
+     saving left you with two \u2014 the old one and the edit \u2014 and no way to
+     update in place. update() is the missing half.
+
+     Both now carry `files` as well as `code`. A single-file snippet stores
+     code and no files; a multi-file one stores files and a joined `code` so
+     anything reading the old shape still gets something sensible. Snippets
+     saved before this change have no files key and load exactly as they did. */
+  save(name, lang, code, files) {
     const id = "sn" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
     const idx = this.list();
-    idx.unshift({ id, name: (name || "Untitled").slice(0, 60), lang, ts: Date.now() });
+    const n = Array.isArray(files) ? files.length : 0;
+    idx.unshift({ id, name: (name || "Untitled").slice(0, 60), lang, ts: Date.now(), files: n });
     CQ_STORE.set(this.idxKey, JSON.stringify(idx.slice(0, 40)));
-    CQ_STORE.set(this.itemKey(id), JSON.stringify({ lang, code }));
+    CQ_STORE.set(this.itemKey(id), JSON.stringify(
+      n ? { lang, files, code: files.map((f) => f.code || "").join("\n\n") } : { lang, code }));
     return id;
+  },
+  /* Overwrite an existing snippet, keeping its id and its place in the list.
+     Returns false if it has been deleted meanwhile, so the caller can fall
+     back to saving a new one rather than losing the work. */
+  update(id, lang, code, files) {
+    const idx = this.list();
+    const at = idx.findIndex((s) => s.id === id);
+    if (at < 0) return false;
+    const n = Array.isArray(files) ? files.length : 0;
+    idx[at] = { ...idx[at], lang, ts: Date.now(), files: n };
+    CQ_STORE.set(this.idxKey, JSON.stringify(idx));
+    CQ_STORE.set(this.itemKey(id), JSON.stringify(
+      n ? { lang, files, code: files.map((f) => f.code || "").join("\n\n") } : { lang, code }));
+    return true;
   },
   load(id) { try { return JSON.parse(CQ_STORE.get(this.itemKey(id))); } catch { return null; } },
   remove(id) {
@@ -11407,6 +11431,38 @@ function shuffledChoices(step) {
   return { choices: order.map((i) => list[i]), correct: order.indexOf(correct) };
 }
 
+/* Typed code, kept across a tab being discarded.
+
+   Nine step components each held the learner's code in useState and nothing
+   else. A browser may throw away a background tab at any moment and reload it
+   when you return \u2014 routine on mobile, and on desktop under memory pressure
+   \u2014 and everything typed since arriving on the step went with it. Progress
+   was safe; the work in front of them was not.
+
+   Keyed by the step's own title and starter, so returning to the same
+   exercise restores what you wrote and a different exercise does not inherit
+   it. sessionStorage rather than localStorage: an abandoned half-finished
+   attempt should not still be waiting weeks later, and a second tab should
+   start from the starter code.
+
+   useCodeDraft replaces useState with the same shape, so each call site
+   changes by one line. */
+function useCodeDraft(step, fallback) {
+  const key = "cq.draft." + String((step && step.title) || "?") + "." +
+    String((step && step.starter) || "").length;
+  const [code, setCode] = React.useState(() => {
+    try {
+      const saved = sessionStorage.getItem(key);
+      if (saved !== null) return saved;
+    } catch (e) {}
+    return (step && step.starter) || fallback || "";
+  });
+  React.useEffect(() => {
+    try { sessionStorage.setItem(key, code); } catch (e) {}
+  }, [key, code]);
+  return [code, setCode];
+}
+
 function renderText(v) {
   if (v === null || v === undefined) return "";
   if (typeof v === "string") return v;
@@ -11746,7 +11802,7 @@ function FillStep({ step, onDone }) {
 function RunStep({ step, onDone }) {
   // Real execution for compiled/other languages via Piston. The learner writes a
   // program that PRINTS output; we run it for real and compare to expectedOutput.
-  const [code, setCode] = useState(step.starter || "");
+  const [code, setCode] = useCodeDraft(step);
   const [out, setOut] = useState(null); // { stdout, stderr, ok, passed }
   const [running, setRunning] = useState(false);
   const [err, setErr] = useState("");
@@ -11896,7 +11952,7 @@ function AiRunStep({ step, onDone }) {
   // in a sandboxed iframe that captures the output via postMessage and compare
   // it against step.expectedOutput. Lets learners "run" Java/C++/etc. without
   // requiring a live backend (Judge0/Sulu).
-  const [code, setCode] = useState(step.starter || "");
+  const [code, setCode] = useCodeDraft(step);
   const [running, setRunning] = useState(false);
   const [out, setOut] = useState(null); // { stdout, passed, error }
   const [err, setErr] = useState("");
@@ -11993,7 +12049,7 @@ function AiRunStep({ step, onDone }) {
 function VisualStep({ step, onDone }) {
   // Learner writes visual code in their language; we internally translate to
   // canvas JS and show it running in a sandboxed iframe — like it really ran.
-  const [code, setCode] = useState(step.starter || "");
+  const [code, setCode] = useCodeDraft(step);
   const [busy, setBusy] = useState(false);
   const [srcDoc, setSrcDoc] = useState("");
   const [err, setErr] = useState("");
@@ -12224,7 +12280,7 @@ function StuckLadder({ step }) {
 }
 
 function TypeStep({ step, onDone }) {
-  const [code, setCode] = useState(step.starter || "");
+  const [code, setCode] = useCodeDraft(step);
   const [result, setResult] = useState(null);
   const [running, setRunning] = useState(false);
   const stats = useLessonStats();
@@ -12294,7 +12350,7 @@ function TypeStep({ step, onDone }) {
 // input text, for real, and the output is checked. Shows the input alongside the
 // editor so it's clear what the program is processing.
 function AwkStep({ step, onDone }) {
-  const [code, setCode] = useState(step.starter || "");
+  const [code, setCode] = useCodeDraft(step);
   const [result, setResult] = useState(null);
   const [running, setRunning] = useState(false);
   const stats = useLessonStats();
@@ -12340,7 +12396,7 @@ function AwkStep({ step, onDone }) {
 
 // these whole-program languages.
 function OutputStep({ step, onDone }) {
-  const [code, setCode] = useState(step.starter || "");
+  const [code, setCode] = useCodeDraft(step);
   const [result, setResult] = useState(null);
   const [running, setRunning] = useState(false);
   const stats = useLessonStats();
@@ -12401,7 +12457,7 @@ function OutputStep({ step, onDone }) {
 }
 
 function SQLStep({ step, onDone }) {
-  const [code, setCode] = useState(step.starter || "SELECT ");
+  const [code, setCode] = useCodeDraft(step, "SELECT ");
   const [result, setResult] = useState(null);
   const [running, setRunning] = useState(false);
   const stats = useLessonStats();
@@ -12441,7 +12497,7 @@ function SQLStep({ step, onDone }) {
 }
 
 function AITypeStep({ step, onDone }) {
-  const [code, setCode] = useState(step.starter || "");
+  const [code, setCode] = useCodeDraft(step);
   const [result, setResult] = useState(null);
   const [running, setRunning] = useState(false);
   const stats = useLessonStats();
@@ -12496,7 +12552,7 @@ function AITypeStep({ step, onDone }) {
 // Unlike TypeStep (return-value tests), success here is AI-judged — because
 // "does this look right?" isn't a function return value.
 function MarkupStep({ step, onDone }) {
-  const [code, setCode] = useState(step.starter || "");
+  const [code, setCode] = useCodeDraft(step);
   const [srcDoc, setSrcDoc] = useState("");
   const [result, setResult] = useState(null);
   const [running, setRunning] = useState(false);
@@ -12965,26 +13021,92 @@ function Sandbox({ onBack, onHome }) {
   const [snippets, setSnippets] = React.useState(() => SANDBOX_SNIPPETS.list());
   const [savedFlash, setSavedFlash] = React.useState("");
   const refreshSnippets = () => setSnippets(SANDBOX_SNIPPETS.list());
-  const saveSnippet = () => {
-    if (!code.trim()) { setErr("Write some code first, then save it."); return; }
-    const name = (typeof window !== "undefined" && window.prompt) ? window.prompt("Name this snippet:", lang.label + " snippet") : null;
-    if (name === null) return; // canceled
-    SANDBOX_SNIPPETS.save(name || (lang.label + " snippet"), langId, code);
-    refreshSnippets();
-    setSavedFlash("Saved!"); setTimeout(() => setSavedFlash(""), 1400);
+  /* Which saved snippet is currently open, if any.
+
+     Saving always created a new one, so loading a snippet, fixing a line and
+     saving left two copies with the same name and no indication which was
+     which. Now Save overwrites what you opened, and "Save as new" is the
+     separate, deliberate action. */
+  const [openSnippet, setOpenSnippet] = React.useState(null); // { id, name }
+
+  /* Multi-file mode had no save at all \u2014 the only way to keep a project was
+     to not close the tab. Both modes save through the same path now: files
+     when multi-file is on, a single blob when it is not. */
+  const currentPayload = () => (multiMode
+    ? { code: (files[0] && files[0].code) || "", files: files }
+    : { code: code, files: null });
+
+  const hasSomethingToSave = () => {
+    const p = currentPayload();
+    return p.files ? p.files.some((f) => (f.code || "").trim()) : p.code.trim();
   };
+
+  const saveSnippet = ({ asNew } = {}) => {
+    if (!hasSomethingToSave()) { setErr("Write some code first, then save it."); return; }
+    const p = currentPayload();
+
+    /* Overwrite the open one unless the learner asked for a new copy. */
+    if (!asNew && openSnippet) {
+      const done = SANDBOX_SNIPPETS.update(openSnippet.id, langId, p.code, p.files);
+      if (done) {
+        refreshSnippets();
+        setSavedFlash("Saved"); setTimeout(() => setSavedFlash(""), 1400);
+        return;
+      }
+      /* Deleted from another tab while open. Fall through and save a new one
+         rather than silently dropping the work. */
+      setOpenSnippet(null);
+    }
+
+    const suggested = openSnippet ? openSnippet.name + " copy" : lang.label + (p.files ? " project" : " snippet");
+    const name = (typeof window !== "undefined" && window.prompt)
+      ? window.prompt("Name this " + (p.files ? "project" : "snippet") + ":", suggested)
+      : suggested;
+    if (name === null) return; // canceled
+    const finalName = name || suggested;
+    const id = SANDBOX_SNIPPETS.save(finalName, langId, p.code, p.files);
+    setOpenSnippet({ id: id, name: finalName });
+    refreshSnippets();
+    setSavedFlash("Saved"); setTimeout(() => setSavedFlash(""), 1400);
+  };
+
   const loadSnippet = (id) => {
-    const s = SANDBOX_SNIPPETS.load(id);
-    if (!s) return;
-    if (s.lang && s.lang !== langId) { setLangId(s.lang); }
-    setCodeByLang((prev) => ({ ...prev, [s.lang || langId]: s.code || "" }));
+    const sn = SANDBOX_SNIPPETS.load(id);
+    if (!sn) return;
+    const L = sn.lang || langId;
+    if (sn.lang && sn.lang !== langId) { setLangId(sn.lang); }
+
+    /* A saved project restores its files and switches to multi-file mode;
+       a saved snippet restores the single editor and switches back. Loading a
+       project while in single-file mode used to silently drop every file but
+       the joined blob. */
+    if (Array.isArray(sn.files) && sn.files.length) {
+      setFilesByLang((prev) => ({ ...prev, [L]: sn.files }));
+      setActiveFileByLang((prev) => ({ ...prev, [L]: sn.files[0].name }));
+      setMultiMode(true);
+    } else {
+      setCodeByLang((prev) => ({ ...prev, [L]: sn.code || "" }));
+      setMultiMode(false);
+    }
+
+    /* Remember what is open so the next Save overwrites it. */
+    const meta = SANDBOX_SNIPPETS.list().find((x) => x.id === id);
+    setOpenSnippet({ id: id, name: (meta && meta.name) || "Untitled" });
     setOut(null); setErr("");
   };
-  const deleteSnippet = (id) => { SANDBOX_SNIPPETS.remove(id); refreshSnippets(); };
+  const deleteSnippet = (id) => {
+    SANDBOX_SNIPPETS.remove(id);
+    /* If the deleted one was open, forget it \u2014 otherwise Save would try to
+       update something that no longer exists. */
+    setOpenSnippet((cur) => (cur && cur.id === id ? null : cur));
+    refreshSnippets();
+  };
   const renameSnippet = (id, cur) => {
     const name = (typeof window !== "undefined" && window.prompt) ? window.prompt("Rename snippet:", cur) : null;
     if (name === null) return;
-    SANDBOX_SNIPPETS.rename(id, name); refreshSnippets();
+    SANDBOX_SNIPPETS.rename(id, name);
+    setOpenSnippet((cur) => (cur && cur.id === id ? { ...cur, name: name } : cur));
+    refreshSnippets();
   };
 
   // ---- Multi-file mode: run 2-3 files together with the real project runners ----
@@ -13054,6 +13176,35 @@ function Sandbox({ onBack, onHome }) {
     setFiles((fs) => fs.filter((f) => f.name !== name));
     if (activeFileName === name) setActiveFile(files[0].name === name ? files[1].name : files[0].name);
   };
+  /* Rename a file. The sandbox had add and remove but no rename, so a file
+     named wrong on creation could only be fixed by making a new one and
+     copying the code across.
+
+     The entry point is protected the same way Projects protects it: you can
+     change which file main lives in, but the project must always have one, or
+     there is nothing to run. */
+  const renameFile = (oldName) => {
+    const cur = files.find((f) => f.name === oldName);
+    if (!cur) return;
+    const stem = oldName.replace(/\.[^.]*$/, "");
+    const typed = (typeof window !== "undefined" && window.prompt)
+      ? window.prompt("Rename file (without the ." + ext + "):", stem) : null;
+    if (typed === null) return;
+    const clean = typed.replace(/[^A-Za-z0-9_]/g, "");
+    if (!clean) { setErr("A file needs a name."); return; }
+    const name = clean + "." + ext;
+    if (name === oldName) return;
+    if (files.some((f) => f.name === name)) { setErr("A file named " + name + " already exists."); return; }
+    const wasMain = /^main/i.test(oldName);
+    const willBeMain = /^main/i.test(name);
+    if (wasMain && !willBeMain && !files.some((f) => f.name !== oldName && /^main/i.test(f.name))) {
+      setErr("Something has to be main \u2014 rename another file to main first.");
+      return;
+    }
+    setFiles((fs) => fs.map((f) => (f.name === oldName ? { ...f, name: name } : f)));
+    if (activeFileName === oldName) setActiveFile(name);
+    setErr("");
+  };
   const resetMultiFiles = () => { setFiles(defaultFiles(langId)); setActiveFile(defaultFiles(langId)[0].name); setOut(null); setErr(""); };
   // First file is the entry point (main). Basename must be unique across files.
   const entryName = (files.find((f) => /^main/i.test(f.name)) || files[0] || {}).name;
@@ -13121,6 +13272,11 @@ function Sandbox({ onBack, onHome }) {
                 <button className="cq-sandbox-filetab-name" onClick={() => setActiveFile(f.name)}>
                   {f.name}{f.name === entryName ? " ▶" : ""}
                 </button>
+                {/* Rename is offered on every file including the entry point —
+                    renameFile refuses the change if it would leave no main,
+                    which is more useful than hiding the button. */}
+                <button className="cq-sandbox-filetab-edit" onClick={() => renameFile(f.name)}
+                  title={"Rename " + f.name} aria-label={"Rename " + f.name}>✎</button>
                 {files.length > 1 && f.name !== entryName && (
                   <button className="cq-sandbox-filetab-x" onClick={() => removeFile(f.name)} title="Remove file">×</button>
                 )}
@@ -13145,7 +13301,19 @@ function Sandbox({ onBack, onHome }) {
           <div className="cq-sandbox-actions">
             <button className="cq-run" onClick={run} disabled={running}>{running ? "Running…" : "▶ Run"}</button>
             <button className="cq-ai-chip" onClick={() => { setCode(lang.starter); setOut(null); setErr(""); }}>↺ Reset to example</button>
-            <button className="cq-ai-chip" onClick={saveSnippet}>{savedFlash || "💾 Save snippet"}</button>
+            {/* The label says what the button will do. It used to read "Save
+                snippet" whether it was creating one or the fifth copy of one.
+                Passing an explicit object matters: onClick={saveSnippet} hands
+                the click event in as the options argument. */}
+            <button className="cq-ai-chip" onClick={() => saveSnippet({})}>
+              {savedFlash || (openSnippet
+                ? "💾 Save “" + openSnippet.name + "”"
+                : (multiMode ? "💾 Save project" : "💾 Save snippet"))}
+            </button>
+            {openSnippet && (
+              <button className="cq-ai-chip" onClick={() => saveSnippet({ asNew: true })}
+                title="Keep the original and save this as a separate copy">➕ Save as new</button>
+            )}
             <CopyButton text={code} label="📋 Copy" />
             <button className="cq-ai-chip" onClick={() => { setCode(""); setOut(null); setErr(""); }}>🗑 Clear</button>
           </div>
@@ -13867,6 +14035,7 @@ function useAiRunner(stepFn, opts = {}) {
     for (let i = 0; i < n && more; i++) more = stepRef.current() !== false;
     if (!more) stop();
   };
+  const wasRunning = useRef(false);
   const start = () => {
     if (timer.current) clearInterval(timer.current);
     setRunning(true);
@@ -13878,6 +14047,34 @@ function useAiRunner(stepFn, opts = {}) {
     if (timer.current) { clearInterval(timer.current); timer.current = setInterval(tick, AI_SPEEDS[s]); }
   };
   const stepOnce = () => { stop(); stepRef.current(); };
+
+  /* Hold the run steady while the tab is hidden.
+
+     This drives a step-by-step visualisation the learner WATCHES. A background
+     tab throttles setInterval to roughly one call a minute, so leaving the tab
+     did not pause it \u2014 it advanced slowly and unevenly, and you came back
+     having missed steps with no way to tell which.
+
+     Catching up on return would be worse: replaying two hundred steps at once
+     is exactly what the visualisation exists to avoid. So it pauses on hide
+     and resumes on show, and you come back to the frame you left. */
+  useEffect(() => {
+    const onVisibility = () => {
+      if (typeof document === "undefined") return;
+      if (document.visibilityState === "hidden") {
+        if (timer.current) { clearInterval(timer.current); timer.current = null; wasRunning.current = true; }
+      } else if (wasRunning.current) {
+        wasRunning.current = false;
+        /* Only resume if the learner had not stopped it themselves meanwhile. */
+        if (!timer.current) timer.current = setInterval(tick, AI_SPEEDS[speedRef.current]);
+      }
+    };
+    if (typeof document !== "undefined") document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVisibility);
+    };
+  });
+
   useEffect(() => () => { if (timer.current) clearInterval(timer.current); }, []);
   return { running, speed, toggle, stop, start, stepOnce, changeSpeed };
 }
@@ -16983,6 +17180,10 @@ body{overflow-x:clip}
 .cq-sandbox-filetab.active .cq-sandbox-filetab-name{color:var(--teal);font-weight:600}
 .cq-sandbox-filetab-x{background:transparent;border:none;color:var(--ink-soft);cursor:pointer;padding:6px 8px;font-size:15px;line-height:1}
 .cq-sandbox-filetab-x:hover{color:var(--amber)}
+/* The rename button sits beside the remove one and matches it, so the pair
+   reads as two actions on the same file rather than two unrelated controls. */
+.cq-sandbox-filetab-edit{background:transparent;border:none;color:var(--ink-soft);cursor:pointer;padding:6px 4px;font-size:12px;line-height:1}
+.cq-sandbox-filetab-edit:hover{color:var(--teal)}
 .cq-sandbox-addfile{background:var(--bg-2);border:1px dashed var(--line);border-radius:8px;color:var(--ink-soft);cursor:pointer;font-size:12.5px;padding:6px 12px;font-family:inherit;transition:border-color .15s,color .15s}
 .cq-sandbox-addfile:hover{border-color:var(--teal);color:var(--teal)}
 .cq-snippets{margin-top:22px;border-top:1px solid var(--line-soft);padding-top:16px}
