@@ -9340,6 +9340,21 @@ const CQ_STORE = (() => {
     get(k) { try { const s = pick(); return s ? s.getItem(k) : null; } catch { return null; } },
     set(k, v) { try { const s = pick(); if (s) s.setItem(k, v); } catch {} },
     remove(k) { try { const s = pick(); if (s) s.removeItem(k); } catch {} },
+    /* Every key starting with a prefix. Project drafts are stored one key per
+       project, so gathering them for the account needs a way to enumerate \u2014
+       there was none, and without it drafts could only ever be per-device. */
+    keys(prefix) {
+      try {
+        const s = pick();
+        if (!s) return [];
+        const out = [];
+        for (let i = 0; i < s.length; i++) {
+          const k = s.key(i);
+          if (k && (!prefix || k.indexOf(prefix) === 0)) out.push(k);
+        }
+        return out;
+      } catch { return []; }
+    },
   };
 })();
 
@@ -9380,6 +9395,68 @@ const LAB_SAVE = {
 // Named sandbox snippets, saved locally so the sandbox isn't throwaway. Each snippet
 // stores its language + code under its own key; an index lists {id, name, lang, ts}.
 // Capped at 40 total. Uses the same CQ_STORE the rest of the app persists through.
+/* Project drafts travel to the account too. A project is the longer piece of
+   work, so losing it by switching device is worse than losing a snippet.
+
+   One key per project, so these are gathered by prefix rather than from an
+   index. Timestamped on write so the newer copy wins when two devices have
+   both touched the same project. */
+/* Snippets and project drafts are written straight to storage by components
+   far from the app's state, so changing one raises no React update and the
+   autosave effect \u2014 which watches state \u2014 never fires. Saved work would sit
+   on the device and never reach the account, which looks exactly like syncing
+   being broken.
+
+   These let a writer say "something changed" without threading state through
+   half the app. */
+const CQ_LOCAL_CHANGE = { n: 0, subs: new Set() };
+function bumpLocalSaves() {
+  CQ_LOCAL_CHANGE.n++;
+  for (const fn of CQ_LOCAL_CHANGE.subs) { try { fn(CQ_LOCAL_CHANGE.n); } catch (e) {} }
+}
+function useLocalSaveSignal() {
+  const [n, setN] = React.useState(CQ_LOCAL_CHANGE.n);
+  React.useEffect(() => {
+    CQ_LOCAL_CHANGE.subs.add(setN);
+    return () => { CQ_LOCAL_CHANGE.subs.delete(setN); };
+  }, []);
+  return n;
+}
+
+const PROJECT_DRAFTS = {
+  prefix: "cq_project_draft_",
+  exportAll() {
+    return CQ_STORE.keys(this.prefix).map((k) => {
+      try {
+        const body = JSON.parse(CQ_STORE.get(k) || "null");
+        if (!body) return null;
+        /* Older drafts were a bare file array with no timestamp. Treat those
+           as oldest so a timestamped copy from anywhere wins. */
+        return Array.isArray(body)
+          ? { key: k, ts: 0, files: body }
+          : { key: k, ts: body.ts || 0, files: body.files || [] };
+      } catch (e) { return null; }
+    }).filter((d) => d && d.files.length);
+  },
+  importAll(items) {
+    if (!Array.isArray(items)) return 0;
+    let changed = 0;
+    for (const it of items) {
+      if (!it || !it.key || !Array.isArray(it.files) || !it.files.length) continue;
+      if (it.key.indexOf(this.prefix) !== 0) continue; // ignore anything not a draft key
+      let mineTs = -1;
+      try {
+        const cur = JSON.parse(CQ_STORE.get(it.key) || "null");
+        if (cur) mineTs = Array.isArray(cur) ? 0 : (cur.ts || 0);
+      } catch (e) {}
+      if (mineTs >= (it.ts || 0)) continue;
+      CQ_STORE.set(it.key, JSON.stringify({ ts: it.ts || 0, files: it.files }));
+      changed++;
+    }
+    return changed;
+  },
+};
+
 const SANDBOX_SNIPPETS = {
   idxKey: "cq_sandbox_snippets",
   itemKey: (id) => `cq_sandbox_snippet_${id}`,
@@ -9400,6 +9477,7 @@ const SANDBOX_SNIPPETS = {
     CQ_STORE.set(this.idxKey, JSON.stringify(idx.slice(0, 40)));
     CQ_STORE.set(this.itemKey(id), JSON.stringify(
       n ? { lang, files, code: files.map((f) => f.code || "").join("\n\n") } : { lang, code }));
+    bumpLocalSaves();
     return id;
   },
   /* Overwrite an existing snippet, keeping its id and its place in the list.
@@ -9414,14 +9492,53 @@ const SANDBOX_SNIPPETS = {
     CQ_STORE.set(this.idxKey, JSON.stringify(idx));
     CQ_STORE.set(this.itemKey(id), JSON.stringify(
       n ? { lang, files, code: files.map((f) => f.code || "").join("\n\n") } : { lang, code }));
+    bumpLocalSaves();
     return true;
   },
   load(id) { try { return JSON.parse(CQ_STORE.get(this.itemKey(id))); } catch { return null; } },
   remove(id) {
+    bumpLocalSaves();
     CQ_STORE.set(this.idxKey, JSON.stringify(this.list().filter((s) => s.id !== id)));
     CQ_STORE.remove(this.itemKey(id));
   },
+  /* Everything the learner has saved, as one object, so it can travel to the
+     account alongside progress. Snippets lived only in this device's storage,
+     so moving to a phone meant starting with an empty sandbox.
+
+     Each item carries its body inline rather than being fetched separately \u2014
+     the whole point is that one object covers the lot. */
+  exportAll() {
+    const idx = this.list();
+    return idx.map((meta) => {
+      let body = null;
+      try { body = JSON.parse(CQ_STORE.get(this.itemKey(meta.id)) || "null"); } catch (e) {}
+      return body ? { ...meta, body: body } : null;
+    }).filter(Boolean);
+  },
+
+  /* Merge in what the account has. MERGE, not replace: work saved offline on
+     this device must survive syncing, so an id already here is kept when it is
+     newer and overwritten when the account's copy is. */
+  importAll(items) {
+    if (!Array.isArray(items) || !items.length) return 0;
+    const byId = {};
+    for (const meta of this.list()) byId[meta.id] = meta;
+    let changed = 0;
+    for (const it of items) {
+      if (!it || !it.id || !it.body) continue;
+      const mine = byId[it.id];
+      if (mine && (mine.ts || 0) >= (it.ts || 0)) continue;
+      byId[it.id] = { id: it.id, name: it.name, lang: it.lang, ts: it.ts || 0, files: it.files || 0 };
+      CQ_STORE.set(this.itemKey(it.id), JSON.stringify(it.body));
+      changed++;
+    }
+    const merged = Object.values(byId).sort((a, b) => (b.ts || 0) - (a.ts || 0)).slice(0, 40);
+    CQ_STORE.set(this.idxKey, JSON.stringify(merged));
+    return changed;
+  },
+
   rename(id, name) {
+    bumpLocalSaves();
     CQ_STORE.set(this.idxKey, JSON.stringify(this.list().map((s) => s.id === id ? { ...s, name: (name || s.name).slice(0, 60) } : s)));
   },
 };
@@ -9521,6 +9638,19 @@ function AppInner({ initialState, onPersist, onSignOut, user } = {}) {
     // when the account returns a staler snapshot).
     return countDone(local) >= countDone(acct) ? local : acct;
   })();
+
+  /* Bring the account's snippets and drafts onto this device.
+
+     Merged rather than replaced, and done once at boot: work saved offline
+     here keeps its place, and anything newer from another device lands beside
+     it. Without this the account would carry them and nothing would unpack
+     them, which looks exactly like syncing not working. */
+  useMemo(() => {
+    try {
+      if (initialState && Array.isArray(initialState.snippets)) SANDBOX_SNIPPETS.importAll(initialState.snippets);
+      if (initialState && Array.isArray(initialState.projectDrafts)) PROJECT_DRAFTS.importAll(initialState.projectDrafts);
+    } catch (e) {}
+  }, []);
   const [progress, setProgress] = useState(() => hydrateProgress(bootState?.progress)); // { classId: Set(doneStepIdx) }
   const [aiLessons, setAiLessons] = useState(() => bootState?.aiLessons || {}); // { classId: [generatedStep, ...] }
   const [savedProjects, setSavedProjects] = useState(() => bootState?.savedProjects || []); // finished projects
@@ -9723,7 +9853,13 @@ function AppInner({ initialState, onPersist, onSignOut, user } = {}) {
     for (const [k, v] of Object.entries(progress)) {
       progressAsArrays[k] = v instanceof Set ? [...v] : Array.isArray(v) ? v : [];
     }
-    return { progress: progressAsArrays, aiLessons, savedProjects, lessonStats, profileDescription, projectConcepts, circuitDone, aiDone, reviewSets, reviewMark };
+    /* Snippets and project drafts ride along with progress, so the sandbox and
+       any unfinished project follow the account rather than the device. Read
+       from storage at snapshot time rather than held in state, because they
+       are written by components far from here. */
+    return { progress: progressAsArrays, aiLessons, savedProjects, lessonStats, profileDescription,
+      projectConcepts, circuitDone, aiDone, reviewSets, reviewMark,
+      snippets: SANDBOX_SNIPPETS.exportAll(), projectDrafts: PROJECT_DRAFTS.exportAll() };
   };
 
   // Every concept the learner has actually learned — from generated lessons
@@ -9786,6 +9922,11 @@ function AppInner({ initialState, onPersist, onSignOut, user } = {}) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [progress]);
 
+  /* Rises whenever a snippet or project draft is written. Those live in
+     storage rather than state, so without this the autosave below never learns
+     they changed. */
+  const localSaveTick = useLocalSaveSignal();
+
   useEffect(() => {
     const snap = buildSnapshot();
     // 1) Always save locally — instant, offline-safe.
@@ -9799,7 +9940,7 @@ function AppInner({ initialState, onPersist, onSignOut, user } = {}) {
         setPendingSync(true);
       }
     }
-  }, [progress, aiLessons, savedProjects, lessonStats, profileDescription, projectConcepts, circuitDone, aiDone, onPersist]);
+  }, [progress, aiLessons, savedProjects, lessonStats, profileDescription, projectConcepts, circuitDone, aiDone, onPersist, localSaveTick]);
 
   // Watch connection changes. On reconnect, flush the local save to the account.
   useEffect(() => {
@@ -13489,17 +13630,22 @@ function ProjectBuilder({ plan, onBack, onComplete, onHome, reviewMode = false, 
   const [files, setFiles] = useState(() => {
     try {
       const saved = JSON.parse(CQ_STORE.get(draftKey) || "null");
-      /* Only accept a draft that still looks like a file list. A shape that
-         does not match falls back to the plan rather than rendering nothing. */
-      if (Array.isArray(saved) && saved.length && saved.every((f) => f && typeof f.name === "string")) {
-        return saved;
+      /* Two shapes are accepted. Drafts written before syncing existed are a
+         bare file array; drafts written since are { ts, files } so the newer
+         copy can win when two devices have both touched the project.
+
+         Either way, only a real file list is used \u2014 anything else falls back
+         to the plan rather than rendering an empty editor. */
+      const list = Array.isArray(saved) ? saved : (saved && Array.isArray(saved.files) ? saved.files : null);
+      if (list && list.length && list.every((f) => f && typeof f.name === "string")) {
+        return list;
       }
     } catch (e) {}
     return initialProjectFiles(plan);
   });
 
   useEffect(() => {
-    try { CQ_STORE.set(draftKey, JSON.stringify(files)); } catch (e) {}
+    try { CQ_STORE.set(draftKey, JSON.stringify({ ts: Date.now(), files: files })); bumpLocalSaves(); } catch (e) {}
   }, [draftKey, files]);
 
   const [activeFile, setActiveFile] = useState(0);
