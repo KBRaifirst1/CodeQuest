@@ -13058,17 +13058,46 @@ function Sandbox({ onBack, onHome }) {
       setOpenSnippet(null);
     }
 
-    const suggested = openSnippet ? openSnippet.name + " copy" : lang.label + (p.files ? " project" : " snippet");
-    const name = (typeof window !== "undefined" && window.prompt)
-      ? window.prompt("Name this " + (p.files ? "project" : "snippet") + ":", suggested)
-      : suggested;
-    if (name === null) return; // canceled
-    const finalName = name || suggested;
-    const id = SANDBOX_SNIPPETS.save(finalName, langId, p.code, p.files);
-    setOpenSnippet({ id: id, name: finalName });
-    refreshSnippets();
-    setSavedFlash("Saved"); setTimeout(() => setSavedFlash(""), 1400);
+    /* Naming used to go through window.prompt. Browsers block prompt() in a
+       number of situations \u2014 some mobile browsers, anything running in a
+       cross-origin frame, and users who have ticked "prevent this page from
+       creating dialogs" after any earlier dialog. A blocked prompt returns
+       null, which this code read as "cancelled", so save did nothing at all
+       and gave no reason.
+
+       The name is asked for inline instead, which cannot be blocked. */
+    const suggested = openSnippet ? openSnippet.name + " copy"
+      : (lang && lang.label ? lang.label : "Code") + (p.files ? " project" : " snippet");
+    askSaveName(suggested, p.files ? "project" : "snippet");
   };
+
+  /* Finish a save once the name has been typed in. */
+  const [naming, setNaming] = React.useState(null); // { suggested, kind }
+  const [nameDraft, setNameDraft] = React.useState("");
+  React.useEffect(() => { if (naming) setNameDraft(naming.suggested); }, [naming]);
+
+  /* One inline panel serves every place the sandbox needs a name: saving,
+     renaming a snippet, adding a file, renaming a file. Each passes what to do
+     with the typed name, so there is a single control to style, one place that
+     handles Enter and Escape, and no window.prompt left to be blocked. */
+  const confirmName = () => {
+    const typed = (nameDraft || "").trim();
+    const use = typed || (naming && naming.suggested) || "Untitled";
+    const act = naming && naming.onConfirm;
+    setNaming(null);
+    if (act) act(use);
+  };
+
+  const askSaveName = (suggested, kind) => setNaming({
+    suggested: suggested, kind: kind, label: "Name this " + kind,
+    onConfirm: (finalName) => {
+      const p = currentPayload();
+      const id = SANDBOX_SNIPPETS.save(finalName, langId, p.code, p.files);
+      setOpenSnippet({ id: id, name: finalName });
+      refreshSnippets();
+      setSavedFlash("Saved"); setTimeout(() => setSavedFlash(""), 1400);
+    },
+  });
 
   const loadSnippet = (id) => {
     const sn = SANDBOX_SNIPPETS.load(id);
@@ -13101,13 +13130,14 @@ function Sandbox({ onBack, onHome }) {
     setOpenSnippet((cur) => (cur && cur.id === id ? null : cur));
     refreshSnippets();
   };
-  const renameSnippet = (id, cur) => {
-    const name = (typeof window !== "undefined" && window.prompt) ? window.prompt("Rename snippet:", cur) : null;
-    if (name === null) return;
-    SANDBOX_SNIPPETS.rename(id, name);
-    setOpenSnippet((cur) => (cur && cur.id === id ? { ...cur, name: name } : cur));
-    refreshSnippets();
-  };
+  const renameSnippet = (id, cur) => setNaming({
+    suggested: cur || "Untitled", label: "Rename snippet",
+    onConfirm: (name) => {
+      SANDBOX_SNIPPETS.rename(id, name);
+      setOpenSnippet((c) => (c && c.id === id ? { ...c, name: name } : c));
+      refreshSnippets();
+    },
+  });
 
   // ---- Multi-file mode: run 2-3 files together with the real project runners ----
   const [multiMode, setMultiMode] = React.useState(false);
@@ -13163,13 +13193,16 @@ function Sandbox({ onBack, onHome }) {
   const ext = PROJECT_FILE_EXT[langId] || "txt";
   const addFile = () => {
     if (files.length >= 4) { setErr("Sandbox multi-file is capped at 4 files."); return; }
-    const base = (typeof window !== "undefined" && window.prompt) ? window.prompt("New file name (without extension):", "extra") : "extra";
-    if (!base) return;
-    const clean = base.replace(/[^A-Za-z0-9_]/g, "") || "extra";
-    const name = clean + "." + ext;
-    if (files.some((f) => f.name === name)) { setErr("A file named " + name + " already exists."); return; }
-    setFiles((fs) => [...fs, { name, lang: langId, code: "" }]);
-    setActiveFile(name); setErr("");
+    setNaming({
+      suggested: "extra", label: "New file name (without the ." + ext + ")",
+      onConfirm: (base) => {
+        const clean = base.replace(/[^A-Za-z0-9_]/g, "") || "extra";
+        const name = clean + "." + ext;
+        if (files.some((f) => f.name === name)) { setErr("A file named " + name + " already exists."); return; }
+        setFiles((fs) => [...fs, { name, lang: langId, code: "" }]);
+        setActiveFile(name); setErr("");
+      },
+    });
   };
   const removeFile = (name) => {
     if (files.length <= 1) return;
@@ -13187,9 +13220,12 @@ function Sandbox({ onBack, onHome }) {
     const cur = files.find((f) => f.name === oldName);
     if (!cur) return;
     const stem = oldName.replace(/\.[^.]*$/, "");
-    const typed = (typeof window !== "undefined" && window.prompt)
-      ? window.prompt("Rename file (without the ." + ext + "):", stem) : null;
-    if (typed === null) return;
+    setNaming({
+      suggested: stem, label: "Rename file (without the ." + ext + ")",
+      onConfirm: (typed) => applyRename(oldName, typed),
+    });
+  };
+  const applyRename = (oldName, typed) => {
     const clean = typed.replace(/[^A-Za-z0-9_]/g, "");
     if (!clean) { setErr("A file needs a name."); return; }
     const name = clean + "." + ext;
@@ -13342,6 +13378,28 @@ function Sandbox({ onBack, onHome }) {
           ) : (
             <pre className="cq-console">{out.output != null && out.output !== "" ? out.output : "(ran with no output)"}</pre>
           )}
+        </div>
+      )}
+
+      {/* Asked inline rather than through window.prompt, which browsers block
+          in several common situations \u2014 and a blocked prompt returns null,
+          which read as "cancelled" and made save appear to do nothing.
+
+          Rendered outside the multi-file branch so it appears in both modes. */}
+      {naming && (
+        <div className="cq-snippets">
+          <div className="cq-snippets-head">{naming.label}</div>
+          <div className="cq-namerow">
+            <input className="cq-nameinput" autoFocus value={nameDraft} maxLength={60}
+              aria-label={naming.label}
+              onChange={(e) => setNameDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") confirmName();
+                if (e.key === "Escape") setNaming(null);
+              }} />
+            <button className="cq-run" onClick={confirmName}>Save</button>
+            <button className="cq-ai-chip" onClick={() => setNaming(null)}>Cancel</button>
+          </div>
         </div>
       )}
 
@@ -17202,6 +17260,9 @@ body{overflow-x:clip}
 .cq-snippets{margin-top:22px;border-top:1px solid var(--line-soft);padding-top:16px}
 .cq-snippets-head{font-size:13px;font-weight:700;color:var(--ink-soft);margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px}
 .cq-snippets-list{display:flex;flex-direction:column;gap:8px}
+.cq-namerow{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.cq-nameinput{flex:1;min-width:160px;background:var(--bg-2);border:1px solid var(--line);border-radius:8px;color:var(--ink);padding:9px 12px;font-size:14px;font-family:inherit}
+.cq-nameinput:focus{outline:none;border-color:var(--teal)}
 .cq-snippet{display:flex;align-items:center;gap:6px}
 .cq-snippet-open{flex:1 1 auto;display:flex;align-items:center;gap:10px;text-align:left;background:var(--bg-2);border:1px solid var(--line);border-radius:9px;padding:9px 12px;cursor:pointer;color:inherit;font-family:inherit;font-size:14px;transition:border-color .15s,background .15s;min-width:0}
 .cq-snippet-open:hover{border-color:var(--teal);background:var(--bg-1)}
