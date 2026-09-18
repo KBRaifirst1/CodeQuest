@@ -13290,6 +13290,19 @@ function Sandbox({ onBack, onHome }) {
           <div className="cq-sandbox-actions">
             <button className="cq-run" onClick={runMulti} disabled={running}>{running ? "Running…" : "▶ Run " + entryName}</button>
             <button className="cq-ai-chip" onClick={resetMultiFiles}>↺ Reset files</button>
+            {/* The sandbox has TWO action bars — this one for multi-file and
+                another for single-file — and the save buttons were added only
+                to the other one, so multi-file mode had a save path with no
+                way to reach it. Both bars carry the same pair now. */}
+            <button className="cq-ai-chip" onClick={() => saveSnippet({})}>
+              {savedFlash || (openSnippet
+                ? "💾 Save “" + openSnippet.name + "”"
+                : "💾 Save project")}
+            </button>
+            {openSnippet && (
+              <button className="cq-ai-chip" onClick={() => saveSnippet({ asNew: true })}
+                title="Keep the original and save this as a separate copy">➕ Save as new</button>
+            )}
             <CopyButton text={activeFile ? activeFile.code : ""} label="📋 Copy file" />
           </div>
         </>
