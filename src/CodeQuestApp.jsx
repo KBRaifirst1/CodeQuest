@@ -13007,9 +13007,31 @@ async function runMultiFileProject(lang, files, entryName) {
 function Sandbox({ onBack, onHome }) {
   const [langId, setLangId] = React.useState("py");
   const lang = SANDBOX_LANGS.find((l) => l.id === langId) || SANDBOX_LANGS[0];
+  /* Unsaved sandbox code, kept across reloads and tab discards.
+
+     Both sandbox editors rebuilt from the language starters on every mount, so
+     anything typed and not explicitly saved as a snippet was gone the moment
+     the tab reloaded \u2014 which a browser may do on its own with a background
+     tab. Saving worked; keeping what you had not saved yet did not.
+
+     localStorage, not sessionStorage: the sandbox is a scratchpad you come
+     back to, and losing it because the browser was closed overnight is the
+     same complaint. Snippets stay the separate, named thing.
+
+     Per language, so switching between Python and JavaScript does not make
+     them overwrite each other. */
+  const SANDBOX_CODE_KEY = "cq_sandbox_code_v1";
+  const SANDBOX_FILES_KEY = "cq_sandbox_files_v1";
+
   const [codeByLang, setCodeByLang] = React.useState(() => {
     const m = {};
     for (const l of SANDBOX_LANGS) m[l.id] = l.starter;
+    /* Saved work overrides the starters; a language never written in keeps
+       its starter, so a first visit looks exactly as it always did. */
+    try {
+      const saved = JSON.parse(CQ_STORE.get(SANDBOX_CODE_KEY) || "{}");
+      for (const k of Object.keys(saved)) if (typeof saved[k] === "string") m[k] = saved[k];
+    } catch (e) {}
     return m;
   });
   const code = codeByLang[langId] ?? "";
@@ -13182,8 +13204,20 @@ function Sandbox({ onBack, onHome }) {
       default: return [];
     }
   };
-  const [filesByLang, setFilesByLang] = React.useState({});
+  const [filesByLang, setFilesByLang] = React.useState(() => {
+    try { return JSON.parse(CQ_STORE.get("cq_sandbox_files_v1") || "{}"); } catch (e) { return {}; }
+  });
   const files = filesByLang[langId] || defaultFiles(langId);
+
+  /* Write both editors back whenever they change. Wrapped because storage
+     throws in private mode and when a quota is full, and a scratchpad failing
+     to save is not worth breaking the page over. */
+  React.useEffect(() => {
+    try { CQ_STORE.set(SANDBOX_CODE_KEY, JSON.stringify(codeByLang)); } catch (e) {}
+  }, [codeByLang]);
+  React.useEffect(() => {
+    try { CQ_STORE.set(SANDBOX_FILES_KEY, JSON.stringify(filesByLang)); } catch (e) {}
+  }, [filesByLang]);
   const [activeFileByLang, setActiveFileByLang] = React.useState({});
   const activeFileName = activeFileByLang[langId] || (files[0] && files[0].name);
   const activeFile = files.find((f) => f.name === activeFileName) || files[0];
