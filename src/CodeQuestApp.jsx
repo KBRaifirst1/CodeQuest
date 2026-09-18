@@ -13471,7 +13471,37 @@ function ProjectBuilder({ plan, onBack, onComplete, onHome, reviewMode = false, 
   // A project is a LIST of files. `code`/`setCode`/`lang` below are derived from
   // whichever file is active, so the editor + run logic keep working unchanged —
   // they just operate on the current file.
-  const [files, setFiles] = useState(() => initialProjectFiles(plan));
+  /* Work in progress on a project, kept across reloads.
+
+     A project is only stored once it is FINISHED \u2014 onComplete adds it to
+     savedProjects. Everything written before that lived in this component and
+     nowhere else, so a reload, or a browser discarding a background tab,
+     threw away however long you had spent on it. That is a worse loss than
+     the sandbox, because a project is the longer piece of work.
+
+     Keyed by the project's title and language so each project keeps its own
+     draft and two projects cannot overwrite each other. localStorage, because
+     a project is something you come back to across sessions. */
+  const draftKey = "cq_project_draft_" +
+    String(plan.title || "untitled").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 40) +
+    "_" + String(plan.lang || "py");
+
+  const [files, setFiles] = useState(() => {
+    try {
+      const saved = JSON.parse(CQ_STORE.get(draftKey) || "null");
+      /* Only accept a draft that still looks like a file list. A shape that
+         does not match falls back to the plan rather than rendering nothing. */
+      if (Array.isArray(saved) && saved.length && saved.every((f) => f && typeof f.name === "string")) {
+        return saved;
+      }
+    } catch (e) {}
+    return initialProjectFiles(plan);
+  });
+
+  useEffect(() => {
+    try { CQ_STORE.set(draftKey, JSON.stringify(files)); } catch (e) {}
+  }, [draftKey, files]);
+
   const [activeFile, setActiveFile] = useState(0);
   const [renaming, setRenaming] = useState(null); // index being renamed, or null
   const safeActive = Math.min(activeFile, files.length - 1);
@@ -13574,6 +13604,10 @@ function ProjectBuilder({ plan, onBack, onComplete, onHome, reviewMode = false, 
   useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [chat, asking]);
 
   const markBuilt = () => {
+    /* A finished project moves into savedProjects, so its draft has served its
+       purpose. Left behind it would reload over the top of a fresh start if the
+       same project were begun again. */
+    try { CQ_STORE.remove(draftKey); } catch (e) {}
     if (!reviewMode && !savedRef.current) { savedRef.current = true; onComplete && onComplete({ ...plan, files: allFilesForSave(), code: files[0] ? files[0].code : "" }); }
   };
   const learnConcept = (c) => {
