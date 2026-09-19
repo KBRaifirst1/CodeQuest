@@ -2773,22 +2773,89 @@ async function runProjectJava(code, consoleEl, displayEl, files = null) {
 }
 
 // Run a whole Python program, capturing everything it prints + any real error.
-async function runProjectPython(code, files = null, activeName = null) {
+/* input() in the browser.
+
+   Pyodide's default input() calls the browser's window.prompt(). Safari
+   suppresses prompt() in several ordinary situations, and a suppressed prompt
+   returns nothing, so input() quietly got nothing back. Waiting properly for
+   the learner would need cross-origin isolation headers or a browser feature
+   Safari does not have.
+
+   So the program runs until it asks for input, then stops. The console shows
+   the question and a box to answer it; the answer is added to a list and the
+   program runs again from the top with that list fed to input() in order.
+   Answers already given are echoed exactly where a terminal would show them,
+   so the transcript reads like a live session.
+
+   `io` is { answers: [...], seed } for an interactive session. The seed is
+   fixed for the whole session, so random numbers are the same on every
+   re-run — a guessing game keeps the same secret while you guess.
+
+   Callers that pass no `io` (lesson grading) get needInput back instead of a
+   hang, and random stays unseeded for them exactly as before. */
+const PY_IO_PRELUDE = [
+  "import builtins, json, random",
+  "class _CQNeedInput(BaseException):",
+  "    pass",
+  "_cq_io = json.loads(_cq_io_json)",
+  "_cq_state = {'i': 0, 'need': None}",
+  "def _cq_input(prompt=''):",
+  "    p = '' if prompt is None else str(prompt)",
+  "    if _cq_state['i'] < len(_cq_io['answers']):",
+  "        a = str(_cq_io['answers'][_cq_state['i']])",
+  "        _cq_state['i'] += 1",
+  "        print(p + a)",
+  "        return a",
+  "    _cq_state['need'] = p",
+  "    raise _CQNeedInput(p)",
+  "if not hasattr(builtins, '_cq_orig_input'):",
+  "    builtins._cq_orig_input = builtins.input",
+  "builtins.input = _cq_input",
+  "if _cq_io.get('seed') is not None:",
+  "    random.seed(_cq_io['seed'])",
+].join("\n");
+
+async function runProjectPython(code, files = null, activeName = null, io = null) {
   let py;
-  try { py = await loadPyodide(); } catch (e) { return { ok: false, output: "", error: "Couldn't start Python: " + e.message }; }
+  try { py = await loadPyodide(); } catch (e) { return { ok: false, output: "", error: "Couldn't start Python: " + (e && e.message ? e.message : e) }; }
   let out = "";
   const jsLogs = [];
   try {
     py.setStdout({ batched: (s) => { out += s + "\n"; } });
     py.setStderr({ batched: (s) => { out += s + "\n"; } });
   } catch {}
+  let ns = null;
+  const needed = () => {
+    try {
+      const st = py.globals.get("_cq_state");
+      const v = st ? st.get("need") : null;
+      if (st && st.destroy) st.destroy();
+      return v === undefined ? null : v;
+    } catch { return null; }
+  };
   try {
+    const answers = io && Array.isArray(io.answers) ? io.answers.map((a) => String(a)) : [];
+    const seed = io && typeof io.seed === "number" ? io.seed : null;
+    py.globals.set("_cq_io_json", JSON.stringify({ answers, seed }));
+    py.runPython(PY_IO_PRELUDE);
+
+    /* A fresh namespace per run. Re-running with answers means the program
+       starts again from the top, and a shared namespace would carry the last
+       run's half-finished variables into it. It also fixes an older gotcha:
+       deleting a line that defined a variable used to keep "working" because
+       the previous run had left it behind. */
+    ns = py.globals.get("dict")();
+    ns.set("__name__", "__main__");
+
     if (Array.isArray(files) && files.length > 1) {
       // Other Python files become real importable modules.
       try { py.runPython("import sys\nif '' not in sys.path: sys.path.insert(0, '')"); } catch {}
       for (const f of files) {
         if (f && f.name && /\.py$/i.test(f.name)) {
           try { py.FS.writeFile(f.name, f.code || ""); } catch {}
+          /* Drop the cached import, or an edited helper file keeps running
+             its old code until the page is reloaded. */
+          try { py.runPython("import sys\nsys.modules.pop(" + JSON.stringify(f.name.replace(/\.py$/i, "")) + ", None)"); } catch {}
         }
       }
       // JavaScript files become callable Python globals: helpers.greet("Sam").
@@ -2798,17 +2865,37 @@ async function runProjectPython(code, files = null, activeName = null) {
       if (hasJS) {
         const exports = buildJSExports(files, jsLogs);
         for (const [name, mod] of Object.entries(exports)) {
-          try { py.globals.set(name, mod); } catch {}
+          try { ns.set(name, mod); } catch {}
         }
       }
     }
-    await py.runPythonAsync(code);
+    await py.runPythonAsync(code, { globals: ns });
     const combined = (jsLogs.length ? jsLogs.join("\n") + "\n" : "") + out;
+    /* A program can swallow the stop with a bare `except:`. The flag is set
+       before the raise, so the question is still asked either way. */
+    const need = needed();
+    if (need !== null) return { ok: true, output: combined.replace(/\n$/, ""), needInput: need };
     return { ok: true, output: combined.replace(/\n$/, "") };
   } catch (e) {
-    // Keep partial output printed before the error, plus the real error message.
     const combined = (jsLogs.length ? jsLogs.join("\n") + "\n" : "") + out;
+    const need = needed();
+    if (need !== null) return { ok: true, output: combined.replace(/\n$/, ""), needInput: need };
+    // Keep partial output printed before the error, plus the real error message.
     return { ok: false, output: combined.replace(/\n$/, ""), error: String(e && e.message ? e.message : e) };
+  } finally {
+    try { if (ns && ns.destroy) ns.destroy(); } catch {}
+    /* The engine is shared with the lesson graders (precheckPython,
+       verifyPython), which do their own thing with input() and expect random
+       to be random. Leaving this run's input() or seed in place would leak
+       into them, so both are put back. */
+    try {
+      py.runPython([
+        "import builtins, random",
+        "if hasattr(builtins, '_cq_orig_input'):",
+        "    builtins.input = builtins._cq_orig_input",
+        "random.seed()",
+      ].join("\n"));
+    } catch {}
   }
 }
 // Evaluate the project's JS files and return their exports, keyed by file name
@@ -9414,6 +9501,24 @@ function bumpLocalSaves() {
   CQ_LOCAL_CHANGE.n++;
   for (const fn of CQ_LOCAL_CHANGE.subs) { try { fn(CQ_LOCAL_CHANGE.n); } catch (e) {} }
 }
+/* Keystroke-driven writes (the sandbox editor, a project being typed) call
+   this instead. Every bump rebuilds and serialises the whole account snapshot,
+   and doing that on every character is wasted work. It still fires if the tab
+   is hidden or closed mid-debounce, so a quick edit-and-leave is not lost. */
+let CQ_BUMP_TIMER = null;
+function bumpLocalSavesSoon() {
+  if (CQ_BUMP_TIMER) clearTimeout(CQ_BUMP_TIMER);
+  CQ_BUMP_TIMER = setTimeout(() => { CQ_BUMP_TIMER = null; bumpLocalSaves(); }, 800);
+}
+if (typeof document !== "undefined") {
+  const flush = () => {
+    if (!CQ_BUMP_TIMER) return;
+    clearTimeout(CQ_BUMP_TIMER); CQ_BUMP_TIMER = null; bumpLocalSaves();
+  };
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flush(); });
+  if (typeof window !== "undefined") window.addEventListener("pagehide", flush);
+}
+
 function useLocalSaveSignal() {
   const [n, setN] = React.useState(CQ_LOCAL_CHANGE.n);
   React.useEffect(() => {
@@ -9422,6 +9527,40 @@ function useLocalSaveSignal() {
   }, []);
   return n;
 }
+
+/* The sandbox editor itself \u2014 what is typed in it, per language, in both
+   single-file and multi-file mode. Named snippets and project drafts were
+   synced to the account; the editor was not, so code typed on a laptop was
+   simply absent on a phone unless it had been saved as a snippet first.
+
+   One timestamp covers the whole scratchpad. It is set ONLY when the learner
+   actually edits, never when the sandbox opens: stamping on open would let a
+   device's stale copy look newest the moment you looked at it, and then
+   overwrite the newer work in the account on the next save. */
+const SANDBOX_SCRATCH = {
+  codeKey: "cq_sandbox_code_v1",
+  filesKey: "cq_sandbox_files_v1",
+  tsKey: "cq_sandbox_ts_v1",
+  ts() { return Number(CQ_STORE.get(this.tsKey) || 0) || 0; },
+  /* Nothing to send until the learner has typed something \u2014 an untouched
+     sandbox must never compete with real work from another device. */
+  exportAll() {
+    const ts = this.ts();
+    if (!ts) return null;
+    let code = {}, files = {};
+    try { code = JSON.parse(CQ_STORE.get(this.codeKey) || "{}"); } catch (e) {}
+    try { files = JSON.parse(CQ_STORE.get(this.filesKey) || "{}"); } catch (e) {}
+    return { ts: ts, code: code, files: files };
+  },
+  importAll(remote) {
+    if (!remote || typeof remote !== "object" || !remote.ts) return false;
+    if (this.ts() >= remote.ts) return false;
+    CQ_STORE.set(this.codeKey, JSON.stringify(remote.code || {}));
+    CQ_STORE.set(this.filesKey, JSON.stringify(remote.files || {}));
+    CQ_STORE.set(this.tsKey, String(remote.ts));
+    return true;
+  },
+};
 
 const PROJECT_DRAFTS = {
   prefix: "cq_project_draft_",
@@ -9556,6 +9695,72 @@ const GEN_STORE = {
   subscribe(fn) { this.subs.add(fn); return () => this.subs.delete(fn); },
 };
 
+/* Combine two saved copies of the account — this device's and the account's
+   — so that nothing either one did is lost. Used when the app starts (the
+   device's own save vs the account) and whenever the account is re-read on
+   returning to the tab, which is how work done on another device arrives.
+
+   Everything is added together, except lessons that were un-marked or reset.
+   progressAt records, per lesson, when it was last marked (+time) or un-marked
+   (−time), and per class when it was last reset ("*"). The later change wins,
+   so a reset on one device is not undone by another device's older copy, and
+   a lesson re-done after a reset stays done. */
+function mergeAccountState(local, remote) {
+  const L = local && typeof local === "object" ? local : {};
+  const R = remote && typeof remote === "object" ? remote : {};
+  const arr = (v) => (v instanceof Set ? [...v] : Array.isArray(v) ? v : []);
+  const union = (a, b) => { const out = [...arr(a)]; for (const x of arr(b)) if (!out.includes(x)) out.push(x); return out; };
+  const obj = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v : {});
+
+  const la0 = obj(L.progressAt), ra0 = obj(R.progressAt);
+  const lp = obj(L.progress), rp = obj(R.progress);
+  const progress = {}, progressAt = {};
+  for (const k of new Set([...Object.keys(lp), ...Object.keys(rp), ...Object.keys(la0), ...Object.keys(ra0)])) {
+    const a = obj(la0[k]), b = obj(ra0[k]);
+    const at = { ...a };
+    for (const [key, t] of Object.entries(b)) if (!(Math.abs(at[key] || 0) >= Math.abs(t))) at[key] = t;
+    const star = Math.abs(at["*"] || 0);
+    progress[k] = union(lp[k], rp[k]).filter((x) => {
+      const t = at[x];
+      if (t === undefined) return !star;           // no record: dropped only by a reset
+      return t > 0 && t > star;                    // last change was "marked", after any reset
+    });
+    if (Object.keys(at).length) progressAt[k] = at;
+  }
+
+  // Generated lessons: the longer list per class (their order is what lesson
+  // numbers refer to, so two lists are never interleaved); a tie keeps this
+  // device's, which carries any reordering done here.
+  const la = obj(L.aiLessons), ra = obj(R.aiLessons);
+  const aiLessons = { ...la };
+  for (const [k, list] of Object.entries(ra)) if (arr(list).length > arr(la[k]).length) aiLessons[k] = list;
+
+  const savedProjects = [...arr(L.savedProjects)];
+  for (const p of arr(R.savedProjects)) {
+    if (p && !savedProjects.some((q) => q && q.title === p.title && q.goal === p.goal)) savedProjects.push(p);
+  }
+
+  const reviewSets = [...arr(L.reviewSets)];
+  for (const s of arr(R.reviewSets)) if (s && !reviewSets.some((q) => q && q.id === s.id)) reviewSets.push(s);
+  reviewSets.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+
+  // Lesson stats keep the first attempt, whichever device recorded it.
+  const ls = obj(L.lessonStats), rs = obj(R.lessonStats);
+  const lessonStats = {};
+  for (const k of new Set([...Object.keys(ls), ...Object.keys(rs)])) lessonStats[k] = { ...obj(rs[k]), ...obj(ls[k]) };
+
+  return {
+    ...R, ...L,
+    progress, progressAt, aiLessons, savedProjects, lessonStats,
+    reviewSets: reviewSets.slice(0, 20),
+    reviewMark: Math.max(L.reviewMark || 0, R.reviewMark || 0),
+    projectConcepts: union(L.projectConcepts, R.projectConcepts),
+    circuitDone: union(L.circuitDone, R.circuitDone),
+    aiDone: union(L.aiDone, R.aiDone),
+    profileDescription: L.profileDescription || R.profileDescription || "",
+  };
+}
+
 function AppInner({ initialState, onPersist, onSignOut, user } = {}) {
   // Screen state is remembered in sessionStorage so a tab-away → tab-back
   // doesn't bounce you out of the lesson/class you were in. sessionStorage
@@ -9625,32 +9830,46 @@ function AppInner({ initialState, onPersist, onSignOut, user } = {}) {
   // save on this device — whichever has more done lessons. This makes offline
   // reloads restore progress even before the account is reachable. The local
   // save is written on every change (see autosave effect below).
+  /* Start from this device's own save and the account together, merged, so
+     that neither progress done offline here nor work done on another device is
+     dropped. A copy marked __unloaded is not the account (it could not be
+     read), so only the device's save counts until the real one arrives. */
+  const acctReal = initialState && !initialState.__unloaded ? initialState : null;
   const bootState = (() => {
-    const acct = initialState || {};
     let local = null;
     try { const raw = CQ_STORE.get("cq_local_save_v1"); if (raw) local = JSON.parse(raw); } catch {}
-    if (!local) return acct;
-    const countDone = (st) => {
-      if (!st || !st.progress) return 0;
-      return Object.values(st.progress).reduce((n, v) => n + (Array.isArray(v) ? v.length : (v instanceof Set ? v.size : 0)), 0);
-    };
-    // Prefer local only if it's at least as complete (avoids losing offline work
-    // when the account returns a staler snapshot).
-    return countDone(local) >= countDone(acct) ? local : acct;
+    if (!local) return acctReal || {};
+    return acctReal ? mergeAccountState(local, acctReal) : local;
   })();
 
-  /* Bring the account's snippets and drafts onto this device.
+  /* Bring the account's saved work onto this device \u2014 snippets, project
+     drafts, and the sandbox editor itself.
 
-     Merged rather than replaced, and done once at boot: work saved offline
-     here keeps its place, and anything newer from another device lands beside
-     it. Without this the account would carry them and nothing would unpack
-     them, which looks exactly like syncing not working. */
-  useMemo(() => {
+     This ran once, on the first render, with an empty dependency list. If the
+     account finished loading a moment after the app mounted, the new
+     initialState was never looked at, which is indistinguishable from syncing
+     not working. It now runs whenever a different account state arrives.
+
+     Merged, never replaced: each store keeps whatever is newer, so work done
+     offline here survives. Components already on screen are told through the
+     change signal, deferred so it never fires during this render. */
+  const importedFrom = useRef(null);
+  const accountLoaded = useRef(!!acctReal);
+  if (acctReal && importedFrom.current !== initialState) {
+    importedFrom.current = initialState;
+    let changed = 0;
     try {
-      if (initialState && Array.isArray(initialState.snippets)) SANDBOX_SNIPPETS.importAll(initialState.snippets);
-      if (initialState && Array.isArray(initialState.projectDrafts)) PROJECT_DRAFTS.importAll(initialState.projectDrafts);
+      if (Array.isArray(initialState.snippets)) changed += SANDBOX_SNIPPETS.importAll(initialState.snippets) || 0;
+      if (Array.isArray(initialState.projectDrafts)) changed += PROJECT_DRAFTS.importAll(initialState.projectDrafts) || 0;
+      if (initialState.sandbox && SANDBOX_SCRATCH.importAll(initialState.sandbox)) changed++;
     } catch (e) {}
-  }, []);
+    /* The first time the account arrives, push once even if nothing came in:
+       anything written here while it was loading was held back (see the
+       autosave below) and now needs to go up. */
+    const firstArrival = !accountLoaded.current;
+    accountLoaded.current = true;
+    if (changed || firstArrival) setTimeout(bumpLocalSaves, 0);
+  }
   const [progress, setProgress] = useState(() => hydrateProgress(bootState?.progress)); // { classId: Set(doneStepIdx) }
   const [aiLessons, setAiLessons] = useState(() => bootState?.aiLessons || {}); // { classId: [generatedStep, ...] }
   const [savedProjects, setSavedProjects] = useState(() => bootState?.savedProjects || []); // finished projects
@@ -9673,6 +9892,33 @@ function AppInner({ initialState, onPersist, onSignOut, user } = {}) {
   // into the Auto difficulty scorer as extra context that lesson-count data can't
   // capture (age, background, "I want a challenge", "go easy", etc.).
   const [profileDescription, setProfileDescription] = useState(() => bootState?.profileDescription || "");
+  // When each lesson was last marked or un-marked, and each class last reset,
+  // so merging with another device's older copy does not undo either.
+  const [progressAt, setProgressAt] = useState(() => bootState?.progressAt || {});
+
+  /* The account is re-read when you come back to the tab. Bring what another
+     device did since into what is on screen, without reloading anything. The
+     copy the app started from is skipped — it is already in. */
+  const mergedFrom = useRef(acctReal);
+  useEffect(() => {
+    if (!initialState || initialState.__unloaded || mergedFrom.current === initialState) return;
+    mergedFrom.current = initialState;
+    const here = snapshotRef.current ? snapshotRef.current() : null;
+    if (!here) return;
+    const m = mergeAccountState(here, initialState);
+    setProgress(hydrateProgress(m.progress));
+    setProgressAt(m.progressAt);
+    setAiLessons(m.aiLessons);
+    setSavedProjects(m.savedProjects);
+    setProjectConcepts(m.projectConcepts);
+    setCircuitDone(m.circuitDone);
+    setAiDone(m.aiDone);
+    setReviewSets(m.reviewSets);
+    setReviewMark(m.reviewMark);
+    setLessonStats(m.lessonStats);
+    setProfileDescription(m.profileDescription);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialState]);
 
   // Background generation: state lives in GEN_STORE (module scope) so it
   // survives App remounts (tab refocus). We subscribe via useSyncExternalStore
@@ -9848,6 +10094,7 @@ function AppInner({ initialState, onPersist, onSignOut, user } = {}) {
   const [isOnline, setIsOnline] = useState(typeof navigator !== "undefined" ? navigator.onLine !== false : true);
   const [pendingSync, setPendingSync] = useState(false);
 
+  const snapshotRef = useRef(null);
   const buildSnapshot = () => {
     const progressAsArrays = {};
     for (const [k, v] of Object.entries(progress)) {
@@ -9859,8 +10106,10 @@ function AppInner({ initialState, onPersist, onSignOut, user } = {}) {
        are written by components far from here. */
     return { progress: progressAsArrays, aiLessons, savedProjects, lessonStats, profileDescription,
       projectConcepts, circuitDone, aiDone, reviewSets, reviewMark,
-      snippets: SANDBOX_SNIPPETS.exportAll(), projectDrafts: PROJECT_DRAFTS.exportAll() };
+      snippets: SANDBOX_SNIPPETS.exportAll(), projectDrafts: PROJECT_DRAFTS.exportAll(),
+      sandbox: SANDBOX_SCRATCH.exportAll(), progressAt };
   };
+  snapshotRef.current = buildSnapshot;
 
   // Every concept the learner has actually learned — from generated lessons
   // (which declare a `concept`) plus anything learned inside project mode.
@@ -9932,6 +10181,12 @@ function AppInner({ initialState, onPersist, onSignOut, user } = {}) {
     // 1) Always save locally — instant, offline-safe.
     try { CQ_STORE.set(LOCAL_SAVE_KEY, JSON.stringify(snap)); } catch {}
     // 2) If online, push to the account too. If offline, mark pending.
+    /* Never push before the account has been read. The row is replaced whole
+       on every save, so a device that pushed first would overwrite newer work
+       from another device with its own older copy \u2014 before it had even seen
+       the newer one. The import above bumps once when the account arrives,
+       which brings this effect back round to push the merged result. */
+    if (onPersist && user && (!initialState || initialState.__unloaded)) { setPendingSync(true); return; }
     if (onPersist) {
       if (typeof navigator === "undefined" || navigator.onLine !== false) {
         onPersist(snap);
@@ -9940,7 +10195,7 @@ function AppInner({ initialState, onPersist, onSignOut, user } = {}) {
         setPendingSync(true);
       }
     }
-  }, [progress, aiLessons, savedProjects, lessonStats, profileDescription, projectConcepts, circuitDone, aiDone, onPersist, localSaveTick]);
+  }, [progress, aiLessons, savedProjects, lessonStats, profileDescription, projectConcepts, circuitDone, aiDone, reviewSets, reviewMark, progressAt, onPersist, localSaveTick]);
 
   // Watch connection changes. On reconnect, flush the local save to the account.
   useEffect(() => {
@@ -9969,6 +10224,7 @@ function AppInner({ initialState, onPersist, onSignOut, user } = {}) {
   const doneSetFor = (id) => progress[id] || new Set();
   const markDone = (classId, idx, stats) => {
     setProgress((p) => { const s = new Set(p[classId] || new Set()); s.add(idx); return { ...p, [classId]: s }; });
+    stampProgress(classId, { [idx]: Date.now() });
     // Only record stats if provided (backward-compat: older step components may not pass them).
     // Only record on FIRST completion; if they redo a lesson we keep the first attempt.
     if (stats && typeof stats === "object") {
@@ -9979,9 +10235,10 @@ function AppInner({ initialState, onPersist, onSignOut, user } = {}) {
       });
     }
   };
-  const clearDone = (classId, idx) => setProgress((p) => { const s = new Set(p[classId] || new Set()); s.delete(idx); return { ...p, [classId]: s }; });
+  const stampProgress = (classId, entries) => setProgressAt((c) => ({ ...c, [classId]: { ...(c[classId] || {}), ...entries } }));
+  const clearDone = (classId, idx) => { stampProgress(classId, { [idx]: -Date.now() }); setProgress((p) => { const s = new Set(p[classId] || new Set()); s.delete(idx); return { ...p, [classId]: s }; }); };
   // Clear ALL progress for one class (so a learner can redo it from scratch).
-  const resetClass = (classId) => setProgress((p) => { const next = { ...p }; next[classId] = new Set(); return next; });
+  const resetClass = (classId) => { stampProgress(classId, { "*": Date.now() }); setProgress((p) => { const next = { ...p }; next[classId] = new Set(); return next; }); };
   const addAiLesson = (classId, lesson) => setAiLessons((a) => ({ ...a, [classId]: [...(a[classId] || []), lesson] }));
   // Reorder generated lessons within a class (drag-to-reorder). Persists via the
   // aiLessons autosave. from/to are indices within aiLessons[classId].
@@ -11604,6 +11861,127 @@ function useCodeDraft(step, fallback) {
   return [code, setCode];
 }
 
+/* The answer box a Python program shows when it calls input().
+
+   Sits directly under the program's output, with the question written in
+   front of the box the way a terminal shows it. Enter answers; "Stop" ends
+   the program the way Ctrl+D would, so a loop waiting for input can always be
+   left. Shared by the sandbox and projects so the two behave identically. */
+function ConsoleInput({ prompt, onSubmit, onStop, busy }) {
+  const [val, setVal] = React.useState("");
+  const ref = React.useRef(null);
+  React.useEffect(() => { if (!busy && ref.current) { try { ref.current.focus(); } catch (e) {} } }, [busy, prompt]);
+  const send = () => { if (busy) return; const v = val; setVal(""); onSubmit(v); };
+  return (
+    <div className="cq-stdin" role="group" aria-label="Program input">
+      {prompt ? <span className="cq-stdin-prompt">{prompt}</span> : null}
+      <input ref={ref} className="cq-stdin-field" value={val} disabled={busy}
+        aria-label={prompt ? "Answer: " + prompt : "Type input for the program"}
+        placeholder={busy ? "Running…" : "Type your answer and press Enter"}
+        onChange={(e) => setVal(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); send(); } }} />
+      <button className="cq-ai-chip" onClick={send} disabled={busy}>Enter ⏎</button>
+      <button className="cq-ai-chip" onClick={onStop} disabled={busy} title="End the program">■ Stop</button>
+    </div>
+  );
+}
+
+/* Full-screen coding, shared by the sandbox and projects.
+
+   The coding area — editor, run buttons, output and the input() box — is
+   pinned over the whole window by CSS, which works in every browser including
+   iPhone Safari. Where the browser also supports true full screen (Safari and
+   Chrome on a Mac), that is requested too, so the browser's own toolbars go
+   away; if it is refused, the CSS version still applies.
+
+   Escape leaves it — except when typing in a one-line field (a file name, an
+   answer to input()), where Escape already means "cancel this". Leaving the
+   browser's true full screen with its own controls leaves this mode too, so
+   the two can never disagree. */
+function useFullScreen() {
+  const [full, setFull] = React.useState(false);
+  const zoneRef = React.useRef(null);
+  const nativeRef = React.useRef(false);
+
+  const nativeEl = () => (typeof document === "undefined" ? null
+    : (document.fullscreenElement || document.webkitFullscreenElement || null));
+
+  const exit = React.useCallback(() => {
+    setFull(false);
+    if (nativeRef.current && nativeEl()) {
+      try {
+        if (document.exitFullscreen) document.exitFullscreen();
+        else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+      } catch (e) {}
+    }
+    nativeRef.current = false;
+  }, []);
+
+  const enter = React.useCallback(() => {
+    setFull(true);
+    const el = zoneRef.current;
+    try {
+      const req = el && (el.requestFullscreen || el.webkitRequestFullscreen);
+      if (req) {
+        const p = req.call(el);
+        nativeRef.current = true;
+        if (p && p.catch) p.catch(() => { nativeRef.current = false; });
+      }
+    } catch (e) { nativeRef.current = false; }
+  }, []);
+
+  const toggle = React.useCallback(() => { if (full) exit(); else enter(); }, [full, enter, exit]);
+
+  React.useEffect(() => {
+    if (!full) return undefined;
+    const onKey = (e) => {
+      if (e.key !== "Escape") return;
+      const tag = e.target && e.target.tagName;
+      if (tag === "INPUT" || tag === "SELECT") return;
+      exit();
+    };
+    const onNative = () => { if (nativeRef.current && !nativeEl()) { nativeRef.current = false; setFull(false); } };
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", onKey);
+    document.addEventListener("fullscreenchange", onNative);
+    document.addEventListener("webkitfullscreenchange", onNative);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener("keydown", onKey);
+      document.removeEventListener("fullscreenchange", onNative);
+      document.removeEventListener("webkitfullscreenchange", onNative);
+    };
+  }, [full, exit]);
+
+  /* Leaving the screen while in full screen must not leave the page locked. */
+  React.useEffect(() => () => {
+    if (nativeRef.current && nativeEl()) { try { (document.exitFullscreen || document.webkitExitFullscreen).call(document); } catch (e) {} }
+  }, []);
+
+  return { full, toggle, exit, zoneRef };
+}
+
+/* The bar at the top of a coding zone: a way in, and in full screen, a clear
+   way out that does not depend on knowing about Escape. */
+function FullScreenBar({ fs, label }) {
+  return (
+    <div className="cq-fsbar">
+      {fs.full ? <span className="cq-fsbar-title">{label}</span> : <span />}
+      <button className="cq-ai-chip cq-fsbtn" onClick={fs.toggle}
+        aria-pressed={fs.full} title={fs.full ? "Exit full screen (Esc)" : "Full screen"}>
+        {fs.full ? "✕ Exit full screen" : "⛶ Full screen"}
+      </button>
+    </div>
+  );
+}
+
+/* A new interactive session per press of Run. The seed is what keeps random
+   numbers stable while the learner answers, and different on the next Run. */
+function newInputSession() {
+  return { answers: [], seed: Math.floor(Math.random() * 2147483647) };
+}
+
 function renderText(v) {
   if (v === null || v === undefined) return "";
   if (typeof v === "string") return v;
@@ -12063,7 +12441,7 @@ function MultiFileStep({ step, onDone }) {
           const isMain = fileBaseName(f.name) === "main";
           return (
             <button key={i} className={"cq-mf-tab " + (i === active ? "active" : "")} onClick={() => { setActive(i); setOut(null); }}>
-              {f.name}{isMain && <span className="cq-mf-runs"> \u00b7 runs</span>}
+              {f.name}{isMain && <span className="cq-mf-runs"> · runs</span>}
             </button>
           );
         })}
@@ -12078,8 +12456,8 @@ function MultiFileStep({ step, onDone }) {
         <div className="cq-runout">
           <div className="cq-runout-label">Output</div>
           <pre className="cq-console">{out.output || out.error || "(no output)"}</pre>
-          {out.error && !out.output && <div className="cq-runout-note">\u26a0 There was an error (see above).</div>}
-          {step.expectedOutput != null && !out.passed && out.ok && <div className="cq-nudge">Close \u2014 the output doesn't match yet. Check how main uses the other file.</div>}
+          {out.error && !out.output && <div className="cq-runout-note">⚠ There was an error (see above).</div>}
+          {step.expectedOutput != null && !out.passed && out.ok && <div className="cq-nudge">Close — the output doesn't match yet. Check how main uses the other file.</div>}
         </div>
       )}
       {out && out.passed && <div className="cq-takeaway big">{step.why || "The files ran together for real \u2014 main used the code from your other file."}</div>}
@@ -13102,10 +13480,10 @@ const SANDBOX_LANGS = [
   { id: "sql", label: "SQL", emoji: "🗃️", starter: "CREATE TABLE nums (n INTEGER);\nINSERT INTO nums VALUES (1), (2), (3), (4), (5);\nSELECT n, n * n AS square FROM nums;\n" },
 ];
 
-async function runSandbox(lang, code) {
+async function runSandbox(lang, code, io = null) {
   // Route to the same real engine the lessons use for this language.
   if (lang === "js") return runProjectJS(code);
-  if (lang === "py") return await runProjectPython(code);
+  if (lang === "py") return await runProjectPython(code, null, null, io);
   if (lang === "ts") return await runProjectTS(code);
   if (lang === "c") return await runProjectCFamily(code, false);
   if (lang === "cpp") return await runProjectCFamily(code, true);
@@ -13124,21 +13502,21 @@ const SANDBOX_MULTIFILE_LANGS = ["py", "js", "c", "cpp", "java", "php", "lua", "
 
 // Shared multi-file runner: give it the language, the files array, and which file
 // is the entry point. Same dispatch the multi-file lessons use, in one place.
-async function runMultiFileProject(lang, files, entryName) {
+async function runMultiFileProject(lang, files, entryName, io = null) {
   const entry = files.find((f) => f.name === entryName) || files[0];
   if (!entry) return { ok: false, output: "", error: "No entry file to run." };
   const hasSql = files.some((f) => /\.sql$/i.test(f.name));
   try {
     const r = (lang === "js" && hasSql) ? await runProjectJSWithSQL(files, entry.name)
       : lang === "js" ? runProjectJS(entry.code, files, entry.name)
-      : lang === "py" ? await runProjectPython(entry.code, files, entry.name)
+      : lang === "py" ? await runProjectPython(entry.code, files, entry.name, io)
       : lang === "lua" ? await runProjectLua(entry.code, files)
       : lang === "php" ? await runProjectPHP(entry.code, files)
       : lang === "ruby" ? await runProjectRuby(entry.code, files, entry.name)
       : lang === "c" ? await runProjectCFamily(entry.code, false, files, entry.name)
       : lang === "cpp" ? await runProjectCFamily(entry.code, true, files, entry.name)
       : lang === "java" ? await runProjectJava(entry.code, null, null, files)
-      : await runProjectPython(entry.code, files, entry.name);
+      : await runProjectPython(entry.code, files, entry.name, io);
     return r;
   } catch (e) {
     return { ok: false, output: "", error: String(e && e.message ? e.message : e) };
@@ -13353,12 +13731,60 @@ function Sandbox({ onBack, onHome }) {
   /* Write both editors back whenever they change. Wrapped because storage
      throws in private mode and when a quota is full, and a scratchpad failing
      to save is not worth breaking the page over. */
+  /* Writes happen only when the content actually differs from what was last
+     loaded or written. The old effects wrote on mount too, which is harmless
+     on one device but fatal across two: opening the sandbox would restamp a
+     stale copy as the newest, and it would then win against the real newest
+     work from your other device. */
+  const lastCode = React.useRef(JSON.stringify(codeByLang));
+  const lastFiles = React.useRef(JSON.stringify(filesByLang));
+  const myStamp = React.useRef(SANDBOX_SCRATCH.ts());
+  const stamp = () => {
+    const now = Date.now();
+    myStamp.current = now;
+    try { CQ_STORE.set(SANDBOX_SCRATCH.tsKey, String(now)); } catch (e) {}
+    bumpLocalSavesSoon();
+  };
   React.useEffect(() => {
-    try { CQ_STORE.set(SANDBOX_CODE_KEY, JSON.stringify(codeByLang)); } catch (e) {}
+    const j = JSON.stringify(codeByLang);
+    if (j === lastCode.current) return;
+    lastCode.current = j;
+    try { CQ_STORE.set(SANDBOX_CODE_KEY, j); } catch (e) {}
+    stamp();
   }, [codeByLang]);
   React.useEffect(() => {
-    try { CQ_STORE.set(SANDBOX_FILES_KEY, JSON.stringify(filesByLang)); } catch (e) {}
+    const j = JSON.stringify(filesByLang);
+    if (j === lastFiles.current) return;
+    lastFiles.current = j;
+    try { CQ_STORE.set(SANDBOX_FILES_KEY, j); } catch (e) {}
+    stamp();
   }, [filesByLang]);
+
+  /* Newer work can land while the sandbox is already open \u2014 when the account
+     finishes loading after the screen did. Reload from storage only if what
+     is stored is newer than this editor's own last write, so the learner's
+     typing is never replaced by something older. Snippets refresh too. */
+  const saveTick = useLocalSaveSignal();
+  React.useEffect(() => {
+    setSnippets(SANDBOX_SNIPPETS.list());
+    if (SANDBOX_SCRATCH.ts() <= myStamp.current) return;
+    myStamp.current = SANDBOX_SCRATCH.ts();
+    let code = null, fl = null;
+    try { code = JSON.parse(CQ_STORE.get(SANDBOX_CODE_KEY) || "null"); } catch (e) {}
+    try { fl = JSON.parse(CQ_STORE.get(SANDBOX_FILES_KEY) || "null"); } catch (e) {}
+    if (code && typeof code === "object") {
+      setCodeByLang((prev) => {
+        const next = { ...prev };
+        for (const k of Object.keys(code)) if (typeof code[k] === "string") next[k] = code[k];
+        lastCode.current = JSON.stringify(next);
+        return next;
+      });
+    }
+    if (fl && typeof fl === "object") {
+      lastFiles.current = JSON.stringify(fl);
+      setFilesByLang(fl);
+    }
+  }, [saveTick]);
   const [activeFileByLang, setActiveFileByLang] = React.useState({});
   const activeFileName = activeFileByLang[langId] || (files[0] && files[0].name);
   const activeFile = files.find((f) => f.name === activeFileName) || files[0];
@@ -13420,29 +13846,59 @@ function Sandbox({ onBack, onHome }) {
   // First file is the entry point (main). Basename must be unique across files.
   const entryName = (files.find((f) => /^main/i.test(f.name)) || files[0] || {}).name;
 
-  const run = async () => {
+  /* An interactive session is open while the program is waiting on input().
+     Answering re-runs it with every answer so far; see runProjectPython. */
+  const fs = useFullScreen();
+  const [ioSession, setIoSession] = React.useState(null); // { answers, seed } | null
+  /* The event handler passes a click event, not a session, so anything that
+     is not a real session starts a fresh one. */
+  const asSession = (x) => (x && Array.isArray(x.answers) ? x : newInputSession());
+  const settle = (r, io) => {
+    if (r.ok) setOut(r);
+    else { setErr(r.error || "Something went wrong running that."); if (r.output) setOut({ ok: false, output: r.output }); }
+    setIoSession(r.ok && r.needInput != null ? io : null);
+  };
+
+  const run = async (arg) => {
     if (!code.trim()) { setErr("Write some code first, then run it."); setOut(null); return; }
-    setRunning(true); setErr(""); setOut(null);
+    const io = asSession(arg);
+    setRunning(true); setErr("");
+    if (!io.answers.length) setOut(null);
     try {
-      const r = await runSandbox(langId, code);
-      if (r.ok) setOut(r);
-      else setErr(r.error || "Something went wrong running that.");
+      settle(await runSandbox(langId, code, io), io);
     } catch (e) {
       setErr("Couldn't run it: " + (e && e.message ? e.message : "unknown error"));
+      setIoSession(null);
     } finally { setRunning(false); }
   };
   const onKeyDown = makeCodeKeyDown(code, setCode);
-  const runMulti = async () => {
+  const runMulti = async (arg) => {
     if (!files.some((f) => f.code.trim())) { setErr("Write some code first, then run it."); setOut(null); return; }
-    setRunning(true); setErr(""); setOut(null);
+    const io = asSession(arg);
+    setRunning(true); setErr("");
+    if (!io.answers.length) setOut(null);
     try {
-      const r = await runMultiFileProject(langId, files, entryName);
-      if (r.ok) setOut(r);
-      else setErr(r.error || "Something went wrong running that.");
+      settle(await runMultiFileProject(langId, files, entryName, io), io);
     } catch (e) {
       setErr("Couldn't run it: " + (e && e.message ? e.message : "unknown error"));
+      setIoSession(null);
     } finally { setRunning(false); }
   };
+
+  /* One answer handler for both modes, so the multi-file path cannot be left
+     without one. */
+  const answerInput = (text) => {
+    if (!ioSession) return;
+    const next = { answers: ioSession.answers.concat([text]), seed: ioSession.seed };
+    if (multiMode) runMulti(next); else run(next);
+  };
+  const stopInput = () => {
+    setIoSession(null);
+    setOut((o) => (o ? { ...o, needInput: null, output: (o.output ? o.output + "\n" : "") + "(program stopped)" } : o));
+  };
+  /* Editing the code mid-session ends it: answers given to the old program
+     would be fed to a different one. */
+  React.useEffect(() => { setIoSession(null); }, [code, langId, multiMode, filesByLang]);
   const onKeyDownMulti = makeCodeKeyDown(activeFile ? activeFile.code : "", setFileCode);
   const firstRunNote = langId === "py" ? "🐍 First Python run downloads the engine (~10s), then it's quick."
     : (langId === "c" || langId === "cpp") ? "⚙️ First run downloads the compiler — give it a moment."
@@ -13468,6 +13924,11 @@ function Sandbox({ onBack, onHome }) {
         ))}
       </div>
 
+      {/* The coding zone: this is what full screen pins over the window. The
+          language list and saved snippets stay outside it so full screen is
+          just the code, the controls and the output. */}
+      <div ref={fs.zoneRef} className={"cq-codezone" + (fs.full ? " cq-full" : "")}>
+      <FullScreenBar fs={fs} label={"🧪 Sandbox · " + (lang && lang.label ? lang.label : "")} />
       {canMulti && (
         <div className="cq-sandbox-moderow">
           <button className={"cq-modetoggle" + (!multiMode ? " active" : "")} onClick={() => { setMultiMode(false); setOut(null); setErr(""); }}>Single file</button>
@@ -13551,7 +14012,13 @@ function Sandbox({ onBack, onHome }) {
           {langId === "sql" ? (
             <div className="cq-sqltablewrap"><pre className="cq-console">{out.output != null && out.output !== "" ? out.output : "(no rows)"}</pre></div>
           ) : (
-            <pre className="cq-console">{out.output != null && out.output !== "" ? out.output : "(ran with no output)"}</pre>
+            <pre className="cq-console">{out.output != null && out.output !== "" ? out.output
+              : (out.needInput != null ? "" : "(ran with no output)")}</pre>
+          )}
+          {/* One block serves both single- and multi-file mode, so the box
+              appears in either. */}
+          {ioSession && out.needInput != null && (
+            <ConsoleInput prompt={out.needInput} busy={running} onSubmit={answerInput} onStop={stopInput} />
           )}
         </div>
       )}
@@ -13577,6 +14044,7 @@ function Sandbox({ onBack, onHome }) {
           </div>
         </div>
       )}
+      </div>
 
       {snippets.length > 0 && (
         <div className="cq-snippets">
@@ -13644,9 +14112,44 @@ function ProjectBuilder({ plan, onBack, onComplete, onHome, reviewMode = false, 
     return initialProjectFiles(plan);
   });
 
+  /* Write only on a real edit. This used to write \u2014 with a fresh timestamp
+     \u2014 every time the project opened, so viewing an old draft on a second
+     device made it look newest, and the next save sent it up over the newer
+     work from the first device. */
+  const readDraftTs = () => {
+    try {
+      const d = JSON.parse(CQ_STORE.get(draftKey) || "null");
+      return d && !Array.isArray(d) ? (d.ts || 0) : 0;
+    } catch (e) { return 0; }
+  };
+  const lastDraft = useRef(JSON.stringify(files));
+  const myDraftStamp = useRef(readDraftTs());
   useEffect(() => {
-    try { CQ_STORE.set(draftKey, JSON.stringify({ ts: Date.now(), files: files })); bumpLocalSaves(); } catch (e) {}
+    const j = JSON.stringify(files);
+    if (j === lastDraft.current) return;
+    lastDraft.current = j;
+    const now = Date.now();
+    myDraftStamp.current = now;
+    try { CQ_STORE.set(draftKey, JSON.stringify({ ts: now, files: files })); } catch (e) {}
+    bumpLocalSavesSoon();
   }, [draftKey, files]);
+
+  /* A newer draft can arrive from the account while this project is open.
+     Take it only if it is newer than this editor's own last write. */
+  const draftTick = useLocalSaveSignal();
+  useEffect(() => {
+    const ts = readDraftTs();
+    if (ts <= myDraftStamp.current) return;
+    myDraftStamp.current = ts;
+    try {
+      const d = JSON.parse(CQ_STORE.get(draftKey) || "null");
+      const list = d && Array.isArray(d.files) ? d.files : null;
+      if (list && list.length && list.every((f) => f && typeof f.name === "string")) {
+        lastDraft.current = JSON.stringify(list);
+        setFiles(list);
+      }
+    } catch (e) {}
+  }, [draftTick]);
 
   const [activeFile, setActiveFile] = useState(0);
   const [renaming, setRenaming] = useState(null); // index being renamed, or null
@@ -13781,7 +14284,13 @@ function ProjectBuilder({ plan, onBack, onComplete, onHome, reviewMode = false, 
     return () => clearTimeout(t);
   }, [code, reviewMode, asking, packLoading, errorHelp, concepts, plan]);
 
-  const run = async () => {
+  /* Python input(): the same interactive session the sandbox uses. */
+  const fs = useFullScreen();
+  const [ioSession, setIoSession] = useState(null); // { answers, seed } | null
+  const run = async (arg) => {
+    /* onClick hands in a click event; only a real session is a re-run. */
+    const io = arg && Array.isArray(arg.answers) ? arg : newInputSession();
+    const isAnswer = io.answers.length > 0;
     // The ENTRY POINT is the file named "main" when this is a manual multi-file
     // project — Run always runs main, regardless of which tab is open, so you
     // can't accidentally run a helper file and get the wrong engine. Web/markup
@@ -13795,7 +14304,9 @@ function ProjectBuilder({ plan, onBack, onComplete, onHome, reviewMode = false, 
     const runLang = entry.lang || lang;
     const runName = entry.name;
     if (!runCode.trim()) { setOutput({ ok: false, output: "", error: `${runName} is empty — write some code in it first.` }); return; }
-    setRunning(true); setOutput(null); setSrcDoc(null); setNudge(null);
+    setRunning(true); if (!isAnswer) setOutput(null); setSrcDoc(null); setNudge(null);
+    /* Kept during an answer re-run so the box does not flicker away and back. */
+    if (!isAnswer) setIoSession(null);
     try {
       // If this project's files form a real WEB project (html + css + js/ts/jsx/p5),
       // combine them into one live page — the honest "real webpage" experience.
@@ -13835,7 +14346,7 @@ function ProjectBuilder({ plan, onBack, onComplete, onHome, reviewMode = false, 
         }
       } else {
         // Single-file, or same-language multi-file with real imports. Runs `main`.
-        const r = runLang === "py" ? await runProjectPython(runCode, files, runName)
+        const r = runLang === "py" ? await runProjectPython(runCode, files, runName, io)
           : runLang === "ts" ? await runProjectTS(runCode)
           : runLang === "lua" ? await runProjectLua(runCode, files)
           : runLang === "basic" ? runProjectBASIC(runCode)
@@ -13848,7 +14359,11 @@ function ProjectBuilder({ plan, onBack, onComplete, onHome, reviewMode = false, 
           : runLang === "scheme" ? await runProjectScheme(runCode)
           : runProjectJS(runCode, files, runName);
         setOutput(r);
-        if (r.ok) {
+        /* Waiting on input() is not finished yet — the project only counts as
+           built once the program actually runs to the end. */
+        setIoSession(r.ok && r.needInput != null ? io : null);
+        if (r.ok && r.needInput != null) { /* still waiting — not built yet */ }
+        else if (r.ok) {
           markBuilt();
           // Error resolved → the teacher lets that line go and stops commenting.
           setErrorHelp(null); helpedErrorRef.current = null;
@@ -13863,8 +14378,19 @@ function ProjectBuilder({ plan, onBack, onComplete, onHome, reviewMode = false, 
       }
     } catch (e) {
       setOutput({ ok: false, output: "", error: String(e && e.message ? e.message : e) });
+      setIoSession(null);
     } finally { setRunning(false); }
   };
+  const answerInput = (text) => {
+    if (!ioSession) return;
+    run({ answers: ioSession.answers.concat([text]), seed: ioSession.seed });
+  };
+  const stopInput = () => {
+    setIoSession(null);
+    setOutput((o) => (o ? { ...o, needInput: null, output: (o.output ? o.output + "\n" : "") + "(program stopped)" } : o));
+  };
+  /* Editing mid-session ends it: old answers would go to a different program. */
+  useEffect(() => { setIoSession(null); }, [files]);
 
   // ---- Ask the teacher (reminder by default) ----
   const ask = async (q, wantLesson = false) => {
@@ -13914,7 +14440,10 @@ function ProjectBuilder({ plan, onBack, onComplete, onHome, reviewMode = false, 
         {plan.start && !reviewMode && <p className="cq-proj-start">💡 {plan.start}</p>}
       </section>
 
-      <div className="cq-card2">
+      {/* The editor card is the full-screen zone: file tabs, editor, Run,
+          output and the input() box. The teacher panel stays outside it. */}
+      <div ref={fs.zoneRef} className={"cq-card2" + (fs.full ? " cq-full" : "")}>
+        <FullScreenBar fs={fs} label={"🛠️ " + (plan.title || "Project")} />
         <div className="cq-filetabs">
           {files.map((f, i) => (
             <div key={i} className={`cq-filetab ${i === safeActive ? "active" : ""}`}>
@@ -13981,9 +14510,12 @@ function ProjectBuilder({ plan, onBack, onComplete, onHome, reviewMode = false, 
             ) : output.tables ? (
               <pre className="cq-console">(that ran fine — no rows to show. Try a SELECT to see data.)</pre>
             ) : (
-              <pre className="cq-console">{output.output || (output.ok ? "(ran with no output — try adding a print/console.log)" : "")}{output.error ? (output.output ? "\n" : "") + "⚠ " + output.error : ""}</pre>
+              <pre className="cq-console">{output.output || (output.ok && output.needInput == null ? "(ran with no output — try adding a print/console.log)" : "")}{output.error ? (output.output ? "\n" : "") + "⚠ " + output.error : ""}</pre>
             )}
             {output.tables && output.error && <pre className="cq-console">{"⚠ " + output.error}</pre>}
+            {ioSession && output.needInput != null && (
+              <ConsoleInput prompt={output.needInput} busy={running} onSubmit={answerInput} onStop={stopInput} />
+            )}
           </div>
         )}
 
@@ -17446,6 +17978,24 @@ body{overflow-x:clip}
 .cq-runout{margin-top:16px}
 .cq-runout-label{font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:var(--ink-faint);font-weight:700;margin-bottom:6px}
 .cq-console{background:var(--code-bg);border:1px solid var(--line);border-radius:10px;padding:14px 16px;font-family:var(--mono);font-size:13px;line-height:1.55;color:var(--code-text);white-space:pre-wrap;max-height:280px;overflow:auto;margin:0}
+/* The input() answer box: reads as the next line of the console, prompt first,
+   so answering feels like typing into a terminal rather than filling a form. */
+/* Full-screen coding. The zone is an ordinary block until .cq-full pins it
+   over the window; the editor then takes whatever height is left. The editor
+   sets min-height inline, so the override needs !important. dvh accounts for
+   iPhone Safari's collapsing toolbar; the vh line is the fallback for older
+   browsers that do not know dvh. */
+.cq-codezone{position:relative}
+.cq-fsbar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:4px 0 8px}
+.cq-fsbar-title{font-weight:700;color:var(--ink);font-size:14px}
+.cq-fsbtn{white-space:nowrap}
+.cq-full{position:fixed;inset:0;z-index:1000;background:var(--bg-0);overflow:auto;padding:14px 18px 24px;margin:0;max-width:none;box-sizing:border-box}
+.cq-full:fullscreen{background:var(--bg-0)}
+.cq-full .cq-editor-wrap,.cq-full .cq-editor-ta{min-height:calc(100vh - 290px)!important;min-height:max(260px,calc(100dvh - 290px))!important}
+.cq-stdin{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg-2)}
+.cq-stdin-prompt{font-family:var(--mono);font-size:13px;color:var(--ink-soft);white-space:pre-wrap}
+.cq-stdin-field{flex:1;min-width:140px;background:transparent;border:none;border-bottom:1px solid var(--line);color:var(--ink);font-family:var(--mono);font-size:14px;padding:6px 2px;outline:none}
+.cq-stdin-field:focus{border-bottom-color:var(--teal)}
 .cq-runout-note{color:#ff8aa3;font-size:13px;margin-top:12px}
 .cq-sandbox-langs{display:flex;flex-wrap:wrap;gap:9px;margin-bottom:16px}
 .cq-sandbox-lang{display:inline-flex;align-items:center;gap:7px;background:var(--bg-2);border:1px solid var(--line);border-radius:10px;padding:8px 13px;font-size:14px;font-weight:600;color:var(--ink-soft);cursor:pointer;font-family:inherit;transition:border-color .15s,color .15s,background .15s}
